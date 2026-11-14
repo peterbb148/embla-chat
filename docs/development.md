@@ -16,8 +16,10 @@ is iOS 18; the initial app targets iPhone. iPad and Mac apps are later milestone
 The checked-in `EmblaChat.xcodeproj` is the source project; no project generator is
 required. Open it in Xcode, select the shared `EmblaChat` scheme and an iPhone
 simulator, and Run. The current screen explicitly identifies the scaffold stage.
-The Swift module is `EmblaChatApp` to avoid colliding with the upstream `EmblaChat`
-package product. Both `EmblaMetal` and `EmblaChat` are linked at the exact revision
+The app target, product, and Swift module are `EmblaChatApp` to avoid colliding
+with the upstream `EmblaChat` package target. The shared scheme remains `EmblaChat`,
+and the app display name remains Embla Chat. The UI test explicitly references
+the app target by ID. Both `EmblaMetal` and `EmblaChat` are linked at the exact revision
 recorded in [runtime integration](runtime-integration.md).
 
 ## Build and launch validation
