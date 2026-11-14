@@ -70,5 +70,6 @@ EMBLA_LIVE_DOWNLOAD_TESTS=1 swift test --filter livePinnedConfigDownload
 CI runs that provider check, the fixture suite, the unsigned iOS Release build,
 and the model-setup UI launch test. It does not download model weights. Local Xcode
 27.2 package tests and a signed Release build for iPhone 17 Pro also pass.
-Full-model download, readiness on iPhone, and runtime acceptance still require device
-integration evidence in Epic 2.
+Full-model download, readiness and actual offline runtime acceptance were observed
+on iPhone 17 Pro with iOS 27.2.1. See [device validation](device-validation.md) for
+the tested source commit, setup fixes, measurements and limitations.

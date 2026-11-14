@@ -1,8 +1,8 @@
 # iPhone 17 Pro validation
 
-Status: **pending physical-device evidence**. The minimal screen calls the real
-pinned Embla runtime; compiling it and testing fixtures do not prove the model runs
-on the phone. Keep #3, #4, #17 and Epic #13 open until this procedure is evidenced.
+Status: **physical download, inference, lifecycle and offline proof recorded**.
+The minimal screen calls the real pinned Embla runtime. Keep #3, #4, #17 and Epic
+#13 open until the evidence change passes final-head review/checks and is merged.
 
 ## Install
 
@@ -87,20 +87,33 @@ there is no substitute engine or pretend recovery path.
 
 ## Evidence record
 
-Record results on #17 with links to test logs/screenshots where available. This
-section remains pending until observations exist:
+Physical observations below were made on 2026-11-14 through the wired Device Hub
+display. The installed implementation is `bfa25a448d854c1558ae8dc03be8d8fb1e75255a`.
+Results are also tracked on #17.
 
 | Requirement | Observed result |
 | --- | --- |
 | Physical iPhone 17 Pro + actual iOS version | iPhone 17 Pro, iOS 27.2.1, Developer Mode enabled, wired connection (2026-11-14) |
-| Installed app source commit and signing/build result | `136e49f`; Xcode 27.2 signed Release build, installation and launch succeeded; personal signing settings remain local |
-| Complete model download and verification | Pending: first attempt terminated during setup; user restarted the app; staging remained unready. Progress callback and hashing-buffer retention fixes await a fresh device attempt. |
-| Real loaded-model answer and stream | Pending |
-| Verified load time, token counts, decode speed | Pending |
-| Measured memory behavior | Pending |
-| Stop, idle confirmation, subsequent request | Pending |
-| New Chat and background cleanup | Pending |
-| Airplane Mode + Wi-Fi off, unused prompt, real answer | Pending |
+| Installed app source commit and signing/build result | `bfa25a4`; Xcode 27.2 signed Release build, installation and launch succeeded; personal signing settings remain local |
+| Complete model download and verification | Retry completed all four files (5,624,251,762 bytes); app reported Model verified and ready. First attempt terminated during setup and the user restarted it. The corrected build reports continuous byte progress and drains hashing buffers per chunk. |
+| Real loaded-model answer and stream | Denmark-capital prompt answered: The capital of Denmark is Copenhagen. Subsequent requests showed reasoning appear while Thinking/Answering, followed by answer text. |
+| Verified load time, token counts, decode speed | First verified load 15,424 ms; 18 prompt tokens, 103 generated tokens, prompt 171 ms, decode 987 ms, 103.3 decode tokens/s. After Stop, Red Planet prompt: 19 / 153 tokens, 131 / 1,426 ms, 106.6 tokens/s; answer identified Mars. These are two short observed runs, not a general benchmark. |
+| Measured memory behavior | Activity Monitor sampled peak physical footprint 2,361,772,328 bytes (about 2.36 GB), last sample 2,333,116,712 bytes during setup/load/short-run interval; 58 app samples over about 60 seconds. No termination observed in the corrected setup and inference checks. |
+| Stop, idle confirmation, subsequent request | Long counting request showed live reasoning; Stop returned to Stopped with Run enabled. A different Red Planet request then completed with Mars, without stale counting output. |
+| New Chat and background cleanup | Cancel preserved prompt/output; confirmation cleared them and showed New chat. Backgrounding immediately after starting a counting request, then reopening, showed Model unloaded; no automatic generation restart or crash observed. |
+| Airplane Mode + Wi-Fi off, unused prompt, real answer | Device Hub showed Flyfunktion Til, Wi-Fi Fra and Mobildata Fra. After prior background unloading, new prompt What is seven times eight reloaded the saved model and answered Seven times eight is 56. Airplane icon remained visible; no Wi-Fi/cellular connection. Verified load 8,113 ms, 16 prompt / 142 generated tokens, prompt 392 ms, decode 1,335 ms, 105.6 decode tokens/s. |
+
+Memory samples are in [the app-only CSV](evidence/2026-11-14-iphone17pro-memory.csv).
+The Xcode 27.2 Activity Monitor trace covered 20:45:06.750–20:46:07.900 CET on the
+physical phone. `footprintBytes` is the instrument's physical-footprint column;
+`realBytes` is its separate resident-memory column. The peak is the largest sampled
+value in that interval, not a guarantee of the lifetime high-water mark. The complete
+trace remains local under ignored `build/`; other processes and device identifiers
+are excluded from the committed CSV.
+
+The user was asked to restore normal connectivity after the offline observation.
+The wired screen connection was used only to control and observe the app, with no
+substitute inference backend, model-file injection, or fake network launch mode.
 
 Only close the Epic 2 issues after the required observations are recorded. Hosted
 UI checks prove readiness controls and confirmation behavior, not physical inference.
