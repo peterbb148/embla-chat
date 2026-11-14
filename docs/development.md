@@ -1,5 +1,12 @@
 # Development
 
+## Current build blocker
+
+The selected upstream revision fails iOS compilation in `ModelStore.swift` because
+`homeDirectoryForCurrentUser` is unavailable. The scaffold has not yet passed its
+hosted build or launch test. A one-line runtime fix is prepared; publishing a fork
+is awaiting authorization. See [runtime integration](runtime-integration.md).
+
 ## Requirements
 
 Use full Xcode 26.2 (including its iOS 26.2 simulator runtime) on a supported Mac.

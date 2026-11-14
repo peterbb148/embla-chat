@@ -131,3 +131,19 @@ license for Embla Chat's own source. No model weights are committed to this repo
   memory viability and performance. No iPhone 17 Pro performance is claimed here.
 - Upstream README measurements are for M5 Pro and iPhone 18 Pro, not the target phone.
 - #9 must verify iCloud provisioning, account behavior and actual persistence.
+
+## Scaffold build finding (2026-11-14)
+
+The first hosted scaffold build exposed an iOS compile blocker in the selected
+revision: `ModelStore.swift:18` calls `FileManager.homeDirectoryForCurrentUser`,
+which is unavailable on iOS. The package platform declaration is therefore not
+proof that the selected `EmblaChat` target builds for iPhone.
+
+Proposed minimal correction: replace that expression with
+`URL(fileURLWithPath: NSHomeDirectory())`, retaining the existing cache suffix.
+This uses the process sandbox home on iOS. A public fork and new pinned revision
+require user authorization; automatic approval review rejected creating the extra
+repository without it. No corrected runtime has been published or selected yet.
+
+The latest scaffold check must pass after the dependency fix, followed by a fresh
+Copilot review of the final head. #2 remains open until build and launch are proven.
