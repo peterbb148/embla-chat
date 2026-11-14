@@ -11,6 +11,8 @@ SwiftUI Text rendering; broader rendering/copy/accessibility polish remains #18.
 Each Send supplies all prior user turns and actual nonempty assistant text/reasoning
 through the real inference API. Interrupted, failed and limited responses stay visibly
 marked. New Chat waits for the worker before clearing conversation and runtime context.
+The composer locks while a confirmed reset drains, then focuses the new conversation;
+expanded reasoning follows output under the same near-bottom guard as answer text.
 No context is silently dropped when the budget is exceeded. This transcript is in memory;
 compaction (#8) and iCloud persistence/restoration (#9) remain unimplemented.
 

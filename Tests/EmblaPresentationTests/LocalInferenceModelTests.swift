@@ -234,3 +234,32 @@ func stoppingRemainsBusyUntilTheWorkerActuallyDrains() async throws {
     await model.waitUntilIdle()
     #expect(!model.busy)
 }
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func newChatKeepsComposerLockedUntilDeferredClearingFinishes() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    let backend = PresentationBackend(stopGate: gate)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    let previousConversation = model.conversationID
+    model.prompt = "First message"
+    model.run()
+    try await backend.waitForStart()
+    model.prompt = "Draft being deliberately cleared"
+    model.newChat()
+    try await backend.waitForStop()
+    #expect(model.resetting && model.busy)
+    #expect(model.conversationID == previousConversation)
+    #expect(model.prompt == "Draft being deliberately cleared")
+    gate.signal()
+    await model.waitUntilIdle()
+    #expect(!model.resetting && !model.busy)
+    #expect(model.prompt.isEmpty && model.messages.isEmpty)
+    #expect(model.conversationID != previousConversation)
+    model.prompt = "A message composed after reset"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.messages.first?.text == "A message composed after reset")
+    #expect(model.messages.last?.state == .complete)
+}

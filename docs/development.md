@@ -103,7 +103,10 @@ force a software keyboard over a deliberately attached hardware keyboard.
 
 Idle sleep is disabled only during foreground work. Inactivity requests cancellation;
 backgrounding cancels and unloads once the worker drains. New Chat uses the same stop/wait
-sequence before clearing transcript, draft and inference context. Model deletion never
+sequence before clearing transcript, draft and inference context. The composer is disabled
+while confirmed clearing drains, and focus returns when the new conversation is ready.
+Expanded reasoning participates in scroll-follow while the reader remains near the bottom.
+Model deletion never
 clears the conversation.
 
 Presentation tests use explicit fixture backends to verify actual context arrays,

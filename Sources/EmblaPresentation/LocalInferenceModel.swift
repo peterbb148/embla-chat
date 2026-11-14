@@ -17,6 +17,7 @@ public struct ChatMessage: Identifiable, Sendable {
 /// Shared presentation state for model setup and the single active conversation.
 @MainActor @Observable
 public final class LocalInferenceModel {
+    public private(set) var conversationID = UUID()
     public var prompt = ""
     public private(set) var messages: [ChatMessage] = []
     public private(set) var manifest: ModelManifest?
@@ -27,6 +28,7 @@ public final class LocalInferenceModel {
     public private(set) var busy = false
     public private(set) var downloading = false
     public private(set) var running = false
+    public private(set) var resetting = false
     public private(set) var loaded = false
     public private(set) var error: String?
     public private(set) var reasoning = ""
@@ -83,6 +85,7 @@ public final class LocalInferenceModel {
     /// Defers clearing until any current generation has drained, preventing stale text.
     public func newChat() {
         guard !busy || running else { return }
+        resetting = true
         pendingClear = true
         if busy { stop() } else { start(.clear) }
     }
@@ -249,6 +252,7 @@ public final class LocalInferenceModel {
                     reasoning = ""
                     answer = ""
                     metrics = nil
+                    conversationID = UUID()
                     status = error == nil ? "New chat." : "Chat cleared after an error."
                 }
             } catch {
@@ -259,6 +263,7 @@ public final class LocalInferenceModel {
         operationID = nil
         downloading = false
         running = false
+        resetting = false
         busy = false
         task = nil
     }

@@ -47,6 +47,9 @@ struct ContentView: View {
                 .onChange(of: model.messages.last?.text) { _, _ in
                     if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
                 }
+                .onChange(of: model.messages.last?.reasoning) { _, _ in
+                    if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                }
                 .onChange(of: model.messages.count) { _, _ in
                     followingOutput = true
                     reader.scrollTo("latest-message", anchor: .bottom)
@@ -67,7 +70,7 @@ struct ContentView: View {
                         confirmNewChat = true
                     } label: { Label("New Chat", systemImage: "square.and.pencil") }
                     .disabled(
-                        (model.busy && !model.running)
+                        model.resetting || (model.busy && !model.running)
                             || (model.messages.isEmpty && model.prompt.isEmpty))
                 }
                 ToolbarItemGroup(placement: .keyboard) {
@@ -78,14 +81,20 @@ struct ContentView: View {
             .sheet(item: $sheet) { _ in ModelSettingsView(model: model) }
             .alert("Start a new chat?", isPresented: $confirmNewChat) {
                 Button("Start new chat", role: .destructive) {
+                    composerFocused = false
                     model.newChat()
-                    composerFocused = true
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This clears the current conversation after any active response stops.")
             }
             .task { model.check() }
+            .onChange(of: model.resetting) { _, resetting in
+                composerFocused = !resetting
+            }
+            .onChange(of: model.conversationID) { _, _ in
+                composerFocused = true
+            }
             .onChange(of: model.busy) { _, _ in updateIdleTimer() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .inactive { model.becameInactive() }
@@ -120,6 +129,7 @@ struct ContentView: View {
                 TextField("Message", text: $model.prompt, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($composerFocused)
+                    .disabled(model.resetting)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .background(
