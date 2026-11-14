@@ -1,0 +1,509 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		15A5F22D05D3B51B4774DD0B /* embla-metal-LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = B95C22A930CBD2A857E7F2A2 /* embla-metal-LICENSE */; };
+		1F559B06A802518BF1B02D77 /* EmblaChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7E1FDF7FFA10D11F9E6842 /* EmblaChatApp.swift */; };
+		40811A3E961AEAF7F9FCE6D4 /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA2F787EF64BAC9D92D3B25C /* LaunchTests.swift */; };
+		7AFF00F2486018C13DEF8D16 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 511FAB6E22339EC1602F447B /* Foundation.framework */; };
+		BEA8E09FE6ED89CB83DC8094 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 511FAB6E22339EC1602F447B /* Foundation.framework */; };
+		CCD86097D5BE8FAA2F6D174A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6285176BA2C09CD88592557F /* ContentView.swift */; };
+		D3E66ECD81074D56EBD42B57 /* EmblaChat in Frameworks */ = {isa = PBXBuildFile; productRef = 57D340455A73CFCB7F0EB841 /* EmblaChat */; };
+		E7D4670D18AB32F680ED15CF /* Embla1-4bit-LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = C20D432FADDCF620DB0D10EE /* Embla1-4bit-LICENSE */; };
+		F2782F04EC46543D38D0B761 /* EmblaMetal in Frameworks */ = {isa = PBXBuildFile; productRef = 6372106BD4A0BD174889E26D /* EmblaMetal */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		064EADF8839C8C28F2D6486B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6EB6EE389FAA02AC1D7718E9 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8A387D6704183EF77B47341F;
+			remoteInfo = EmblaChat;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		2299900845A4D12BAE7AAFC6 /* EmblaChatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EmblaChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		511FAB6E22339EC1602F447B /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		6285176BA2C09CD88592557F /* ContentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		8D7E1FDF7FFA10D11F9E6842 /* EmblaChatApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EmblaChatApp.swift; sourceTree = "<group>"; };
+		B95C22A930CBD2A857E7F2A2 /* embla-metal-LICENSE */ = {isa = PBXFileReference; includeInIndex = 1; path = "embla-metal-LICENSE"; sourceTree = "<group>"; };
+		BA2F787EF64BAC9D92D3B25C /* LaunchTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
+		C20D432FADDCF620DB0D10EE /* Embla1-4bit-LICENSE */ = {isa = PBXFileReference; includeInIndex = 1; path = "Embla1-4bit-LICENSE"; sourceTree = "<group>"; };
+		F580795DB742DCC607DC6A26 /* EmblaChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EmblaChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		DEA29E8FACBF4C690CAE73BE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7AFF00F2486018C13DEF8D16 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F4EE976037F40F509ED3F063 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BEA8E09FE6ED89CB83DC8094 /* Foundation.framework in Frameworks */,
+				F2782F04EC46543D38D0B761 /* EmblaMetal in Frameworks */,
+				D3E66ECD81074D56EBD42B57 /* EmblaChat in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		58194B832931392D518A440D /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				511FAB6E22339EC1602F447B /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		5A295F0B077C5BE9E8634FC8 /* third-party */ = {
+			isa = PBXGroup;
+			children = (
+				C20D432FADDCF620DB0D10EE /* Embla1-4bit-LICENSE */,
+				B95C22A930CBD2A857E7F2A2 /* embla-metal-LICENSE */,
+			);
+			name = "third-party";
+			path = "third-party";
+			sourceTree = "<group>";
+		};
+		735004A72294412A46834327 /* EmblaChatApp */ = {
+			isa = PBXGroup;
+			children = (
+				6285176BA2C09CD88592557F /* ContentView.swift */,
+				8D7E1FDF7FFA10D11F9E6842 /* EmblaChatApp.swift */,
+			);
+			name = EmblaChatApp;
+			path = EmblaChatApp;
+			sourceTree = "<group>";
+		};
+		75A354B24AFC1EBB4794BC06 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				58194B832931392D518A440D /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		8B3578501A5D80AA1E5F64CA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F580795DB742DCC607DC6A26 /* EmblaChat.app */,
+				2299900845A4D12BAE7AAFC6 /* EmblaChatUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		8F8194103E6A3E6D71DD7147 = {
+			isa = PBXGroup;
+			children = (
+				8B3578501A5D80AA1E5F64CA /* Products */,
+				75A354B24AFC1EBB4794BC06 /* Frameworks */,
+				735004A72294412A46834327 /* EmblaChatApp */,
+				F6DF85590D2E8C81F56E3136 /* EmblaChatUITests */,
+				5A295F0B077C5BE9E8634FC8 /* third-party */,
+			);
+			sourceTree = "<group>";
+		};
+		F6DF85590D2E8C81F56E3136 /* EmblaChatUITests */ = {
+			isa = PBXGroup;
+			children = (
+				BA2F787EF64BAC9D92D3B25C /* LaunchTests.swift */,
+			);
+			name = EmblaChatUITests;
+			path = EmblaChatUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		8A387D6704183EF77B47341F /* EmblaChat */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 36FF34B4B17897818442C593 /* Build configuration list for PBXNativeTarget "EmblaChat" */;
+			buildPhases = (
+				E957970DA1060E55BE03F6D4 /* Sources */,
+				F4EE976037F40F509ED3F063 /* Frameworks */,
+				E415D1B692C9E2712AEB8340 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = EmblaChat;
+			packageProductDependencies = (
+				6372106BD4A0BD174889E26D /* EmblaMetal */,
+				57D340455A73CFCB7F0EB841 /* EmblaChat */,
+			);
+			productName = EmblaChat;
+			productReference = F580795DB742DCC607DC6A26 /* EmblaChat.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A7F5E9B82F22462FE86C8E2C /* EmblaChatUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2F0FD4A510569D7B85091B4F /* Build configuration list for PBXNativeTarget "EmblaChatUITests" */;
+			buildPhases = (
+				BC74398BCEE9EF2C3EBE65F5 /* Sources */,
+				DEA29E8FACBF4C690CAE73BE /* Frameworks */,
+				78B13F956E0E2CA44B419417 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9964B86303A183C4AF08BE27 /* PBXTargetDependency */,
+			);
+			name = EmblaChatUITests;
+			productName = EmblaChatUITests;
+			productReference = 2299900845A4D12BAE7AAFC6 /* EmblaChatUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6EB6EE389FAA02AC1D7718E9 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 2D3F6F5FE4F7120E7EC9D54A /* Build configuration list for PBXProject "EmblaChat" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 8F8194103E6A3E6D71DD7147;
+			minimizedProjectReferenceProxies = 0;
+			packageReferences = (
+				AB60A2A44344AA7528605A75 /* XCRemoteSwiftPackageReference "embla-metal" */,
+			);
+			preferredProjectObjectVersion = 100;
+			productRefGroup = 8B3578501A5D80AA1E5F64CA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8A387D6704183EF77B47341F /* EmblaChat */,
+				A7F5E9B82F22462FE86C8E2C /* EmblaChatUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		78B13F956E0E2CA44B419417 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E415D1B692C9E2712AEB8340 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E7D4670D18AB32F680ED15CF /* Embla1-4bit-LICENSE in Resources */,
+				15A5F22D05D3B51B4774DD0B /* embla-metal-LICENSE in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		BC74398BCEE9EF2C3EBE65F5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				40811A3E961AEAF7F9FCE6D4 /* LaunchTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E957970DA1060E55BE03F6D4 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CCD86097D5BE8FAA2F6D174A /* ContentView.swift in Sources */,
+				1F559B06A802518BF1B02D77 /* EmblaChatApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		9964B86303A183C4AF08BE27 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = EmblaChat;
+			target = 8A387D6704183EF77B47341F /* EmblaChat */;
+			targetProxy = 064EADF8839C8C28F2D6486B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		558B53EA079FF05F11AA1168 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dk.peterbb148.embla-chat.uitests";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = EmblaChat;
+			};
+			name = Debug;
+		};
+		61566D24F72F326A78B60C34 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Embla Chat";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dk.peterbb148.embla-chat";
+				PRODUCT_MODULE_NAME = EmblaChatApp;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		82BFCB70F1C3E78494B17552 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A7B7A814C005A392DF9F17A7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		C60A433F85331ED2025EFADB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Embla Chat";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dk.peterbb148.embla-chat";
+				PRODUCT_MODULE_NAME = EmblaChatApp;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		D096164342DFA672DC1AB3C6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dk.peterbb148.embla-chat.uitests";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = EmblaChat;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2D3F6F5FE4F7120E7EC9D54A /* Build configuration list for PBXProject "EmblaChat" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				82BFCB70F1C3E78494B17552 /* Debug */,
+				A7B7A814C005A392DF9F17A7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		2F0FD4A510569D7B85091B4F /* Build configuration list for PBXNativeTarget "EmblaChatUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D096164342DFA672DC1AB3C6 /* Release */,
+				558B53EA079FF05F11AA1168 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		36FF34B4B17897818442C593 /* Build configuration list for PBXNativeTarget "EmblaChat" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C60A433F85331ED2025EFADB /* Release */,
+				61566D24F72F326A78B60C34 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AB60A2A44344AA7528605A75 /* XCRemoteSwiftPackageReference "embla-metal" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sevren-ai/embla-metal";
+			requirement = {
+				kind = revision;
+				revision = 1bc69bc355625310b965e19339d255f843023eeb;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		57D340455A73CFCB7F0EB841 /* EmblaChat */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AB60A2A44344AA7528605A75 /* XCRemoteSwiftPackageReference "embla-metal" */;
+			productName = EmblaChat;
+		};
+		6372106BD4A0BD174889E26D /* EmblaMetal */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AB60A2A44344AA7528605A75 /* XCRemoteSwiftPackageReference "embla-metal" */;
+			productName = EmblaMetal;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 6EB6EE389FAA02AC1D7718E9 /* Project object */;
+}
