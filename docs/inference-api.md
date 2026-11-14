@@ -53,9 +53,10 @@ engine drains submitted GPU commands before returning; the application must disp
 that it is stopping until the worker finishes. Cancelling a loading Task is checked
 before and after the synchronous constructor, releasing the model if cancelled.
 
-The minimal UI in #17 must cancel, await, and unload on background transition;
-prevent model deletion while loading/loaded/generating; discard stale events;
-and apply the same cancellation/wait sequence for New Chat. No background inference
+The minimal UI controller cancels, waits, and unloads on background transition;
+unloads before model storage operations; discards stale events; and applies the
+same cancellation/wait sequence for New Chat. Presentation tests verify this
+sequencing with fixtures; physical behavior still requires #17 evidence. No background inference
 is supported. A thrown generation failure unloads the failed backend and requires
 an explicit reload before retrying. A genuine backend error remains an error even
 if a cancellation request races with it; cancellation never hides diagnostics or

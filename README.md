@@ -8,8 +8,15 @@ context compaction, and iCloud chat persistence. iPad and Mac support are planne
 Runtime integration and the native SwiftUI scaffold are implemented. Model setup
 now includes pinned downloads, SHA-256 verification, progress, cancellation, retry,
 and storage deletion. See [model storage](docs/model-storage.md) for behavior and
-validation limits. The [inference API](docs/inference-api.md) is implemented with the real pinned
-Embla adapter; its minimal UI and physical iPhone inference remain unverified. See [development](docs/development.md) for build steps.
+validation limits. The [inference API](docs/inference-api.md) and minimal prompt/Run/Stop screen use
+the real pinned Embla adapter. The signed app is installed and launches on iPhone
+17 Pro with iOS 27.2.1. Physical testing verified the full model download, real
+answers, Stop followed by another request, New Chat, background unloading and
+offline model loading/generation. See [device validation](docs/device-validation.md)
+for measured results and their limits, and [development](docs/development.md) for build steps.
+
+This milestone submits one prompt per Run. Conversation history, automatic
+compaction and iCloud persistence belong to Epic 3 and are not implemented yet.
 
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,
 licensing, build requirements, limitations, and remaining validation.

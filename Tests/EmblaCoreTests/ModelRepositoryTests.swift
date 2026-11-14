@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Synchronization
 import Testing
 @testable import EmblaCore
 
@@ -80,6 +81,23 @@ private struct Fixture {
     #expect(ready == nil)
 }
 
+/// Verifies the final partial chunk as well as a complete hashing buffer.
+@Test func verificationSpansMultipleChunks() async throws {
+    let f = Fixture(); defer { f.clean() }
+    var data = Data(repeating: 17, count: 8 * 1_024 * 1_024)
+    data.append(Data("final partial chunk".utf8))
+    let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    let manifest = ModelManifest(
+        repository: "test/model", revision: "chunked-test",
+        files: [ModelManifest.Asset(
+            path: "model.safetensors", sizeBytes: Int64(data.count), sha256: digest)])
+    let repository = ModelRepository(
+        root: f.root, manifest: manifest, downloader: TestDownloader(data: data),
+        capacity: { _ in Int64.max })
+    let installed = try await repository.install { _ in }
+    #expect(try await repository.installedDirectory() == installed)
+}
+
 @Test func corruptInstalledBytesAreRejectedOnRelaunch() async throws {
     let f = Fixture(); defer { f.clean() }
     let repository = f.repository(TestDownloader(data: f.data))
@@ -139,11 +157,29 @@ private struct Fixture {
     #expect(calls == 0)
 }
 
+/// Cancellation before registration must resume the waiter without starting network work.
+@Test
+func cancelledHTTPDownload() async throws {
+    let transfer = Task {
+        withUnsafeCurrentTask { $0?.cancel() }
+        return try await HTTPAssetDownloader().download(
+            from: URL(string: "https://unused.invalid/model")!, progress: { _ in })
+    }
+    await #expect(throws: CancellationError.self) { try await transfer.value }
+}
+
 /// Optional provider check uses only the pinned 5 KB config; no model weights are fetched.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["EMBLA_LIVE_DOWNLOAD_TESTS"] == "1"))
 func livePinnedConfigDownload() async throws {
     let bundled = try ModelManifest.bundled()
     let config = try #require(bundled.files.first { $0.path == "config.json" })
+    let received = Mutex<Int64>(0)
+    let asset = try await HTTPAssetDownloader().download(from: bundled.url(for: config)) { bytes in
+        received.withLock { $0 = max($0, bytes) }
+    }
+    defer { try? FileManager.default.removeItem(at: asset.url) }
+    #expect(asset.statusCode == 200)
+    #expect(received.withLock { $0 } == config.sizeBytes)
     let manifest = ModelManifest(
         repository: bundled.repository, revision: bundled.revision, files: [config])
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

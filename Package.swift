@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "EmblaCore", targets: ["EmblaCore"]),
         .library(name: "EmblaRuntime", targets: ["EmblaRuntime"]),
+        .library(name: "EmblaPresentation", targets: ["EmblaPresentation"]),
     ],
     dependencies: [
         .package(
@@ -22,5 +23,8 @@ let package = Package(
                 "EmblaCore", .product(name: "EmblaChat", package: "embla-metal"),
                 .product(name: "EmblaMetal", package: "embla-metal"),
             ]),
+        .target(name: "EmblaPresentation", dependencies: ["EmblaCore", "EmblaRuntime"]),
+        .testTarget(
+            name: "EmblaPresentationTests", dependencies: ["EmblaPresentation", "EmblaCore"]),
     ]
 )

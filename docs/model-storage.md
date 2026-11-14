@@ -21,6 +21,11 @@ SHA-256 before moving into staging. Only after all four verify is staging rename
 to the installed revision directory. No model path is returned for partial staging.
 Readiness checks after relaunch rehash every required installed asset; this can take
 time for 5.6 GB. A corrupted installed model must be deleted and downloaded again.
+Each 8 MiB hashing iteration drains its autorelease pool so Foundation read buffers
+do not accumulate across a multi-gigabyte file. In a local optimized macOS
+reproduction hashing the same sparse 512 MiB file, peak footprint fell from
+539,936,768 to 10,142,784 bytes with an identical SHA-256 digest. These are local
+hash-loop measurements, not iPhone inference-memory measurements.
 
 Files live under Application Support/EmblaModels inside the app sandbox. The model
 root is excluded from iCloud backup before any model download starts. The revision
@@ -33,6 +38,9 @@ The screen shows the expected download size, received bytes, verification status
 errors, and storage occupied by complete or partial files. The preflight check
 requires free capacity for all required assets; filesystem overhead and other apps
 can still cause a later storage failure, which is reported rather than ignored.
+Byte progress comes from a delegate-based URLSession download task. The async
+download convenience method does not forward these byte callbacks; physical testing
+exposed that earlier implementation as updating only between completed files.
 
 Cancel cancels the asynchronous download or stops chunked hashing. Controls remain
 busy until cancellation finishes. A failed, cancelled or interrupted download may
@@ -53,14 +61,15 @@ concurrent deletion prevention, low-storage preflight, and model deletion.
 These fixtures are small test bytes and do not prove the real model runs.
 
 An explicit small provider test exercises URLSession against the pinned 5 KB config:
+it also requires the transport to report all received bytes through its progress callback.
 
 ```sh
 EMBLA_LIVE_DOWNLOAD_TESTS=1 swift test --filter livePinnedConfigDownload
 ```
 
 CI runs that provider check, the fixture suite, the unsigned iOS Release build,
-and the model-setup UI launch test. It does not download model weights. Local Command
-Line Tools can compile the core target (`swift build --target EmblaCore`) but this
-installation lacks Swift Testing; test and iOS evidence comes from full hosted Xcode.
-Full-model download, readiness on iPhone, and runtime acceptance still require device
-integration evidence in Epic 2. This milestone adds setup, not inference or chat.
+and the model-setup UI launch test. It does not download model weights. Local Xcode
+27.2 package tests and a signed Release build for iPhone 17 Pro also pass.
+Full-model download, readiness and actual offline runtime acceptance were observed
+on iPhone 17 Pro with iOS 27.2.1. See [device validation](device-validation.md) for
+the tested source commit, setup fixes, measurements and limitations.
