@@ -22,7 +22,7 @@ jobs:
       - name: Verify pinned provider download
         env:
           EMBLA_LIVE_DOWNLOAD_TESTS: "1"
-        run: swift test --filter livePinnedConfigDownload
+        run: swift test --force-resolved-versions --filter livePinnedConfigDownload
       - name: Build device target and test simulator launch
         run: ./scripts/check.sh
       - name: Upload build and test evidence

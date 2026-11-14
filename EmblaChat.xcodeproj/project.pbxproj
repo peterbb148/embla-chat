@@ -11,6 +11,7 @@
 		1F559B06A802518BF1B02D77 /* EmblaChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7E1FDF7FFA10D11F9E6842 /* EmblaChatApp.swift */; };
 		40811A3E961AEAF7F9FCE6D4 /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA2F787EF64BAC9D92D3B25C /* LaunchTests.swift */; };
 		4961B704E49B0EB72ACA6630 /* ModelSetupModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C060F271F14BB1C28A6A9C43 /* ModelSetupModel.swift */; };
+		74DBBAE47EBBF49B885D1870 /* EmblaRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 233DCE6BC568252C32A4EECC /* EmblaRuntime */; };
 		7AFF00F2486018C13DEF8D16 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 511FAB6E22339EC1602F447B /* Foundation.framework */; };
 		B29D1B5479D53E1304B024DB /* EmblaCore in Frameworks */ = {isa = PBXBuildFile; productRef = 19F7731045ADB2BF01442745 /* EmblaCore */; };
 		BEA8E09FE6ED89CB83DC8094 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 511FAB6E22339EC1602F447B /* Foundation.framework */; };
@@ -59,6 +60,7 @@
 				F2782F04EC46543D38D0B761 /* EmblaMetal in Frameworks */,
 				D3E66ECD81074D56EBD42B57 /* EmblaChat in Frameworks */,
 				B29D1B5479D53E1304B024DB /* EmblaCore in Frameworks */,
+				74DBBAE47EBBF49B885D1870 /* EmblaRuntime in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -151,6 +153,7 @@
 				6372106BD4A0BD174889E26D /* EmblaMetal */,
 				57D340455A73CFCB7F0EB841 /* EmblaChat */,
 				19F7731045ADB2BF01442745 /* EmblaCore */,
+				233DCE6BC568252C32A4EECC /* EmblaRuntime */,
 			);
 			productName = EmblaChatApp;
 			productReference = F580795DB742DCC607DC6A26 /* EmblaChatApp.app */;
@@ -517,6 +520,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 67FC2599C0F6FF2402E3804F /* XCLocalSwiftPackageReference "." */;
 			productName = EmblaCore;
+		};
+		233DCE6BC568252C32A4EECC /* EmblaRuntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 67FC2599C0F6FF2402E3804F /* XCLocalSwiftPackageReference "." */;
+			productName = EmblaRuntime;
 		};
 		57D340455A73CFCB7F0EB841 /* EmblaChat */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -1,0 +1,14 @@
+{
+  "originHash" : "b16e4682c99246a9a70de47a84ca684cb187a871d25ad9d99293ad01a4fb2580",
+  "pins" : [
+    {
+      "identity" : "embla-metal",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/peterbb148/embla-metal",
+      "state" : {
+        "revision" : "0c8caaa3616372482d047fa9e953ea656cb34588"
+      }
+    }
+  ],
+  "version" : 3
+}
