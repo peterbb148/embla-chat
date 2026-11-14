@@ -22,21 +22,37 @@ recorded in [runtime integration](runtime-integration.md).
 
 ## Build and launch validation
 
-Select full Xcode for the current shell:
+From a clean checkout, select full Xcode and run the same entry point as CI:
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer
-xcodebuild -resolvePackageDependencies -project EmblaChat.xcodeproj -scheme EmblaChat
-xcodebuild test -project EmblaChat.xcodeproj -scheme EmblaChat \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.2' \
-  -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO
+./scripts/check.sh
 ```
+
+The script fails if the selected toolchain is not Xcode 26.2. Install the iOS 26.2
+simulator runtime through Xcode before running it. It resolves only the checked-in
+`Package.resolved` revision, builds the unsigned Release target for generic iOS,
+then creates an isolated iPhone 17 Pro simulator and runs the UI test. Simulator
+cleanup runs on exit. Local signing credentials and model weights are not needed.
 
 The UI test launches the app and asserts the scaffold message. It does not load
 model weights, compile runtime Metal kernels at execution, or prove physical-device
-inference. The scaffold workflow runs this launch check on hosted macOS with Xcode
-26.2 and uploads its result bundle. Reproducible device builds and broader CI checks
-are tracked in #16.
+inference. The unsigned device build checks compilation/linking for actual iOS,
+including copied SwiftPM resources, but does not prove installation or inference.
+
+The workflow runs on PRs, main pushes, and manual dispatch. It uses Xcode 26.2 on
+`macos-15`, pinned action revisions, and the same script without dependency caches.
+Logs and result bundles are uploaded for seven days. Local output is under `build/`;
+result bundles get unique directories so repeated checks preserve earlier results.
+The PR and main checks must pass independently; CI never downloads model weights.
+Feature-level tests will accompany their implementations in later issues (#6).
+
+## Verified scaffold evidence
+
+[Scaffold run 43582094191](https://github.com/peterbb148/embla-chat/actions/runs/43582094191)
+built and launched commit `43bf527` under Xcode 26.2 with the patched runtime.
+`LaunchTests.testScaffoldLaunches` passed with zero failures. The expanded Release
+build and clean-checkout CI require their own successful run before #16 closes.
 
 ## Signing and resources
 
