@@ -12,9 +12,14 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
     private let failOnStop: Bool
+    private let stopGate: DispatchSemaphore?
+    private var reachedStop = false
     var calls: Int { lock.withLock { count } }
 
-    init(failOnStop: Bool = false) { self.failOnStop = failOnStop }
+    init(failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil) {
+        self.failOnStop = failOnStop
+        self.stopGate = stopGate
+    }
     func encode(_ messages: [ConversationMessage]) throws -> [Int] { [1, 2] }
     func reset() {}
     func generate(
@@ -26,6 +31,8 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
         }
         if index == 1 {
             while emit(.reasoning("fixture reasoning")) { Thread.sleep(forTimeInterval: 0.01) }
+            lock.withLock { reachedStop = true }
+            stopGate?.wait()
             if failOnStop { throw ModelTestError.backendFailure }
         } else {
             _ = emit(.reasoning("fixture reasoning"))
@@ -35,6 +42,13 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
             finishReason: "stop", promptTokens: 2, completionTokens: 2,
             promptMilliseconds: 1, decodeMilliseconds: 1
         )
+    }
+    func waitForStop() async throws {
+        for _ in 0..<2_000 {
+            if lock.withLock({ reachedStop }) { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw ModelTestError.timeout
     }
     func waitForStart() async throws {
         for _ in 0..<2_000 {
@@ -147,4 +161,25 @@ func cancellationNeverHidesAGenuineBackendFailureInTheUI() async throws {
     await model.waitUntilIdle()
     #expect(model.error != nil)
     #expect(!model.loaded && !model.busy)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func stoppingRemainsBusyUntilTheWorkerActuallyDrains() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    let backend = PresentationBackend(stopGate: gate)
+    let session = InferenceSession { _, _ in backend }
+    let model = await fixture.model(session: session)
+    model.prompt = "First prompt"
+    model.run()
+    try await backend.waitForStart()
+    model.stop()
+    try await backend.waitForStop()
+    #expect(model.busy)
+    #expect(!model.canRun)
+    #expect(model.status == "Stopping…")
+    gate.signal()
+    await model.waitUntilIdle()
+    #expect(!model.busy)
 }

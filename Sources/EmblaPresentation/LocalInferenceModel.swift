@@ -173,7 +173,7 @@ public final class LocalInferenceModel {
         ])
         activeRun = run
         if Task.isCancelled { run.cancel() }
-        status = "Thinking…"
+        status = Task.isCancelled ? "Stopping…" : "Thinking…"
         var streamError: Error?
         do {
             for try await event in run.events {
