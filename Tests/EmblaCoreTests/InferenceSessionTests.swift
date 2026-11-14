@@ -14,12 +14,14 @@ private final class TestBackend: InferenceBackend, @unchecked Sendable {
     private var maximum = 0
     private let failFirst: Bool
     private let holdFirst: Bool
+    private let failOnStop: Bool
     var calls: Int { lock.withLock { count } }
     var maximumConcurrentCalls: Int { lock.withLock { maximum } }
 
-    init(failFirst: Bool = false, holdFirst: Bool = false) {
+    init(failFirst: Bool = false, holdFirst: Bool = false, failOnStop: Bool = false) {
         self.failFirst = failFirst
         self.holdFirst = holdFirst
+        self.failOnStop = failOnStop
     }
     func encode(_ messages: [ConversationMessage]) throws -> [Int] { [1, 2] }
     func reset() {}
@@ -41,7 +43,10 @@ private final class TestBackend: InferenceBackend, @unchecked Sendable {
         while token < options.maxTokens || (holdFirst && index == 1) {
             Thread.sleep(forTimeInterval: 0.01)
             made += 1
-            if !emit(token == 0 ? .reasoning("thinking") : .answer("answer")) { break }
+            if !emit(token == 0 ? .reasoning("thinking") : .answer("answer")) {
+                if failOnStop { throw InferenceTestError.generation }
+                break
+            }
             token += 1
         }
         return GenerationMetrics(
@@ -210,4 +215,25 @@ private let userMessage = [ConversationMessage(role: .user, content: "Hello")]
     await recovered.waitUntilFinished()
     let state = await session.state
     #expect(state == .ready)
+}
+
+@Test(.timeLimit(.minutes(1)))
+func backendFailureIsPreservedWhenCancellationRacesWithIt() async throws {
+    let fixture = SessionFixture(); defer { fixture.clean() }
+    let backend = TestBackend(holdFirst: true, failOnStop: true)
+    let session = InferenceSession { _, _ in backend }
+    try await session.load(from: fixture.repository())
+    let run = try await session.generate(
+        messages: userMessage, options: GenerationOptions(maxTokens: 20)
+    )
+    try await backend.waitForStart()
+    run.cancel()
+    do {
+        for try await _ in run.events {}
+        Issue.record("Backend failure was discarded")
+    } catch InferenceTestError.generation {}
+    await run.waitUntilFinished()
+    await #expect(throws: InferenceError.notLoaded) {
+        try await session.generate(messages: userMessage)
+    }
 }

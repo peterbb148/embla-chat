@@ -173,7 +173,7 @@ public actor InferenceSession {
             continuation.yield(.finished(metrics))
             continuation.finish()
         } catch {
-            if control.isCancelled || error is CancellationError {
+            if error is CancellationError {
                 backend.reset()
                 state = .ready
                 continuation.finish(throwing: CancellationError())

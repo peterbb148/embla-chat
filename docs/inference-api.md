@@ -57,7 +57,9 @@ The minimal UI in #17 must cancel, await, and unload on background transition;
 prevent model deletion while loading/loaded/generating; discard stale events;
 and apply the same cancellation/wait sequence for New Chat. No background inference
 is supported. A thrown generation failure unloads the failed backend and requires
-an explicit reload before retrying.
+an explicit reload before retrying. A genuine backend error remains an error even
+if a cancellation request races with it; cancellation never hides diagnostics or
+marks a failed backend reusable.
 
 ## Conversation and context contract
 
