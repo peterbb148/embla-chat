@@ -17,7 +17,7 @@ and upstream license notices remain unchanged.
   revision `4d23eb7de21fc5b55c3051021c7550af1fdce0e8`.
 - Required runtime assets: `config.json`, `model.safetensors`,
   `engram_table.safetensors`, and `tokenizer.json`. Exact sizes and source identifiers
-  are recorded in [model-manifest.json](model-manifest.json). LFS object identifiers
+  are recorded in [model-manifest.json](../Sources/EmblaCore/Resources/model-manifest.json). LFS object identifiers
   are SHA-256 digests; ordinary Git blob identifiers are not file SHA-256 digests.
 - Required assets total 5,624,251,762 bytes (5.624 GB decimal). Storage must also
   accommodate download staging and filesystem overhead. This size is not a RAM budget.
