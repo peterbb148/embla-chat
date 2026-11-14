@@ -161,6 +161,13 @@ func cancellationNeverHidesAGenuineBackendFailureInTheUI() async throws {
     await model.waitUntilIdle()
     #expect(model.error != nil)
     #expect(!model.loaded && !model.busy)
+    let diagnostic = model.error
+    model.enteredBackground()
+    await model.waitUntilIdle()
+    #expect(model.error == diagnostic)
+    let state = await session.state
+    #expect(state == .unloaded)
+    #expect(!model.busy)
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor

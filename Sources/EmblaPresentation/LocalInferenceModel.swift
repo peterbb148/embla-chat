@@ -99,12 +99,14 @@ public final class LocalInferenceModel {
         busy = true
         downloading = operation == .download
         running = operation == .generate
-        error = nil
+        if operation != .unload { error = nil }
         downloadedBytes = 0
         let id = UUID()
         let input = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         operationID = id
-        status = downloading ? "Downloading and verifying model…" : "Checking model storage…"
+        if operation != .unload {
+            status = downloading ? "Downloading and verifying model…" : "Checking model storage…"
+        }
         task = Task {
             do {
                 if loaded && operation != .generate && operation != .clear {
@@ -134,7 +136,7 @@ public final class LocalInferenceModel {
                 case .clear:
                     break  // Deferred actions reset the session and clear the visible text.
                 case .unload:
-                    status = "Model unloaded. Run again when ready."
+                    if error == nil { status = "Model unloaded. Run again when ready." }
                 }
             } catch {
                 if operation == .check || operation == .download || operation == .delete {
