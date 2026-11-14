@@ -21,6 +21,8 @@ compaction (#8) and iCloud persistence/restoration (#9) remain unimplemented.
 - Xcode 27.2 unsigned iOS Release build passed.
 - Core and presentation checks passed, including actual context-array assertions for
   follow-up messages, New Chat context reset, interruption states and wait-for-stop.
+  Additional review regressions preserve earlier answers after rejected empty requests
+  and allow New Chat to clear/unlock even when model storage setup is unavailable.
   The optional provider check was skipped in this fixture run; it remains a separate CI check.
 - On the iPhone 18 Pro simulator with iOS 27.2, all three UI tests passed:
   `testModelControlsAreInSettings`, `testComposerFocusAndSendRequiresVerifiedModel`,

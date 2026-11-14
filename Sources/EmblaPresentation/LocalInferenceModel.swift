@@ -63,10 +63,14 @@ public final class LocalInferenceModel {
     }
 
     /// Test-only construction is internal; the app cannot select a substitute runtime.
-    init(repository: ModelRepository, manifest: ModelManifest, session: InferenceSession) {
+    init(repository: ModelRepository?, manifest: ModelManifest, session: InferenceSession) {
         self.repository = repository
         self.manifest = manifest
         self.session = session
+        if repository == nil {
+            error = "Model setup is unavailable."
+            status = "Model setup is unavailable."
+        }
     }
 
     public func check() { start(.check) }
@@ -109,11 +113,11 @@ public final class LocalInferenceModel {
     private enum Operation { case check, download, delete, generate, clear, unload }
 
     private func start(_ operation: Operation) {
-        guard !busy, let repository else { return }
+        guard !busy else { return }
         busy = true
         downloading = operation == .download
         running = operation == .generate
-        if operation != .unload { error = nil }
+        if operation != .unload && repository != nil { error = nil }
         downloadedBytes = 0
         let id = UUID()
         let input = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -130,12 +134,12 @@ public final class LocalInferenceModel {
                 }
                 switch operation {
                 case .check:
-                    readyDirectory = try await repository.installedDirectory()
+                    readyDirectory = try await requireRepository().installedDirectory()
                     status =
                         readyDirectory == nil
                         ? "Model not downloaded." : "Model verified and ready."
                 case .download:
-                    readyDirectory = try await repository.install { [weak self] bytes in
+                    readyDirectory = try await requireRepository().install { [weak self] bytes in
                         Task { @MainActor in
                             guard let self, self.operationID == id else { return }
                             self.downloadedBytes = max(self.downloadedBytes, bytes)
@@ -143,18 +147,20 @@ public final class LocalInferenceModel {
                     }
                     status = "Model verified and ready."
                 case .delete:
-                    try await repository.delete()
+                    try await requireRepository().delete()
                     readyDirectory = nil
                     status = "Model deleted."
                 case .generate:
-                    try await generate(input: input, repository: repository)
+                    try await generate(input: input, repository: requireRepository())
                 case .clear:
                     break  // Deferred actions reset the session and clear the visible text.
                 case .unload:
                     if error == nil { status = "Model unloaded. Run again when ready." }
                 }
             } catch {
-                if operation == .generate, messages.last?.role == .assistant {
+                if operation == .generate, messages.last?.role == .assistant,
+                    messages.last?.state == .streaming
+                {
                     messages[messages.count - 1].state =
                         error is CancellationError || (error as? URLError)?.code == .cancelled
                         ? .interrupted : .failed
@@ -169,11 +175,20 @@ public final class LocalInferenceModel {
                     status = "Operation failed."
                 }
             }
-            do { storedBytes = try await repository.storedBytes() } catch {
-                self.error = "Could not read model storage usage: \(error.localizedDescription)"
+            if let repository {
+                do { storedBytes = try await repository.storedBytes() } catch {
+                    self.error = "Could not read model storage usage: \(error.localizedDescription)"
+                }
             }
             await finishDeferredActions()
         }
+    }
+
+    private func requireRepository() throws -> ModelRepository {
+        guard let repository else {
+            throw PresentationFailure(message: error ?? "Model setup is unavailable.")
+        }
+        return repository
     }
 
     private func generate(input: String, repository: ModelRepository) async throws {

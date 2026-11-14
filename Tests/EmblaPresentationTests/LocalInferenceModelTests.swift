@@ -214,6 +214,43 @@ func followUpIncludesPriorTurnsAndNewChatResetsContext() async throws {
     #expect(model.messages.count == 2)
 }
 
+@Test @MainActor
+func rejectedEmptyRequestDoesNotChangeThePreviousResponse() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    model.prompt = "A valid message"
+    model.run()
+    await model.waitUntilIdle()
+    let response = try #require(model.messages.last)
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.error == InferenceError.emptyPrompt.localizedDescription)
+    #expect(model.messages.count == 2)
+    #expect(model.messages.last?.id == response.id)
+    #expect(model.messages.last?.state == .complete)
+    #expect(backend.calls == 1)
+}
+
+@Test @MainActor
+func newChatWithoutModelStorageStillClearsAndUnlocksTheComposer() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = LocalInferenceModel(
+        repository: nil, manifest: fixture.manifest,
+        session: InferenceSession { _, _ in backend })
+    let diagnostic = model.error
+    let previousConversation = model.conversationID
+    model.prompt = "Draft while setup is unavailable"
+    model.newChat()
+    await model.waitUntilIdle()
+    #expect(!model.resetting && !model.busy)
+    #expect(model.prompt.isEmpty && model.messages.isEmpty)
+    #expect(model.conversationID != previousConversation)
+    #expect(model.error == diagnostic)
+    #expect(backend.calls == 0)
+}
+
 @Test(.timeLimit(.minutes(1))) @MainActor
 func stoppingRemainsBusyUntilTheWorkerActuallyDrains() async throws {
     let fixture = try PresentationFixture(); defer { fixture.clean() }
