@@ -9,8 +9,9 @@ Runtime integration and the native SwiftUI scaffold are implemented. Model setup
 now includes pinned downloads, SHA-256 verification, progress, cancellation, retry,
 and storage deletion. See [model storage](docs/model-storage.md) for behavior and
 validation limits. The [inference API](docs/inference-api.md) and minimal prompt/Run/Stop screen use
-the real pinned Embla adapter. Full-model and physical iPhone execution remain
-unverified; see [device validation](docs/device-validation.md) for the acceptance
+the real pinned Embla adapter. The signed app is installed and launches on iPhone
+17 Pro with iOS 27.2.1. Full-model inference remains unverified; see
+[device validation](docs/device-validation.md) for the acceptance
 procedure and outstanding evidence. See [development](docs/development.md) for build steps.
 
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,

@@ -135,9 +135,18 @@ public actor ModelRepository {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         var hash = SHA256()
-        while let data = try handle.read(upToCount: 8 * 1_024 * 1_024), !data.isEmpty {
+        var hasMore = true
+        while hasMore {
             try Task.checkCancellation()
-            hash.update(data: data)
+            // Foundation's file reads can retain autoreleased buffers for the whole job.
+            // Drain each chunk so verifying multi-gigabyte weights stays bounded in memory.
+            hasMore = try autoreleasepool {
+                guard let data = try handle.read(upToCount: 8 * 1_024 * 1_024),
+                    !data.isEmpty
+                else { return false }
+                hash.update(data: data)
+                return true
+            }
         }
         let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
         guard digest == asset.sha256 else { throw ModelStorageError.invalidAsset(asset.path) }

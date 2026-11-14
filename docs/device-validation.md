@@ -92,9 +92,9 @@ section remains pending until observations exist:
 
 | Requirement | Observed result |
 | --- | --- |
-| Physical iPhone 17 Pro + actual iOS version | Pending |
-| Installed app source commit and signing/build result | Pending |
-| Complete model download and verification | Pending |
+| Physical iPhone 17 Pro + actual iOS version | iPhone 17 Pro, iOS 27.2.1, Developer Mode enabled, wired connection (2026-11-14) |
+| Installed app source commit and signing/build result | `136e49f`; Xcode 27.2 signed Release build, installation and launch succeeded; personal signing settings remain local |
+| Complete model download and verification | Pending: first attempt terminated during setup; user restarted the app; staging remained unready. Progress callback and hashing-buffer retention fixes await a fresh device attempt. |
 | Real loaded-model answer and stream | Pending |
 | Verified load time, token counts, decode speed | Pending |
 | Measured memory behavior | Pending |
