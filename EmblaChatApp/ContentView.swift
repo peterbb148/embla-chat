@@ -121,13 +121,15 @@ struct ContentView: View {
                     Button("Done") { promptFocused = false }
                 }
             }
-            .confirmationDialog("Delete downloaded model files?", isPresented: $confirmDelete) {
+            .alert("Delete downloaded model files?", isPresented: $confirmDelete) {
                 Button("Delete model", role: .destructive) { model.delete() }
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text("You will need to download the model again. This does not delete chat data.")
             }
-            .confirmationDialog("Start a new chat?", isPresented: $confirmNewChat) {
+            .alert("Start a new chat?", isPresented: $confirmNewChat) {
                 Button("Start new chat", role: .destructive) { model.newChat() }
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text(
                     "The current prompt and output will be cleared after any active generation stops."

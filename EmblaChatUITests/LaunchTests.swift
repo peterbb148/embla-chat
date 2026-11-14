@@ -7,6 +7,7 @@ final class LaunchTests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
         XCTAssertTrue(app.buttons["Download model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Download model"].isEnabled)
         XCTAssertTrue(app.staticTexts["model-status"].exists)
     }
 
@@ -38,9 +39,10 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(prompt.value as? String, "Draft prompt")
         app.buttons["New Chat"].tap()
         app.buttons["Start new chat"].tap()
-        let cleared = NSPredicate(format: "enabled == false")
-        expectation(for: cleared, evaluatedWith: app.buttons["New Chat"])
+        let cleared = NSPredicate(format: "value == %@ OR value == %@", "", "Prompt")
+        expectation(for: cleared, evaluatedWith: prompt)
         waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.buttons["New Chat"].isEnabled)
         XCTAssertFalse(app.staticTexts["answer"].exists)
     }
 }
