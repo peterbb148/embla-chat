@@ -5,8 +5,10 @@ context compaction, and iCloud chat persistence. iPad and Mac support are planne
 
 ## Current status
 
-Runtime integration has been investigated; the app scaffold, inference integration,
-and user interface are not implemented yet. No iPhone inference has been validated.
+Runtime integration has been investigated and a native SwiftUI iPhone scaffold is
+implemented with the pinned runtime libraries. The screen describes the scaffold
+stage; model download and chat are not implemented. No iPhone inference has been
+validated. See [development](docs/development.md) for build and launch commands.
 
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,
 licensing, build requirements, limitations, and remaining validation.
