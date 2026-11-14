@@ -1,11 +1,11 @@
 # Development
 
-## Current build blocker
+## Runtime compatibility patch
 
-The selected upstream revision fails iOS compilation in `ModelStore.swift` because
-`homeDirectoryForCurrentUser` is unavailable. The scaffold has not yet passed its
-hosted build or launch test. A one-line runtime fix is prepared; publishing a fork
-is awaiting authorization. See [runtime integration](runtime-integration.md).
+The app pins the [runtime fork](https://github.com/peterbb148/embla-metal/commit/0c8caaa3616372482d047fa9e953ea656cb34588)
+with a single iOS compilation fix. The original revision calls an API unavailable
+on iOS. Build and simulator launch validation must pass with this corrected pin.
+See [runtime integration](runtime-integration.md) for the exact change and provenance.
 
 ## Requirements
 

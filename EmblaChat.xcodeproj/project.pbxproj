@@ -484,10 +484,10 @@
 /* Begin XCRemoteSwiftPackageReference section */
 		AB60A2A44344AA7528605A75 /* XCRemoteSwiftPackageReference "embla-metal" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sevren-ai/embla-metal";
+			repositoryURL = "https://github.com/peterbb148/embla-metal";
 			requirement = {
 				kind = revision;
-				revision = 1bc69bc355625310b965e19339d255f843023eeb;
+				revision = 0c8caaa3616372482d047fa9e953ea656cb34588;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

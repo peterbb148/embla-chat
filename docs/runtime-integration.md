@@ -5,6 +5,12 @@ weights were downloaded and no iOS build or physical-device inference was perfor
 
 ## Selected inputs
 
+The investigated upstream revision below is the baseline. The app now pins runtime
+fork revision `0c8caaa3616372482d047fa9e953ea656cb34588` in
+[peterbb148/embla-metal](https://github.com/peterbb148/embla-metal/commit/0c8caaa3616372482d047fa9e953ea656cb34588),
+which changes only the home-directory expression described below. The model pin
+and upstream license notices remain unchanged.
+
 - Runtime: [sevren-ai/embla-metal](https://github.com/sevren-ai/embla-metal/tree/1bc69bc355625310b965e19339d255f843023eeb),
   revision `1bc69bc355625310b965e19339d255f843023eeb`.
 - Model: [sevren-ai/Embla1-4bit](https://huggingface.co/sevren-ai/Embla1-4bit/tree/4d23eb7de21fc5b55c3051021c7550af1fdce0e8),
@@ -139,11 +145,11 @@ revision: `ModelStore.swift:18` calls `FileManager.homeDirectoryForCurrentUser`,
 which is unavailable on iOS. The package platform declaration is therefore not
 proof that the selected `EmblaChat` target builds for iPhone.
 
-Proposed minimal correction: replace that expression with
+Applied minimal correction: replace that expression with
 `URL(fileURLWithPath: NSHomeDirectory())`, retaining the existing cache suffix.
-This uses the process sandbox home on iOS. A public fork and new pinned revision
-require user authorization; automatic approval review rejected creating the extra
-repository without it. No corrected runtime has been published or selected yet.
+This uses the process sandbox home on iOS. The user authorized the public fork,
+and the app selects its immutable patched commit. The patch changes no inference
+code and preserves the existing cache suffix.
 
 The latest scaffold check must pass after the dependency fix, followed by a fresh
 Copilot review of the final head. #2 remains open until build and launch are proven.
