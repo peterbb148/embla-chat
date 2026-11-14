@@ -13,6 +13,7 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     private var count = 0
     private var inputs: [[ConversationMessage]] = []
     private let pauseFirst: Bool
+    private let firstFinishReason: String
     private let failOnStop: Bool
     private let stopGate: DispatchSemaphore?
     private var reachedStop = false
@@ -20,11 +21,13 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     var encodedMessages: [[ConversationMessage]] { lock.withLock { inputs } }
 
     init(
-        failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil, pauseFirst: Bool = true
+        failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil, pauseFirst: Bool = true,
+        firstFinishReason: String = "stop"
     ) {
         self.failOnStop = failOnStop
         self.stopGate = stopGate
         self.pauseFirst = pauseFirst
+        self.firstFinishReason = firstFinishReason
     }
     func encode(_ messages: [ConversationMessage]) throws -> [Int] {
         lock.withLock { inputs.append(messages) }
@@ -48,7 +51,8 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
             _ = emit(.answer("fixture answer"))
         }
         return GenerationMetrics(
-            finishReason: "stop", promptTokens: 2, completionTokens: 2,
+            finishReason: index == 1 ? firstFinishReason : "stop",
+            promptTokens: 2, completionTokens: 2,
             promptMilliseconds: 1, decodeMilliseconds: 1
         )
     }
@@ -230,6 +234,30 @@ func rejectedEmptyRequestDoesNotChangeThePreviousResponse() async throws {
     #expect(model.messages.last?.id == response.id)
     #expect(model.messages.last?.state == .complete)
     #expect(backend.calls == 1)
+}
+
+@Test @MainActor
+func limitedResponseKeepsActualPartialContentInFollowUpContext() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false, firstFinishReason: "length")
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    model.prompt = "A request that reaches its output budget"
+    model.run()
+    await model.waitUntilIdle()
+    let partial = try #require(model.messages.last)
+    #expect(partial.state == .limited)
+    #expect(partial.text == "fixture answer" && partial.reasoning == "fixture reasoning")
+    #expect(model.metrics?.finishReason == "length")
+    #expect(model.error == nil)
+    model.prompt = "Continue that answer"
+    model.run()
+    await model.waitUntilIdle()
+    let context = try #require(backend.encodedMessages.last)
+    #expect(context.map(\.role) == [.user, .assistant, .user])
+    #expect(context[1].content == partial.text)
+    #expect(context[1].reasoning == partial.reasoning)
+    #expect(model.messages[1].id == partial.id && model.messages[1].state == .limited)
+    #expect(model.messages.last?.state == .complete)
 }
 
 @Test @MainActor

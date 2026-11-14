@@ -23,6 +23,8 @@ compaction (#8) and iCloud persistence/restoration (#9) remain unimplemented.
   follow-up messages, New Chat context reset, interruption states and wait-for-stop.
   Additional review regressions preserve earlier answers after rejected empty requests
   and allow New Chat to clear/unlock even when model storage setup is unavailable.
+  A length-limit fixture also verifies partial text/reasoning stay marked as limited
+  and enter the follow-up context before a subsequent response completes normally.
   The optional provider check was skipped in this fixture run; it remains a separate CI check.
 - On the iPhone 18 Pro simulator with iOS 27.2, all three UI tests passed:
   `testModelControlsAreInSettings`, `testComposerFocusAndSendRequiresVerifiedModel`,
