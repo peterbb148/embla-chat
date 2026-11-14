@@ -74,3 +74,18 @@ Model weights and local build/user state are ignored by Git.
 The root Swift package and Xcode project both pin the same runtime revision.
 Their lockfiles are checked in; test/build commands enforce resolved versions.
 See [inference API](inference-api.md) for session ownership and device evidence limits.
+
+## Minimal inference screen
+
+The shared EmblaPresentation controller owns setup and a single active run. The
+iPhone view contains prompt input, Run/Stop, New Chat confirmation, plain streamed
+reasoning/answer text and actual runtime metrics. Each Run currently submits one
+prompt; multi-turn chat, compaction and iCloud are later epics. Idle sleep is
+disabled only during foreground work. Inactivity requests inference cancellation;
+backgrounding cancels work and unloads after the worker drains.
+
+Presentation tests use an internal test constructor; the app's public constructor
+always selects EmblaRuntime. There is no app mock mode. Hosted UI tests assert
+model readiness gating and New Chat confirmation without downloading weights.
+For installation, real model acceptance and offline proof, follow
+[device validation](device-validation.md). Do not close Epic 2 from CI alone.
