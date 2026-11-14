@@ -34,7 +34,7 @@ export DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer
 The script fails if the selected toolchain is not Xcode 26.2. Install the iOS 26.2
 simulator runtime through Xcode before running it. It resolves only the checked-in
 `Package.resolved` revision, builds the unsigned Release target for generic iOS,
-runs the shared core tests, then creates an isolated iPhone 17 Pro simulator and
+runs the shared core tests (including inference lifecycle fixtures), then creates an isolated iPhone 17 Pro simulator and
 runs the model-setup UI test. Simulator
 cleanup runs on exit. Local signing credentials and model weights are not needed.
 
@@ -70,3 +70,7 @@ increased-memory entitlements. Model setup is documented in [model storage](mode
 SwiftPM copies upstream Metal kernel and web resource bundles; preserve them.
 The app also bundles both upstream license notice files from `third-party/`.
 Model weights and local build/user state are ignored by Git.
+
+The root Swift package and Xcode project both pin the same runtime revision.
+Their lockfiles are checked in; test/build commands enforce resolved versions.
+See [inference API](inference-api.md) for session ownership and device evidence limits.
