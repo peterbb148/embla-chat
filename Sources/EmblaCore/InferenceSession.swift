@@ -27,8 +27,24 @@ public struct GenerationRun: Sendable {
     public func waitUntilFinished() async { await worker.value }
 }
 
+/// Gives blocking Metal work a dedicated serial queue instead of occupying cooperative threads.
+private final class InferenceExecutor: SerialExecutor {
+    private let queue = DispatchQueue(label: "embla.inference", qos: .userInitiated)
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let job = UnownedJob(job)
+        let executor = asUnownedSerialExecutor()
+        queue.async { job.runSynchronously(on: executor) }
+    }
+}
+
 /// Owns one loaded model and serializes loading, tokenization, generation, reset and unloading.
 public actor InferenceSession {
+    private nonisolated let executor = InferenceExecutor()
+    public nonisolated var unownedExecutor: UnownedSerialExecutor {
+        executor.asUnownedSerialExecutor()
+    }
+
     public enum State: Sendable, Equatable {
         case unloaded, loading, ready, generating
         case failed(String)

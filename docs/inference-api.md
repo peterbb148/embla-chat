@@ -33,7 +33,8 @@ try await session.unload()
 A caller owns the active `GenerationRun`. It must consume the stream or cancel it,
 then await `waitUntilFinished()` before treating the engine as stopped. Loading,
 tokenization, generation, reset and unloading run serially on the session actor.
-Synchronous runtime work does not execute on the main actor. The stream emits
+The session uses a dedicated serial executor for blocking Metal work, avoiding
+both the main actor and starvation of Swift concurrency cooperative workers. The stream emits
 reasoning text, answer text, then completion metrics; cancellation throws rather
 than pretending the answer completed.
 
