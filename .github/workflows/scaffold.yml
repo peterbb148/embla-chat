@@ -1,36 +1,33 @@
-name: Scaffold launch
+name: iOS build and launch
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  scaffold:
+  ios:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
-      - name: Toolchain
-        run: xcodebuild -version
-      - name: Resolve pinned runtime
-        run: xcodebuild -resolvePackageDependencies -project EmblaChat.xcodeproj -scheme EmblaChat
-      - name: Launch scaffold in simulator
-        run: |
-          set -euo pipefail
-          device=$(xcrun simctl create EmblaScaffold com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro com.apple.CoreSimulator.SimRuntime.iOS-26-2)
-          xcrun simctl boot "$device"
-          xcrun simctl bootstatus "$device" -b
-          xcodebuild test -project EmblaChat.xcodeproj -scheme EmblaChat \
-            -destination "platform=iOS Simulator,id=$device" \
-            -derivedDataPath build/DerivedData -resultBundlePath build/Scaffold.xcresult \
-            CODE_SIGNING_ALLOWED=NO
-      - name: Upload test evidence
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          name: scaffold-results
-          path: build/Scaffold.xcresult
-          if-no-files-found: warn
+          persist-credentials: false
+      - name: Build device target and test simulator launch
+        run: ./scripts/check.sh
+      - name: Upload build and test evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ios-build-and-test-results
+          path: |
+            build/*.log
+            build/test-run.*/Scaffold.xcresult
+          if-no-files-found: error
           retention-days: 7

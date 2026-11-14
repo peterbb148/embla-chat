@@ -131,8 +131,9 @@ license for Embla Chat's own source. No model weights are committed to this repo
   were made. Model checksums are source metadata, not locally verified weight hashes.
 - Local toolchain reports Swift 6.2.3; `xcode-select -p` selects CommandLineTools and
   `xcodebuild -version` fails. No Xcode app was found directly under `/Applications`.
-- #2 must prove iOS compilation and scaffold launch with a full Xcode installation
-  or hosted simulator. #16 must prove a hosted clean build.
+- #2 proved iOS simulator compilation and scaffold launch in hosted run
+  [43582094191](https://github.com/peterbb148/embla-chat/actions/runs/43582094191).
+  #16 adds an unsigned device Release build and reproducible clean-checkout checks.
 - #17 must prove actual iPhone 17 Pro loading, output, cancellation, offline operation,
   memory viability and performance. No iPhone 17 Pro performance is claimed here.
 - Upstream README measurements are for M5 Pro and iPhone 18 Pro, not the target phone.
@@ -151,5 +152,6 @@ This uses the process sandbox home on iOS. The user authorized the public fork,
 and the app selects its immutable patched commit. The patch changes no inference
 code and preserves the existing cache suffix.
 
-The latest scaffold check must pass after the dependency fix, followed by a fresh
-Copilot review of the final head. #2 remains open until build and launch are proven.
+The corrected pin passed hosted simulator compilation and launch validation on
+app commit `43bf527`. Copilot reviewed that final head with no open issues, and
+PR #20 was merged to complete #2. Physical-device inference remains unverified.

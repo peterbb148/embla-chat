@@ -36,7 +36,7 @@
 		B95C22A930CBD2A857E7F2A2 /* embla-metal-LICENSE */ = {isa = PBXFileReference; includeInIndex = 1; path = "embla-metal-LICENSE"; sourceTree = "<group>"; };
 		BA2F787EF64BAC9D92D3B25C /* LaunchTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
 		C20D432FADDCF620DB0D10EE /* Embla1-4bit-LICENSE */ = {isa = PBXFileReference; includeInIndex = 1; path = "Embla1-4bit-LICENSE"; sourceTree = "<group>"; };
-		F580795DB742DCC607DC6A26 /* EmblaChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EmblaChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F580795DB742DCC607DC6A26 /* EmblaChatApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EmblaChatApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -100,7 +100,7 @@
 		8B3578501A5D80AA1E5F64CA /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				F580795DB742DCC607DC6A26 /* EmblaChat.app */,
+				F580795DB742DCC607DC6A26 /* EmblaChatApp.app */,
 				2299900845A4D12BAE7AAFC6 /* EmblaChatUITests.xctest */,
 			);
 			name = Products;
@@ -129,9 +129,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		8A387D6704183EF77B47341F /* EmblaChat */ = {
+		8A387D6704183EF77B47341F /* EmblaChatApp */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 36FF34B4B17897818442C593 /* Build configuration list for PBXNativeTarget "EmblaChat" */;
+			buildConfigurationList = 36FF34B4B17897818442C593 /* Build configuration list for PBXNativeTarget "EmblaChatApp" */;
 			buildPhases = (
 				E957970DA1060E55BE03F6D4 /* Sources */,
 				F4EE976037F40F509ED3F063 /* Frameworks */,
@@ -141,13 +141,13 @@
 			);
 			dependencies = (
 			);
-			name = EmblaChat;
+			name = EmblaChatApp;
 			packageProductDependencies = (
 				6372106BD4A0BD174889E26D /* EmblaMetal */,
 				57D340455A73CFCB7F0EB841 /* EmblaChat */,
 			);
-			productName = EmblaChat;
-			productReference = F580795DB742DCC607DC6A26 /* EmblaChat.app */;
+			productName = EmblaChatApp;
+			productReference = F580795DB742DCC607DC6A26 /* EmblaChatApp.app */;
 			productType = "com.apple.product-type.application";
 		};
 		A7F5E9B82F22462FE86C8E2C /* EmblaChatUITests */ = {
@@ -176,6 +176,11 @@
 			attributes = {
 				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A7F5E9B82F22462FE86C8E2C = {
+						TestTargetID = 8A387D6704183EF77B47341F;
+					};
+				};
 			};
 			buildConfigurationList = 2D3F6F5FE4F7120E7EC9D54A /* Build configuration list for PBXProject "EmblaChat" */;
 			compatibilityVersion = "Xcode 3.2";
@@ -195,7 +200,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				8A387D6704183EF77B47341F /* EmblaChat */,
+				8A387D6704183EF77B47341F /* EmblaChatApp */,
 				A7F5E9B82F22462FE86C8E2C /* EmblaChatUITests */,
 			);
 		};
@@ -244,7 +249,7 @@
 		9964B86303A183C4AF08BE27 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = EmblaChat;
-			target = 8A387D6704183EF77B47341F /* EmblaChat */;
+			target = 8A387D6704183EF77B47341F /* EmblaChatApp */;
 			targetProxy = 064EADF8839C8C28F2D6486B /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -263,7 +268,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
-				TEST_TARGET_NAME = EmblaChat;
+				TEST_TARGET_NAME = EmblaChatApp;
 			};
 			name = Debug;
 		};
@@ -444,7 +449,7 @@
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
-				TEST_TARGET_NAME = EmblaChat;
+				TEST_TARGET_NAME = EmblaChatApp;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -470,7 +475,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		36FF34B4B17897818442C593 /* Build configuration list for PBXNativeTarget "EmblaChat" */ = {
+		36FF34B4B17897818442C593 /* Build configuration list for PBXNativeTarget "EmblaChatApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C60A433F85331ED2025EFADB /* Release */,
