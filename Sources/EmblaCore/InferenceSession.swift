@@ -91,11 +91,8 @@ public actor InferenceSession {
     ) throws -> GenerationRun {
         guard !busy else { throw InferenceError.busy }
         guard let backend else { throw InferenceError.notLoaded }
-        guard
-            messages.contains(where: {
-                $0.role == .user
-                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            })
+        guard let latestUser = messages.last(where: { $0.role == .user }),
+            !latestUser.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { throw InferenceError.emptyPrompt }
         guard options.maxTokens > 0, options.temperature.isFinite, options.temperature >= 0,
             options.topP.isFinite, options.topP > 0, options.topP <= 1

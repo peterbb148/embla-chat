@@ -173,6 +173,13 @@ private let userMessage = [ConversationMessage(role: .user, content: "Hello")]
     await #expect(throws: InferenceError.emptyPrompt) {
         try await session.generate(messages: [ConversationMessage(role: .user, content: "  ")])
     }
+    await #expect(throws: InferenceError.emptyPrompt) {
+        try await session.generate(messages: [
+            ConversationMessage(role: .user, content: "Hi"),
+            ConversationMessage(role: .assistant, content: "Hello"),
+            ConversationMessage(role: .user, content: "  "),
+        ])
+    }
     await #expect(throws: InferenceError.invalidSettings) {
         try await session.generate(messages: userMessage, options: GenerationOptions(maxTokens: 0))
     }
