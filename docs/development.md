@@ -9,13 +9,16 @@ See [runtime integration](runtime-integration.md) for the exact change and prove
 
 ## Requirements
 
-Use full Xcode 26.2 (including its iOS 26.2 simulator runtime) on a supported Mac.
+The reproducible hosted baseline is full Xcode 26.2 with its iOS 26.2 simulator runtime.
+Local Xcode 27.2 is also used for signed iPhone validation; select it explicitly with
+`DEVELOPER_DIR` rather than using Command Line Tools.
 Command Line Tools alone cannot build this iOS application. The deployment target
 is iOS 18; the initial app targets iPhone. iPad and Mac apps are later milestones.
 
 The checked-in `EmblaChat.xcodeproj` is the source project; no project generator is
 required. Open it in Xcode, select the shared `EmblaChat` scheme and an iPhone
-simulator, and Run. The current screen provides model download and verification controls.
+simulator, and Run. The current screen is a conversation with a bottom composer. Model download and
+verification controls are in Settings.
 The app target, product, and Swift module are `EmblaChatApp` to avoid colliding
 with the upstream `EmblaChat` package target. The shared scheme remains `EmblaChat`,
 and the app display name remains Embla Chat. The UI test explicitly references
@@ -35,10 +38,12 @@ The script fails if the selected toolchain is not Xcode 26.2. Install the iOS 26
 simulator runtime through Xcode before running it. It resolves only the checked-in
 `Package.resolved` revision, builds the unsigned Release target for generic iOS,
 runs the shared core tests (including inference lifecycle fixtures), then creates an isolated iPhone 17 Pro simulator and
-runs the model-setup UI test. Simulator
+runs the chat/settings UI tests. Simulator
 cleanup runs on exit. Local signing credentials and model weights are not needed.
 
-The UI test launches the app and asserts model setup controls are available. It does not load
+UI tests check that model controls are in Settings, tapping the composer displays
+a software keyboard, Send requires a verified model, and New Chat confirmation preserves
+or clears a draft. They do not load
 model weights, compile runtime Metal kernels at execution, or prove physical-device
 inference. The unsigned device build checks compilation/linking for actual iOS,
 including copied SwiftPM resources, but does not prove installation or inference.
@@ -75,17 +80,33 @@ The root Swift package and Xcode project both pin the same runtime revision.
 Their lockfiles are checked in; test/build commands enforce resolved versions.
 See [inference API](inference-api.md) for session ownership and device evidence limits.
 
-## Minimal inference screen
+## Conversational screen and settings
 
-The shared EmblaPresentation controller owns setup and a single active run. The
-iPhone view contains prompt input, Run/Stop, New Chat confirmation, plain streamed
-reasoning/answer text and actual runtime metrics. Each Run currently submits one
-prompt; multi-turn chat, compaction and iCloud are later epics. Idle sleep is
-disabled only during foreground work. Inactivity requests inference cancellation;
-backgrounding cancels work and unloads after the worker drains.
+EmblaPresentation owns the active in-memory transcript and serializes real model
+requests. The main view shows user messages, assistant responses, expandable reasoning,
+a bottom-anchored multiline composer, Send/Stop and confirmed New Chat. Model download,
+verification, storage deletion and last-response measurements are in Settings. Opening
+Settings does not reset the conversation or start another readiness check.
 
-Presentation tests use an internal test constructor; the app's public constructor
-always selects EmblaRuntime. There is no app mock mode. Hosted UI tests assert
-model readiness gating and New Chat confirmation without downloading weights.
-For installation, real model acceptance and offline proof, follow
-[device validation](device-validation.md). Do not close Epic 2 from CI alone.
+Every Send supplies the visible conversation's user messages and actual nonempty
+assistant output/reasoning to the upstream template. Interrupted, failed and length-limited
+responses remain explicitly marked. Empty response rows do not become invented model
+content. No turn is silently trimmed to fit the context limit; the API reports the budget
+error. Automatic compaction (#8) and iCloud restoration (#9) are still pending. The active
+transcript and draft are lost when the process exits in this milestone.
+
+The composer uses native SwiftUI focus and a bottom safe-area inset so the software
+keyboard has space. Device Hub's Capture Keyboard behaves as an attached hardware
+keyboard and can suppress the on-phone keyboard. Turn capture off when checking the
+software keyboard, and also verify by tapping directly on the physical phone. Do not
+force a software keyboard over a deliberately attached hardware keyboard.
+
+Idle sleep is disabled only during foreground work. Inactivity requests cancellation;
+backgrounding cancels and unloads once the worker drains. New Chat uses the same stop/wait
+sequence before clearing transcript, draft and inference context. Model deletion never
+clears the conversation.
+
+Presentation tests use explicit fixture backends to verify actual context arrays,
+interruption states, reset and lifecycle sequencing. The app's public constructor always
+selects EmblaRuntime; there is no app mock mode. Physical model acceptance from Epic 2
+is in [device validation](device-validation.md); new UI/device observations belong to #25.

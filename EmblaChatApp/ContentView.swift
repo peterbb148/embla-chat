@@ -4,89 +4,246 @@ import UIKit
 import EmblaCore
 import EmblaPresentation
 
-/// Minimal local inference screen; all generation uses the shared production API.
+/// Single conversational screen backed by the real local Embla runtime.
 struct ContentView: View {
     @State private var model = LocalInferenceModel()
-    @State private var confirmDelete = false
+    @State private var sheet: Sheet?
     @State private var confirmNewChat = false
-    @FocusState private var promptFocused: Bool
+    @State private var followingOutput = true
+    @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
+
+    private enum Sheet: String, Identifiable {
+        case settings
+        var id: String { rawValue }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { reader in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 24) {
+                        if model.messages.isEmpty {
+                            ContentUnavailableView(
+                                "Start a conversation", systemImage: "bubble.left.and.bubble.right",
+                                description: Text(
+                                    "Your messages stay in this chat while the app is open."))
+                                .padding(.top, 60)
+                        }
+                        ForEach(model.messages) { message in
+                            ChatMessageRow(message: message)
+                        }
+                        Color.clear.frame(height: 1).id("latest-message")
+                    }
+                    .padding()
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y + geometry.containerSize.height
+                        >= geometry.contentSize.height - 100
+                } action: { _, nearBottom in
+                    followingOutput = nearBottom
+                }
+                .onChange(of: model.messages.last?.text) { _, _ in
+                    if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                }
+                .onChange(of: model.messages.count) { _, _ in
+                    followingOutput = true
+                    reader.scrollTo("latest-message", anchor: .bottom)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+            }
+            .navigationTitle("Embla Chat")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        composerFocused = false
+                        sheet = .settings
+                    } label: { Label("Settings", systemImage: "gearshape") }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        confirmNewChat = true
+                    } label: { Label("New Chat", systemImage: "square.and.pencil") }
+                    .disabled(
+                        (model.busy && !model.running)
+                            || (model.messages.isEmpty && model.prompt.isEmpty))
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { composerFocused = false }
+                }
+            }
+            .sheet(item: $sheet) { _ in ModelSettingsView(model: model) }
+            .alert("Start a new chat?", isPresented: $confirmNewChat) {
+                Button("Start new chat", role: .destructive) {
+                    model.newChat()
+                    composerFocused = true
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This clears the current conversation after any active response stops.")
+            }
+            .task { model.check() }
+            .onChange(of: model.busy) { _, _ in updateIdleTimer() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .inactive { model.becameInactive() }
+                if phase == .background { model.enteredBackground() }
+                updateIdleTimer()
+            }
+        }
+    }
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if model.readyDirectory == nil {
+                Button {
+                    composerFocused = false
+                    sheet = .settings
+                } label: {
+                    Label("Set up the model in Settings", systemImage: "arrow.down.circle")
+                }
+            }
+            if model.busy {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(model.status).font(.caption).foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("model-status")
+            }
+            if let error = model.error {
+                Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                    .accessibilityIdentifier("chat-error")
+            }
+            HStack(alignment: .bottom, spacing: 10) {
+                TextField("Message", text: $model.prompt, axis: .vertical)
+                    .lineLimit(1...6)
+                    .focused($composerFocused)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 22))
+                    .accessibilityIdentifier("prompt")
+                    .accessibilityLabel("Message")
+                if model.running {
+                    Button { model.stop() } label: {
+                        Image(systemName: "stop.fill")
+                    }
+                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
+                    .controlSize(.large).frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("Stop")
+                } else {
+                    Button { model.run() } label: {
+                        Image(systemName: "arrow.up")
+                    }
+                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
+                    .controlSize(.large).frame(minWidth: 44, minHeight: 44)
+                    .disabled(!model.canRun)
+                    .accessibilityLabel("Send")
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    private func updateIdleTimer() {
+        UIApplication.shared.isIdleTimerDisabled = model.busy && scenePhase == .active
+    }
+}
+
+/// A stable transcript row; interrupted and limited output remain visibly identified.
+private struct ChatMessageRow: View {
+    let message: ChatMessage
+
+    var body: some View {
+        HStack(alignment: .top) {
+            if message.role == .user { Spacer(minLength: 40) }
+            VStack(alignment: .leading, spacing: 10) {
+                if message.role == .assistant {
+                    Label("Embla", systemImage: "sparkle")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !message.reasoning.isEmpty {
+                        DisclosureGroup("Thinking") {
+                            Text(message.reasoning).font(.callout).foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        .font(.caption)
+                    }
+                }
+                if !message.text.isEmpty {
+                    Group {
+                        if message.role == .user { Text(message.text) }
+                        else { Text(.init(message.text)) }
+                    }
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier(message.role == .user ? "user-message" : "answer")
+                }
+                switch message.state {
+                case .streaming:
+                    if message.text.isEmpty { ProgressView().controlSize(.small) }
+                case .interrupted: Text("Stopped").font(.caption).foregroundStyle(.secondary)
+                case .failed: Text("Response failed").font(.caption).foregroundStyle(.red)
+                case .limited:
+                    Text("Response limit reached").font(.caption).foregroundStyle(.secondary)
+                case .complete: EmptyView()
+                }
+            }
+            .padding(message.role == .user ? 14 : 0)
+            .background {
+                if message.role == .user {
+                    RoundedRectangle(cornerRadius: 20).fill(Color.accentColor.opacity(0.15))
+                }
+            }
+            if message.role == .assistant { Spacer(minLength: 12) }
+        }
+        .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+    }
+}
+
+/// Model administration and measurements stay out of the conversation screen.
+private struct ModelSettingsView: View {
+    @Bindable var model: LocalInferenceModel
+    @State private var confirmDelete = false
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Model setup") {
+                Section("Model") {
                     Text("Embla 1").font(.headline)
                     if let manifest = model.manifest {
-                        LabeledContent("Download", value: size(manifest.totalBytes))
+                        LabeledContent("Download size", value: size(manifest.totalBytes))
                         Text("Source: \(manifest.repository). License: MIT.").font(.caption)
                     }
                     LabeledContent("Local model storage", value: size(model.storedBytes))
                     if model.downloading, let total = model.manifest?.totalBytes {
                         ProgressView(value: Double(model.downloadedBytes), total: Double(total))
-                        Text("\(size(model.downloadedBytes)) of \(size(total)) received").font(
-                            .caption)
+                        Text("\(size(model.downloadedBytes)) of \(size(total)) received")
+                            .font(.caption)
+                        Button("Stop download") { model.stop() }
                     }
-                    if !model.busy {
-                        if model.readyDirectory == nil {
-                            Button("Download model") { model.download() }
-                                .disabled(model.manifest == nil)
-                        }
-                        Button("Check model files") { model.check() }
-                            .disabled(model.manifest == nil)
-                        if model.storedBytes > 0 {
-                            Button("Delete model", role: .destructive) { confirmDelete = true }
-                        }
+                    if model.readyDirectory == nil {
+                        Button("Download model") { model.download() }
+                            .disabled(model.busy || model.manifest == nil)
                     }
-                }
-                Section("Local inference") {
-                    TextField("Prompt", text: $model.prompt, axis: .vertical)
-                        .lineLimit(2...6)
-                        .focused($promptFocused)
-                        .accessibilityIdentifier("prompt")
-                        .disabled(model.busy)
-                    HStack {
-                        Button("Run") {
-                            promptFocused = false; model.run()
-                        }
-                        .disabled(!model.canRun)
-                        Button("Stop") { model.stop() }
-                            .disabled(!model.busy)
-                        Button("New Chat") {
-                            promptFocused = false; confirmNewChat = true
-                        }
-                        .disabled(
-                            (model.busy && !model.running)
-                                || (model.prompt.isEmpty && model.reasoning.isEmpty
-                                    && model.answer.isEmpty)
-                        )
+                    Button("Check model files") { model.check() }
+                        .disabled(model.busy || model.manifest == nil)
+                    if model.storedBytes > 0 {
+                        Button("Delete model", role: .destructive) { confirmDelete = true }
+                            .disabled(model.busy)
                     }
-                    .buttonStyle(.borderless)
                     Text(model.status).accessibilityIdentifier("model-status")
-                    if model.busy && !model.downloading { ProgressView() }
                     if let error = model.error {
                         Text(error).foregroundStyle(.red).textSelection(.enabled)
                     }
-                    Text(
-                        "Each Run submits one prompt. Conversation history and compaction come later."
-                    )
-                    .font(.caption)
-                }
-                if !model.reasoning.isEmpty {
-                    Section("Reasoning") {
-                        Text(model.reasoning).textSelection(.enabled).accessibilityIdentifier(
-                            "reasoning")
-                    }
-                }
-                if !model.answer.isEmpty {
-                    Section("Answer") {
-                        Text(model.answer).textSelection(.enabled).accessibilityIdentifier("answer")
-                    }
                 }
                 if model.loadMilliseconds != nil || model.metrics != nil {
-                    Section("Measured results") {
+                    Section("Last response measurements") {
                         if let time = model.loadMilliseconds {
-                            LabeledContent("Last verified load", value: milliseconds(time))
+                            LabeledContent("Verified load", value: milliseconds(time))
                         }
                         if let metrics = model.metrics {
                             LabeledContent("Prompt tokens", value: "\(metrics.promptTokens)")
@@ -96,50 +253,28 @@ struct ContentView: View {
                             LabeledContent(
                                 "Decode time", value: milliseconds(metrics.decodeMilliseconds))
                             if metrics.decodeMilliseconds > 0 {
-                                LabeledContent(
-                                    "Decode tokens/s",
-                                    value: String(
-                                        format: "%.1f",
-                                        Double(max(0, metrics.completionTokens - 1)) * 1_000
-                                            / metrics.decodeMilliseconds))
+                                LabeledContent("Decode tokens/s", value: String(
+                                    format: "%.1f",
+                                    Double(max(0, metrics.completionTokens - 1)) * 1_000
+                                        / metrics.decodeMilliseconds))
                             }
                         }
                     }
                 }
             }
-            .navigationTitle("Embla Chat")
-            .task { model.check() }
-            .onChange(of: model.busy) { _, _ in updateIdleTimer() }
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .inactive { model.becameInactive() }
-                if phase == .background { model.enteredBackground() }
-                updateIdleTimer()
-            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { promptFocused = false }
-                }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
             .alert("Delete downloaded model files?", isPresented: $confirmDelete) {
                 Button("Delete model", role: .destructive) { model.delete() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("You will need to download the model again. This does not delete chat data.")
-            }
-            .alert("Start a new chat?", isPresented: $confirmNewChat) {
-                Button("Start new chat", role: .destructive) { model.newChat() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
                 Text(
-                    "The current prompt and output will be cleared after any active generation stops."
-                )
+                    "You will need to download the model again. This does not clear your conversation.")
             }
         }
-    }
-
-    private func updateIdleTimer() {
-        UIApplication.shared.isIdleTimerDisabled = model.busy && scenePhase == .active
     }
 
     private func size(_ bytes: Int64) -> String {

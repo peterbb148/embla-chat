@@ -11,16 +11,25 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     let contextSize = 8_192
     private let lock = NSLock()
     private var count = 0
+    private var inputs: [[ConversationMessage]] = []
+    private let pauseFirst: Bool
     private let failOnStop: Bool
     private let stopGate: DispatchSemaphore?
     private var reachedStop = false
     var calls: Int { lock.withLock { count } }
+    var encodedMessages: [[ConversationMessage]] { lock.withLock { inputs } }
 
-    init(failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil) {
+    init(
+        failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil, pauseFirst: Bool = true
+    ) {
         self.failOnStop = failOnStop
         self.stopGate = stopGate
+        self.pauseFirst = pauseFirst
     }
-    func encode(_ messages: [ConversationMessage]) throws -> [Int] { [1, 2] }
+    func encode(_ messages: [ConversationMessage]) throws -> [Int] {
+        lock.withLock { inputs.append(messages) }
+        return [1, 2]
+    }
     func reset() {}
     func generate(
         prompt: [Int], options: GenerationOptions,
@@ -29,7 +38,7 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
         let index = lock.withLock {
             count += 1; return count
         }
-        if index == 1 {
+        if index == 1 && pauseFirst {
             while emit(.reasoning("fixture reasoning")) { Thread.sleep(forTimeInterval: 0.01) }
             lock.withLock { reachedStop = true }
             stopGate?.wait()
@@ -102,11 +111,15 @@ func stopWaitsForTheWorkerAndAllowsAnotherPrompt() async throws {
     await model.waitUntilIdle()
     #expect(!model.busy)
     #expect(model.error == nil)
+    #expect(model.messages.count == 2)
+    #expect(model.messages[1].state == .interrupted)
     model.prompt = "Second prompt"
     model.run()
     await model.waitUntilIdle()
     #expect(model.answer == "fixture answer")
     #expect(model.metrics?.completionTokens == 2)
+    #expect(model.messages.count == 4)
+    #expect(model.messages[3].state == .complete)
     #expect(backend.calls == 2)
 }
 
@@ -122,6 +135,7 @@ func newChatClearsOnlyAfterStoppingAndNeverDeletesTheModel() async throws {
     model.newChat()
     await model.waitUntilIdle()
     #expect(model.prompt.isEmpty && model.reasoning.isEmpty && model.answer.isEmpty)
+    #expect(model.messages.isEmpty)
     #expect(model.readyDirectory != nil)
     let directory = try await fixture.repository.installedDirectory()
     #expect(directory != nil)
@@ -146,6 +160,7 @@ func backgroundStopsAndUnloadsBeforeModelDeletion() async throws {
     await model.waitUntilIdle()
     let directory = try await fixture.repository.installedDirectory()
     #expect(directory == nil)
+    #expect(model.messages.count == 2)
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
@@ -160,6 +175,7 @@ func cancellationNeverHidesAGenuineBackendFailureInTheUI() async throws {
     model.stop()
     await model.waitUntilIdle()
     #expect(model.error != nil)
+    #expect(model.messages.last?.state == .failed)
     #expect(!model.loaded && !model.busy)
     let diagnostic = model.error
     model.enteredBackground()
@@ -168,6 +184,34 @@ func cancellationNeverHidesAGenuineBackendFailureInTheUI() async throws {
     let state = await session.state
     #expect(state == .unloaded)
     #expect(!model.busy)
+}
+
+@Test @MainActor
+func followUpIncludesPriorTurnsAndNewChatResetsContext() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    model.prompt = "My name is Ada"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.prompt.isEmpty)
+    model.prompt = "What is my name"
+    model.run()
+    await model.waitUntilIdle()
+    let followUp = try #require(backend.encodedMessages.last)
+    #expect(followUp.map(\.role) == [.user, .assistant, .user])
+    #expect(followUp.map(\.content) == ["My name is Ada", "fixture answer", "What is my name"])
+    #expect(followUp[1].reasoning == "fixture reasoning")
+    #expect(model.messages.count == 4)
+    model.newChat()
+    await model.waitUntilIdle()
+    model.prompt = "A new conversation"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(backend.encodedMessages.last == [
+        ConversationMessage(role: .user, content: "A new conversation")
+    ])
+    #expect(model.messages.count == 2)
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor

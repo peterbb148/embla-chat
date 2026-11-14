@@ -1,6 +1,6 @@
 # Model download and storage
 
-The setup screen downloads the four files required by Embla from
+The Settings screen downloads the four files required by Embla from
 `sevren-ai/Embla1-4bit`, revision `4d23eb7de21fc5b55c3051021c7550af1fdce0e8`.
 The bundled [manifest](../Sources/EmblaCore/Resources/model-manifest.json) is the
 single source of download URLs, expected byte sizes and SHA-256 hashes. Required

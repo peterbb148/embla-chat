@@ -4,10 +4,21 @@ import Observation
 import EmblaCore
 import EmblaRuntime
 
-/// Shared presentation state for model setup and a single local inference request.
+/// A visible turn in the single active conversation.
+public struct ChatMessage: Identifiable, Sendable {
+    public enum State: Sendable { case streaming, complete, interrupted, failed, limited }
+    public let id = UUID()
+    public let role: ConversationMessage.Role
+    public var text: String
+    public var reasoning = ""
+    public var state: State = .complete
+}
+
+/// Shared presentation state for model setup and the single active conversation.
 @MainActor @Observable
 public final class LocalInferenceModel {
     public var prompt = ""
+    public private(set) var messages: [ChatMessage] = []
     public private(set) var manifest: ModelManifest?
     public private(set) var readyDirectory: URL?
     public private(set) var storedBytes: Int64 = 0
@@ -103,6 +114,7 @@ public final class LocalInferenceModel {
         downloadedBytes = 0
         let id = UUID()
         let input = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if operation == .generate { prompt = "" }
         operationID = id
         if operation != .unload {
             status = downloading ? "Downloading and verifying model…" : "Checking model storage…"
@@ -139,6 +151,11 @@ public final class LocalInferenceModel {
                     if error == nil { status = "Model unloaded. Run again when ready." }
                 }
             } catch {
+                if operation == .generate, messages.last?.role == .assistant {
+                    messages[messages.count - 1].state =
+                        error is CancellationError || (error as? URLError)?.code == .cancelled
+                        ? .interrupted : .failed
+                }
                 if operation == .check || operation == .download || operation == .delete {
                     readyDirectory = nil
                 }
@@ -158,6 +175,15 @@ public final class LocalInferenceModel {
 
     private func generate(input: String, repository: ModelRepository) async throws {
         guard !input.isEmpty else { throw InferenceError.emptyPrompt }
+        messages.append(ChatMessage(role: .user, text: input))
+        let context = messages.compactMap { message -> ConversationMessage? in
+            guard !message.text.isEmpty || !message.reasoning.isEmpty else { return nil }
+            return ConversationMessage(
+                role: message.role, content: message.text,
+                reasoning: message.reasoning.isEmpty ? nil : message.reasoning)
+        }
+        let responseIndex = messages.count
+        messages.append(ChatMessage(role: .assistant, text: "", state: .streaming))
         reasoning = ""
         answer = ""
         metrics = nil
@@ -170,9 +196,7 @@ public final class LocalInferenceModel {
             loaded = true
         }
         try Task.checkCancellation()
-        let run = try await session.generate(messages: [
-            ConversationMessage(role: .user, content: input)
-        ])
+        let run = try await session.generate(messages: context)
         activeRun = run
         if Task.isCancelled { run.cancel() }
         status = Task.isCancelled ? "Stopping…" : "Thinking…"
@@ -181,8 +205,14 @@ public final class LocalInferenceModel {
             for try await event in run.events {
                 if Task.isCancelled { run.cancel(); break }
                 switch event {
-                case let .reasoning(text): reasoning += text; status = "Thinking…"
-                case let .answer(text): answer += text; status = "Answering…"
+                case let .reasoning(text):
+                    reasoning += text
+                    messages[responseIndex].reasoning += text
+                    status = "Thinking…"
+                case let .answer(text):
+                    answer += text
+                    messages[responseIndex].text += text
+                    status = "Answering…"
                 case let .finished(value): metrics = value
                 }
             }
@@ -195,6 +225,7 @@ public final class LocalInferenceModel {
         }
         if let streamError { throw streamError }
         try Task.checkCancellation()
+        messages[responseIndex].state = metrics?.finishReason == "length" ? .limited : .complete
         status = metrics?.finishReason == "length" ? "Output limit reached." : "Finished."
     }
 
@@ -214,6 +245,7 @@ public final class LocalInferenceModel {
                 if clear {
                     if loaded { try await session.reset() }
                     prompt = ""
+                    messages.removeAll()
                     reasoning = ""
                     answer = ""
                     metrics = nil
