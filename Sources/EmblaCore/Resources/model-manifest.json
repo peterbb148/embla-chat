@@ -6,7 +6,8 @@
     {
       "path": "config.json",
       "size_bytes": 5409,
-      "git_blob_oid": "5083e2888e166d8941f74053e84746b301bf9fb5"
+      "git_blob_oid": "5083e2888e166d8941f74053e84746b301bf9fb5",
+      "sha256": "6114b7e5baea8ff23719cbc7c89eafe0c6eb305ba77a0d6be1f0a9efea69e994"
     },
     {
       "path": "engram_table.safetensors",
@@ -23,7 +24,8 @@
     {
       "path": "tokenizer.json",
       "size_bytes": 4643945,
-      "git_blob_oid": "bf00f3f4844fa4bae87f6c0ecece6fef3c1d6b52"
+      "git_blob_oid": "bf00f3f4844fa4bae87f6c0ecece6fef3c1d6b52",
+      "sha256": "2f1d3dd02eca7c3e4d89713144ccb89d2256dddf0b6ea201f5b48c73d484d9e0"
     }
   ]
 }

@@ -1,13 +1,12 @@
 import XCTest
 
-/// Verifies that the real app launches; this does not exercise model inference.
+/// Verifies model setup is accessible without downloading weights or running inference.
 final class LaunchTests: XCTestCase {
     @MainActor
-    func testScaffoldLaunches() throws {
+    func testModelSetupLaunches() throws {
         let app = XCUIApplication()
         app.launch()
-        XCTAssertTrue(app.staticTexts[
-            "Model setup and local chat are coming in the next milestone."
-        ].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Download model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["model-status"].exists)
     }
 }

@@ -15,7 +15,7 @@ is iOS 18; the initial app targets iPhone. iPad and Mac apps are later milestone
 
 The checked-in `EmblaChat.xcodeproj` is the source project; no project generator is
 required. Open it in Xcode, select the shared `EmblaChat` scheme and an iPhone
-simulator, and Run. The current screen explicitly identifies the scaffold stage.
+simulator, and Run. The current screen provides model download and verification controls.
 The app target, product, and Swift module are `EmblaChatApp` to avoid colliding
 with the upstream `EmblaChat` package target. The shared scheme remains `EmblaChat`,
 and the app display name remains Embla Chat. The UI test explicitly references
@@ -34,10 +34,11 @@ export DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer
 The script fails if the selected toolchain is not Xcode 26.2. Install the iOS 26.2
 simulator runtime through Xcode before running it. It resolves only the checked-in
 `Package.resolved` revision, builds the unsigned Release target for generic iOS,
-then creates an isolated iPhone 17 Pro simulator and runs the UI test. Simulator
+runs the shared core tests, then creates an isolated iPhone 17 Pro simulator and
+runs the model-setup UI test. Simulator
 cleanup runs on exit. Local signing credentials and model weights are not needed.
 
-The UI test launches the app and asserts the scaffold message. It does not load
+The UI test launches the app and asserts model setup controls are available. It does not load
 model weights, compile runtime Metal kernels at execution, or prove physical-device
 inference. The unsigned device build checks compilation/linking for actual iOS,
 including copied SwiftPM resources, but does not prove installation or inference.
@@ -47,6 +48,8 @@ The workflow runs on PRs, main pushes, and manual dispatch. It uses Xcode 26.2 o
 Logs and result bundles are uploaded for seven days. Local output is under `build/`;
 result bundles get unique directories so repeated checks preserve earlier results.
 The PR and main checks must pass independently; CI never downloads model weights.
+An additional provider check downloads only the pinned 5 KB config file; see
+[model storage](model-storage.md) for details.
 Feature-level tests will accompany their implementations in later issues (#6).
 
 ## Verified scaffold evidence
@@ -62,7 +65,7 @@ For a physical iPhone, select your own development team under Signing & Capabili
 choose a unique bundle identifier if needed, enable Developer Mode on the phone,
 and Run with that phone selected. No team or signing credentials are committed.
 Do not commit personal signing changes. This stage does not request iCloud or
-increased-memory entitlements. Model setup will be added in Epic 2.
+increased-memory entitlements. Model setup is documented in [model storage](model-storage.md).
 
 SwiftPM copies upstream Metal kernel and web resource bundles; preserve them.
 The app also bundles both upstream license notice files from `third-party/`.

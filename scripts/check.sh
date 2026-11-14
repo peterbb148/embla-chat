@@ -12,6 +12,7 @@ project=(-project EmblaChat.xcodeproj -scheme EmblaChat)
 locked=(-onlyUsePackageVersionsFromResolvedFile -disableAutomaticPackageResolution)
 mkdir -p build
 xcodebuild -version
+swift test 2>&1 | tee build/core-tests.log
 xcodebuild -resolvePackageDependencies "${project[@]}" \
   -onlyUsePackageVersionsFromResolvedFile 2>&1 | tee build/resolve.log
 xcodebuild build "${project[@]}" "${locked[@]}" \
