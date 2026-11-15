@@ -3,11 +3,9 @@
 import json
 import os
 import re
+import subprocess
 import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
 CATEGORIES = {"/language:swift", "/language:actions", "/language:python"}
 
@@ -57,18 +55,22 @@ class GitHub:
     def __init__(self, repository: str, token: str) -> None:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
             raise ValueError("Invalid repository identifier")
-        self.root = f"https://api.github.com/repos/{repository}/code-scanning/"
+        self.root = f"repos/{repository}/code-scanning/"
         self.token = token
 
     def get(self, path: str, params: dict, accept: str = "application/vnd.github+json") -> object:
         """Fetch an authenticated response; failures propagate as failed checks."""
-        url = self.root + path + "?" + urllib.parse.urlencode(params)
-        request = urllib.request.Request(url, headers={
-            "Authorization": f"Bearer {self.token}", "Accept": accept,
-            "X-GitHub-Api-Version": "2022-11-28",
-        })
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.load(response)
+        command = ["gh", "api", self.root + path, "--method", "GET",
+                   "-H", f"Accept: {accept}", "-H", "X-GitHub-Api-Version: 2022-11-28"]
+        for key, value in params.items():
+            command.extend(["-f", f"{key}={value}"])
+        response = subprocess.run(
+            command, capture_output=True, text=True, check=False,
+            env=dict(os.environ, GH_TOKEN=self.token),
+        )
+        if response.returncode != 0:
+            raise ValueError("GitHub CLI could not obtain required security evidence")
+        return json.loads(response.stdout)
 
     def pages(self, path: str, params: dict) -> list[dict]:
         """Read all list pages, rejecting non-list or unavailable inventories."""
@@ -116,6 +118,6 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (KeyError, ValueError, TypeError, urllib.error.URLError, TimeoutError) as error:
+    except (KeyError, ValueError, TypeError, OSError, TimeoutError) as error:
         print(f"Security inventory failed: {type(error).__name__}: {error}", file=sys.stderr)
         sys.exit(1)

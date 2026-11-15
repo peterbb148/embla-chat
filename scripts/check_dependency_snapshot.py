@@ -4,9 +4,9 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
-import urllib.error
-import urllib.request
+from email.parser import Parser
 
 BASE = "240ad61445b4d7f9c39a354ec6661d036cc315a8"
 REQUIRED_MANIFESTS = {
@@ -53,20 +53,24 @@ def main() -> None:
     manifests = set()
     page = 1
     while True:
-        url = (
-            f"https://api.github.com/repos/{repository}/dependency-graph/compare/{BASE}...{head}"
-            f"?per_page=100&page={page}"
+        endpoint = f"repos/{repository}/dependency-graph/compare/{BASE}...{head}"
+        response = subprocess.run(
+            ["gh", "api", endpoint, "--method", "GET", "--include",
+             "-f", "per_page=100", "-f", f"page={page}",
+             "-H", "Accept: application/vnd.github+json",
+             "-H", "X-GitHub-Api-Version: 2022-11-28"],
+            capture_output=True, text=True, check=False,
         )
-        request = urllib.request.Request(url, headers={
-            "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        })
-        with urllib.request.urlopen(request, timeout=60) as response:
-            changes = json.load(response)
-            manifests.update(validate_page(
-                response.headers.get("x-github-dependency-graph-snapshot-warnings", ""), changes
-            ))
+        if response.returncode != 0:
+            raise ValueError("GitHub CLI could not obtain dependency snapshot evidence")
+        header_block, separator, body = response.stdout.partition("\n\n")
+        if not separator or not header_block.startswith("HTTP/"):
+            raise ValueError("GitHub CLI returned an invalid dependency response")
+        headers = Parser().parsestr(header_block.split("\n", 1)[1])
+        changes = json.loads(body)
+        manifests.update(validate_page(
+            headers.get("x-github-dependency-graph-snapshot-warnings", ""), changes
+        ))
         if len(changes) < 100:
             break
         page += 1
@@ -77,7 +81,7 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (KeyError, ValueError, urllib.error.URLError, TimeoutError) as error:
+    except (KeyError, ValueError, OSError, TimeoutError) as error:
         # Do not print request headers or any credential-bearing request representation.
         message = f"Dependency completeness check failed: {type(error).__name__}: {error}"
         print(message, file=sys.stderr)
