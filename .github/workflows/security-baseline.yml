@@ -1,0 +1,58 @@
+# Temporary bootstrap: scan the exact existing main, then remove before merge.
+name: Initial main CodeQL baseline
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  analyze:
+    name: Initial main CodeQL (${{ matrix.language }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: swift
+            runner: macos-15
+            build-mode: manual
+          - language: actions
+            runner: ubuntu-24.04
+            build-mode: none
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: 4ea2e7bd8814fd4ca7082e757ca5b3082337afc2
+          persist-credentials: false
+      - name: Resolve locked Swift dependencies
+        if: matrix.language == 'swift'
+        run: |
+          xcodebuild -resolvePackageDependencies -project EmblaChat.xcodeproj \
+            -scheme EmblaChat -onlyUsePackageVersionsFromResolvedFile
+      - uses: github/codeql-action/init@5895b2c9be147bc7f1c75ce72c5cb577febb1907 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+      - name: Build actual iPhone application for Swift extraction
+        if: matrix.language == 'swift'
+        run: |
+          xcodebuild build -project EmblaChat.xcodeproj -scheme EmblaChat \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath build/CodeQLDerivedData \
+            -onlyUsePackageVersionsFromResolvedFile -disableAutomaticPackageResolution \
+            CODE_SIGNING_ALLOWED=NO
+      - uses: github/codeql-action/analyze@5895b2c9be147bc7f1c75ce72c5cb577febb1907 # v4
+        with:
+          ref: refs/heads/main
+          sha: 4ea2e7bd8814fd4ca7082e757ca5b3082337afc2
+          category: /language:${{ matrix.language }}
+          wait-for-processing: true

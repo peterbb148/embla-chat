@@ -23,9 +23,11 @@ with findings redacted. A disposable synthetic-history smoke check proves a clea
 passes and a credential removed from the latest tree is still rejected without exposing
 its value. No real credential is used in the fixture.
 
-GitHub CodeQL default setup analyzes **Swift and GitHub Actions** with extended queries.
-Its generated workflows are managed by GitHub; the configuration and actual main/PR scan
-results must be verified through the API, not inferred from a settings request succeeding.
+The explicit CodeQL workflow analyzes **Swift and GitHub Actions** with extended queries.
+Swift extraction builds the actual iPhone application with the locked Xcode toolchain;
+Actions uses its supported buildless mode. Both jobs are required separately, as well as
+native all-severity CodeQL merge protection. Actual main/PR results must be verified, not
+inferred from a settings request succeeding.
 Dependabot alerts/security updates, secret scanning, push protection and private
 vulnerability reporting are enabled. Weekly version-update configuration covers Swift and
 GitHub Actions. Updating the pinned runtime must still respect functional compatibility;
@@ -79,3 +81,8 @@ the branch to be up to date, blocks deletion/force-push and requires resolved co
 Its CodeQL thresholds are both `all`, including low-severity security findings. Separate
 owner-review ruleset **27331553** requires one code-owner approval with stale approvals
 dismissed; its sole admin-role bypass is PR-only and does not bypass integrity/security.
+
+Default CodeQL setup was rejected as insufficient: its overall setup run succeeded after
+autobuild failed and silently reduced coverage to Actions. Swift's failed analysis is not
+a pass. The checked-in manual build replaces that configuration; a temporary, genuine
+scan of the exact existing main seeds the required baseline and is removed before merge.
