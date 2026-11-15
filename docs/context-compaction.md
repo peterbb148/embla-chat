@@ -1,10 +1,10 @@
 # Automatic context compaction
 
 Issue #8 adds a rolling on-device summary for the single active chat. The full visible
-transcript remains in memory. Inference uses the last committed summary plus the
+transcript is retained. Inference uses the last committed summary plus the
 unsummarized suffix of that transcript. `CompactionState` explicitly records the summary
-and the number of transcript messages it replaces, for subsequent persistence work in #9.
-This issue does not save or synchronize chats.
+and the number of transcript messages it replaces. The subsequent [persistence work](chat-persistence.md)
+saves these fields locally and optionally synchronizes the snapshot through iCloud.
 
 ## Policy
 
@@ -65,9 +65,10 @@ from the device when checked, so the cause is unresolved. The subsequent chunked
 sequence completed the compaction tests without another exit. Long-input stability remains
 tracked under #18; this result does not establish that arbitrary large drafts are safe.
 
-Signed Xcode 27.2 Release device builds and package tests pass. Hosted build/UI checks and
-final-head Copilot review remain PR gates. A subsequent review fix filters empty
+Signed Xcode 27.2 Release device builds and package tests passed at this milestone.
+PR #30 subsequently merged after hosted checks and final-head Copilot review. A subsequent review fix filters empty
 failed/interrupted assistant placeholders after applying the transcript boundary; focused
 retry and boundary-index tests cover that change. The full physical sequence above was
 not repeated for that filtering fix.
-Local and optional iCloud persistence remain in #9, with iCloud off by default.
+Local and optional iCloud persistence subsequently shipped in PR #31, with iCloud off by default.
+See the [working-version audit](working-version-validation.md) for current acceptance evidence.

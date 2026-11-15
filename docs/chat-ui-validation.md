@@ -18,7 +18,7 @@ No context is silently dropped when the budget is exceeded. This transcript is i
 compaction (#8) and persistence (#9) were unimplemented at that milestone. Subsequent
 [compaction work](context-compaction.md) supplies a rolling summary plus recent turns
 without deleting the visible transcript. The subsequent [local persistence work](chat-persistence.md) adds save/restore; optional
-iCloud sync remains in #9.
+iCloud sync also shipped in PR #31. See the [working-version audit](working-version-validation.md).
 
 ## Local validation (2026-11-14)
 
@@ -99,6 +99,7 @@ The final evidence-only commit also requires review/checks before merge.
 Stop/reset/error/limited-response sequencing remains covered by the controller
 regressions; the earlier inference milestone also has recorded physical lifecycle
 observations. Every lifecycle interleaving was not repeated for this cosmetic revision.
-Working-app integration and broader release/accessibility checks continue in #6 and
-#18; compaction and iCloud remain #8 and #9. This acceptance does not claim those
-remaining features or the final release are complete.
+The subsequent compaction and persistence changes merged in PRs #30 and #31.
+The [working-version audit](working-version-validation.md) records integrated acceptance
+for #5 and #6. Broader polish and release validation remain in #18 and #7; this historical
+visual acceptance does not establish final release readiness.

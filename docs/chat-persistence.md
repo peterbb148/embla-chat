@@ -86,7 +86,7 @@ independent. A local/provider write reports pending upload; only the provider's 
 for matching content reports Synced. Missing/revoked permissions and missing previously-synced
 files remain explicit errors rather than silently selecting another location.
 
-## Validation checkpoint and remaining work
+## Automated validation
 
 On 2026-11-15, all 84 package tests pass, including parameterized consent and sync-base cases.
 These include
@@ -180,10 +180,27 @@ snapshot with matching IDs and cleared summary to the new path. The old root-lev
 remained absent, Settings reported Synced, and app sync was disabled afterward. The model
 remained stored locally. This follow-up proves the changed path; the earlier recall,
 divergent-copy and missing-file tests above were not repeated for this path-only change.
-The subsequent consent-lifecycle, checkpoint, sync-base and deletion recovery fixes have focused package regressions;
-the physical cloud sequence was not repeated for those control-flow changes.
+The subsequent consent-lifecycle, checkpoint, sync-base and deletion recovery fixes have
+focused package regressions. The full earlier physical sequence was not repeated for each fix.
 
-Final-head Copilot review, fixes/re-review and hosted checks are required before merge.
+### Final reviewed-build check
+
+On final implementation head `a98ff75d87d59c104ea3b7a73b18d28e1a789028`, a signed Release
+build restored the labelled three-message cloud fixture and boundary-2 summary exactly.
+The real local model recalled `EMBLA-CLOUD-17` from that summary. The resulting five-message
+snapshot uploaded and matched the local archive exactly. Cancelling New Chat retained the
+conversation; confirming it generated a new conversation identity, cleared messages and summary,
+and synchronized the exact empty snapshot. Disabling iCloud saved `cloudEnabled: false`;
+terminating and reopening the app retained Off and the empty local conversation. Model storage
+was retained. A reversible missing-file probe was restored unchanged, but provider propagation
+did not expose an error during that final probe; it is not counted as a repeated error test.
+
+That exact head passed [hosted CI 43723035733](https://github.com/peterbb148/embla-chat/actions/runs/43723035733):
+84 package tests, unsigned Release build and five simulator UI tests. Copilot reviewed that
+head with no open issues or unresolved threads. PR #31 merged as `a53e202`. OS-generated
+NSFileVersion conflicts and forced account/transfer failures remain unforced physical scenarios
+under #7; simulated coverage does not establish physical proof. See the
+[working-version audit](working-version-validation.md) for the integrated acceptance matrix.
 
 Developer Program-dependent capabilities/distribution are deferred to #32. The current
 Files-based storage design does not use CloudKit or an app-owned iCloud container. Later

@@ -55,14 +55,16 @@ result bundles get unique directories so repeated checks preserve earlier result
 The PR and main checks must pass independently; CI never downloads model weights.
 An additional provider check downloads only the pinned 5 KB config file; see
 [model storage](model-storage.md) for details.
-Feature-level tests will accompany their implementations in later issues (#6).
+Feature tests accompany the implemented features. The [working-version audit](working-version-validation.md)
+maps the current coverage and physical evidence to #6 acceptance criteria.
 
 ## Verified scaffold evidence
 
 [Scaffold run 43582094191](https://github.com/peterbb148/embla-chat/actions/runs/43582094191)
 built and launched commit `43bf527` under Xcode 26.2 with the patched runtime.
 `LaunchTests.testScaffoldLaunches` passed with zero failures. The expanded Release
-build and clean-checkout CI require their own successful run before #16 closes.
+build and clean-checkout checks subsequently passed; current evidence is linked in
+[the working-version audit](working-version-validation.md).
 
 ## Signing and resources
 
@@ -82,7 +84,7 @@ See [inference API](inference-api.md) for session ownership and device evidence 
 
 ## Conversational screen and settings
 
-EmblaPresentation owns the active in-memory transcript and serializes real model
+EmblaPresentation owns the active transcript, checkpoints it to local storage, and serializes real model
 requests. The main view shows user messages, assistant responses, expandable reasoning,
 a bottom-anchored multiline composer, Send/Stop and confirmed New Chat. Model download,
 verification, storage deletion and last-response measurements are in Settings. Opening
@@ -94,8 +96,8 @@ is retained. Interrupted, failed and length-limited responses remain explicitly 
 See [compaction](context-compaction.md) for budgets, cancellation and device evidence.
 There is no silent truncation or substitute model. Local persistence now restores the transcript, summary and draft after process exit;
 see [chat persistence](chat-persistence.md) for checkpoint/error behavior, simulator tests and
-real iPhone/Mac iCloud transfer/restoration evidence. Optional iCloud remains off by default;
-final review and merge are tracked in #9.
+real iPhone/Mac iCloud transfer/restoration evidence. Optional iCloud is off by default.
+PR #31 merged the implementation after final-head review, CI and physical validation.
 
 The composer uses native SwiftUI focus and a vertical layout: the transcript has its
 own clipped scrolling region above a single rounded input card. Send/Stop and a keyboard

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the iPhone Release target and run the scaffold launch test from a clean checkout.
+# Build the iPhone Release target and run package and chat UI tests from a clean checkout.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

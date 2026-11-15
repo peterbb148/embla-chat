@@ -1,8 +1,9 @@
 # iPhone 17 Pro validation
 
 Status: **physical download, inference, lifecycle and offline proof recorded**.
-The minimal screen calls the real pinned Embla runtime. Keep #3, #4, #17 and Epic
-#13 open until the evidence change passes final-head review/checks and is merged.
+The original minimal screen called the real pinned Embla runtime. This historical Epic 2
+record is retained with its tested commits; #3, #4, #17 and Epic #13 are closed. See the
+[working-version audit](working-version-validation.md) for subsequent chat integration.
 
 ## Install
 
@@ -115,5 +116,5 @@ The user was asked to restore normal connectivity after the offline observation.
 The wired screen connection was used only to control and observe the app, with no
 substitute inference backend, model-file injection, or fake network launch mode.
 
-Only close the Epic 2 issues after the required observations are recorded. Hosted
-UI checks prove readiness controls and confirmation behavior, not physical inference.
+Hosted UI checks prove readiness controls and confirmation behavior, not physical inference.
+Later physical observations are recorded separately in the chat, compaction and persistence docs.
