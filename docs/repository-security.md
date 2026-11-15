@@ -30,7 +30,8 @@ passes and a credential removed from the latest tree is still rejected without e
 its value. No real credential is used in the fixture.
 
 The explicit CodeQL workflow analyzes **Swift, GitHub Actions and the security helpers’ Python** with extended queries.
-Swift extraction builds the actual iPhone application with the locked Xcode toolchain;
+Diff-informed PR queries are explicitly disabled (`CODEQL_ACTION_DIFF_INFORMED_QUERIES=false`)
+so full results include unchanged code. Swift extraction builds the actual iPhone application with the locked Xcode toolchain;
 Actions uses its supported buildless mode. All three jobs are required separately, as well as
 native all-severity CodeQL merge protection. Required `Security inventory` reads all three full
 published final-head SARIF results, rejects every finding (including unchanged files), requires
@@ -112,9 +113,11 @@ unfixed main alert instances. A baseline finding may be fixed by a PR only when 
 final-head result is clean and GitHub publishes its exact-head fixed instance; absence of
 that evidence is a failure rather than a reason to ignore the baseline.
 
-The initial real main baseline passed in [run 43762455410](https://github.com/peterbb148/embla-chat/actions/runs/43762455410).
-Both existing languages published zero full results with empty error/warning metadata at
-`4ea2e7bd8814fd4ca7082e757ca5b3082337afc2`; the inventory helper also verified their complete
-published SARIF and zero open main alerts. The one-time bootstrap workflow was then removed.
+The initial main compile/extraction baseline completed in [run 43762455410](https://github.com/peterbb148/embla-chat/actions/runs/43762455410).
+Both existing languages published empty result files with empty error/warning metadata at
+`4ea2e7bd8814fd4ca7082e757ca5b3082337afc2`; the inventory helper read those files and zero open main alerts.
+Later review exposed the default PR query filtering: those empty files are setup evidence,
+not proof of whole-codebase cleanliness. Acceptance requires the explicit full-query final
+head and post-merge main scans; the initial result is not relabelled as that proof. The one-time bootstrap workflow was then removed.
 Python is additionally required on the final head because this change introduces Python
 security helpers; the earlier main had no Python source to analyze.
