@@ -81,7 +81,8 @@ The initial context is explicitly 8,192 tokens, matching the investigated starti
 budget, with 512 output tokens, temperature 0.6 and top-p 0.95 by default. These are
 configuration defaults, not evidence of iPhone memory viability or performance.
 The UI must show a length-limited result honestly if the budget expires during
-reasoning. Automatic compaction is separate work in #8.
+reasoning. The presentation layer now orchestrates local compaction through this API;
+see [context compaction](context-compaction.md) for policy and device evidence.
 
 The upstream engine reconstructs inference state from the full prompt on each run.
 `reset()` clears runtime state only after a run completes. For context replacement,

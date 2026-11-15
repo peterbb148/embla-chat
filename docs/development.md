@@ -88,12 +88,13 @@ a bottom-anchored multiline composer, Send/Stop and confirmed New Chat. Model do
 verification, storage deletion and last-response measurements are in Settings. Opening
 Settings does not reset the conversation or start another readiness check.
 
-Every Send supplies the visible conversation's user messages and actual nonempty
-assistant output/reasoning to the upstream template. Interrupted, failed and length-limited
-responses remain explicitly marked. Empty response rows do not become invented model
-content. No turn is silently trimmed to fit the context limit; the API reports the budget
-error. Automatic compaction (#8) and iCloud restoration (#9) are still pending. The active
-transcript and draft are lost when the process exits in this milestone.
+Every Send reconstructs inference context from the rolling summary and recent transcript.
+The real tokenizer triggers local compaction before the context fills; the visible transcript
+is retained. Interrupted, failed and length-limited responses remain explicitly marked.
+See [compaction](context-compaction.md) for budgets, cancellation and device evidence.
+There is no silent truncation or substitute model. Local persistence and optional,
+default-off iCloud synchronization remain in #9; transcript and draft are currently lost
+when the process exits.
 
 The composer uses native SwiftUI focus and a vertical layout: the transcript has its
 own clipped scrolling region above a single rounded input card. Send/Stop and a keyboard

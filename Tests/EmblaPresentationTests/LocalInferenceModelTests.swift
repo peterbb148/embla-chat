@@ -12,6 +12,13 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
     private var inputs: [[ConversationMessage]] = []
+    private let countCharacters: Bool
+    private let pauseSummary: Bool
+    private let summaryText: String
+    private let emptySummary: Bool
+    private let emptySummaryCall: Int?
+    private var summaries = 0
+    private var summaryStarted = false
     private let pauseFirst: Bool
     private let firstFinishReason: String
     private let failOnStop: Bool
@@ -22,8 +29,15 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
 
     init(
         failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil, pauseFirst: Bool = true,
-        firstFinishReason: String = "stop"
+        firstFinishReason: String = "stop", countCharacters: Bool = false,
+        pauseSummary: Bool = false, emptySummary: Bool = false, emptySummaryCall: Int? = nil,
+        summaryText: String = "The user's retained requirement is blue penguin."
     ) {
+        self.countCharacters = countCharacters
+        self.pauseSummary = pauseSummary
+        self.summaryText = summaryText
+        self.emptySummary = emptySummary
+        self.emptySummaryCall = emptySummaryCall
         self.failOnStop = failOnStop
         self.stopGate = stopGate
         self.pauseFirst = pauseFirst
@@ -31,7 +45,9 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     }
     func encode(_ messages: [ConversationMessage]) throws -> [Int] {
         lock.withLock { inputs.append(messages) }
-        return [1, 2]
+        return countCharacters
+            ? Array(repeating: 1, count: messages.reduce(0) { $0 + $1.content.count + 4 })
+            : [1, 2]
     }
     func reset() {}
     func generate(
@@ -41,7 +57,18 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
         let index = lock.withLock {
             count += 1; return count
         }
-        if index == 1 && pauseFirst {
+        if options.maxTokens == 1_536 {
+            let summaryCall = lock.withLock {
+                summaryStarted = true
+                summaries += 1
+                return summaries
+            }
+            if pauseSummary {
+                while emit(.reasoning("summarizing")) { Thread.sleep(forTimeInterval: 0.01) }
+            } else if !emptySummary && summaryCall != emptySummaryCall {
+                _ = emit(.answer(summaryText))
+            }
+        } else if index == 1 && pauseFirst {
             while emit(.reasoning("fixture reasoning")) { Thread.sleep(forTimeInterval: 0.01) }
             lock.withLock { reachedStop = true }
             stopGate?.wait()
@@ -55,6 +82,13 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
             promptTokens: 2, completionTokens: 2,
             promptMilliseconds: 1, decodeMilliseconds: 1
         )
+    }
+    func waitForSummary() async throws {
+        for _ in 0..<2_000 {
+            if lock.withLock({ summaryStarted }) { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw ModelTestError.timeout
     }
     func waitForStop() async throws {
         for _ in 0..<2_000 {
@@ -327,4 +361,167 @@ func newChatKeepsComposerLockedUntilDeferredClearingFinishes() async throws {
     await model.waitUntilIdle()
     #expect(model.messages.first?.text == "A message composed after reset")
     #expect(model.messages.last?.state == .complete)
+}
+
+/// Character counting is a deterministic fixture tokenizer, never a production approximation.
+@Test(.timeLimit(.minutes(1))) @MainActor
+func repeatedCompactionRetainsTranscriptAndRecentTurns() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false, countCharacters: true)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    for turn in 0..<5 {
+        model.prompt = "Turn \(turn): " + String(repeating: "x", count: 1_600)
+        model.run()
+        await model.waitUntilIdle()
+        #expect(model.error == nil)
+    }
+    #expect(model.messages.count == 10)
+    #expect(model.compaction.summarizedMessageCount == 4)
+    #expect(!model.compaction.summary.isEmpty)
+    #expect(backend.calls == 7) // Five replies and two real summary operations.
+    let finalContext = try #require(backend.encodedMessages.last)
+    #expect(finalContext.first?.role == .system)
+    #expect(finalContext.count == 6) // Summary, two exchanges, current user.
+    #expect(finalContext[1].content.hasPrefix("Turn 2:"))
+    #expect(model.messages.first?.text.hasPrefix("Turn 0:") == true)
+    model.newChat()
+    await model.waitUntilIdle()
+    #expect(model.compaction == CompactionState())
+    #expect(model.messages.isEmpty)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func emptySummaryFailsWithoutDroppingContextOrTranscript() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(
+        pauseFirst: false, countCharacters: true, emptySummary: true)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    for turn in 0..<4 {
+        model.prompt = "Turn \(turn): " + String(repeating: "x", count: 1_600)
+        model.run()
+        await model.waitUntilIdle()
+    }
+    #expect(model.error == CompactionError.incompleteSummary.localizedDescription)
+    #expect(model.compaction == CompactionState())
+    #expect(model.messages.count == 8)
+    #expect(model.messages.last?.state == .failed)
+    #expect(model.messages.first?.text.hasPrefix("Turn 0:") == true)
+    #expect(backend.calls == 4) // Three replies and one rejected empty summary.
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func newChatDuringCompactionCancelsSummaryAndClearsAllContext() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(
+        pauseFirst: false, countCharacters: true, pauseSummary: true)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    for turn in 0..<3 {
+        model.prompt = "Turn \(turn): " + String(repeating: "x", count: 1_600)
+        model.run()
+        await model.waitUntilIdle()
+    }
+    model.prompt = String(repeating: "x", count: 1_600)
+    model.run()
+    try await backend.waitForSummary()
+    #expect(model.compacting && model.running)
+    #expect(model.status == "Compacting earlier messages…")
+    model.newChat()
+    await model.waitUntilIdle()
+    #expect(model.messages.isEmpty && model.compaction == CompactionState())
+    #expect(!model.compacting && !model.busy)
+    model.prompt = "Fresh conversation"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(backend.encodedMessages.last == [
+        ConversationMessage(role: .user, content: "Fresh conversation")
+    ])
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func failedRepeatedCompactionKeepsThePreviouslyCommittedSummary() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(
+        pauseFirst: false, countCharacters: true, emptySummaryCall: 2)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    for turn in 0..<4 {
+        model.prompt = "Turn \(turn): " + String(repeating: "x", count: 1_600)
+        model.run()
+        await model.waitUntilIdle()
+    }
+    let previous = model.compaction
+    #expect(previous.summarizedMessageCount == 2)
+    model.prompt = "Turn 4: " + String(repeating: "x", count: 1_600)
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.error == CompactionError.incompleteSummary.localizedDescription)
+    #expect(model.compaction == previous)
+    #expect(model.messages.count == 10)
+    #expect(model.messages.last?.state == .failed)
+    #expect(backend.calls == 6)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func summaryThatWouldOverflowTheResponseBudgetIsNotCommitted() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(
+        pauseFirst: false, countCharacters: true, summaryText: String(repeating: "s", count: 1_500))
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    for _ in 0..<3 {
+        model.prompt = "Small turn"
+        model.run()
+        await model.waitUntilIdle()
+    }
+    model.prompt = String(repeating: "x", count: 6_500)
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.error == CompactionError.summaryDoesNotFit.localizedDescription)
+    #expect(model.compaction == CompactionState())
+    #expect(model.messages.count == 8 && model.messages.last?.state == .failed)
+    #expect(backend.calls == 4)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func stopDuringCompactionPreservesHistoryWithoutCommittingAPartialSummary() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(
+        pauseFirst: false, countCharacters: true, pauseSummary: true)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    for _ in 0..<3 {
+        model.prompt = String(repeating: "x", count: 1_600)
+        model.run()
+        await model.waitUntilIdle()
+    }
+    model.prompt = String(repeating: "y", count: 1_600)
+    model.run()
+    try await backend.waitForSummary()
+    model.stop()
+    await model.waitUntilIdle()
+    #expect(model.compaction == CompactionState())
+    #expect(model.messages.count == 8 && model.messages.last?.state == .interrupted)
+    #expect(model.messages.first?.text == String(repeating: "x", count: 1_600))
+    #expect(model.error == nil && model.loaded && !model.busy)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func retryAfterFailedSummaryExcludesTheEmptyFailedAssistantTurn() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(
+        pauseFirst: false, countCharacters: true, emptySummaryCall: 1)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    for _ in 0..<4 {
+        model.prompt = String(repeating: "x", count: 1_600)
+        model.run()
+        await model.waitUntilIdle()
+    }
+    #expect(model.messages.last?.state == .failed)
+    let failedID = model.messages.last?.id
+    model.prompt = "Retry and continue"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.error == nil && model.messages.last?.state == .complete)
+    #expect(model.messages[7].id == failedID && model.messages[7].state == .failed)
+    #expect(backend.calls == 6)
+    #expect(!backend.encodedMessages.contains { context in
+        context.contains { $0.role == .assistant && $0.content.isEmpty && $0.reasoning == nil }
+    })
 }

@@ -8,13 +8,17 @@ Model download, integrity checking, storage deletion and last-response measureme
 live in Settings rather than above the chat. Basic assistant Markdown uses native
 SwiftUI Text rendering; broader rendering/copy/accessibility polish remains #18.
 
-Each Send supplies all prior user turns and actual nonempty assistant text/reasoning
+At the #25 acceptance milestone, each Send supplied all prior user turns and actual
+nonempty assistant text/reasoning
 through the real inference API. Interrupted, failed and limited responses stay visibly
 marked. New Chat waits for the worker before clearing conversation and runtime context.
 The composer locks while a confirmed reset drains, then focuses the new conversation;
 expanded reasoning follows output under the same near-bottom guard as answer text.
 No context is silently dropped when the budget is exceeded. This transcript is in memory;
-compaction (#8) and iCloud persistence/restoration (#9) remain unimplemented.
+compaction (#8) and persistence (#9) were unimplemented at that milestone. Subsequent
+[compaction work](context-compaction.md) supplies a rolling summary plus recent turns
+without deleting the visible transcript. Local persistence and optional iCloud sync
+remain in #9.
 
 ## Local validation (2026-11-14)
 

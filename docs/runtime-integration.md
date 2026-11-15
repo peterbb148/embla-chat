@@ -93,11 +93,11 @@ capacity. `Engine` defaults to 8,192; the CLI defaults to 32,768. Start the late
 inference milestone with an explicit 8,192-token runtime budget, measure it, and
 record any change. A smaller tested budget must be an explicit product decision.
 
-There is no summary or auto-compaction API. #8 must generate a summary using this
-same model, reserve room for summary generation and subsequent output, and then
-re-render summary plus recent verbatim turns. Keep the visible transcript separate.
-Preserve old state if summarization fails, and persist summary/context boundaries
-through #9. Test repeated compaction and New Chat while work is active.
+The upstream runtime has no dedicated summary or auto-compaction API. The application
+now generates summaries with the same local model and re-renders a rolling summary plus
+recent verbatim turns. See [context compaction](context-compaction.md) for exact budgets,
+transactional failure behavior, tests and real-device observations. Summary/context
+boundaries will be persisted locally and optionally synchronized through #9.
 
 ## Download integration
 

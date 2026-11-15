@@ -18,6 +18,9 @@ public struct ChatMessage: Identifiable, Sendable {
 @MainActor @Observable
 public final class LocalInferenceModel {
     public private(set) var conversationID = UUID()
+    public private(set) var compaction = CompactionState()
+    public private(set) var compacting = false
+    @ObservationIgnored private let compactionPolicy = ContextCompaction()
     public var prompt = ""
     public private(set) var messages: [ChatMessage] = []
     public private(set) var manifest: ModelManifest?
@@ -194,12 +197,6 @@ public final class LocalInferenceModel {
     private func generate(input: String, repository: ModelRepository) async throws {
         guard !input.isEmpty else { throw InferenceError.emptyPrompt }
         messages.append(ChatMessage(role: .user, text: input))
-        let context = messages.compactMap { message -> ConversationMessage? in
-            guard !message.text.isEmpty || !message.reasoning.isEmpty else { return nil }
-            return ConversationMessage(
-                role: message.role, content: message.text,
-                reasoning: message.reasoning.isEmpty ? nil : message.reasoning)
-        }
         let responseIndex = messages.count
         messages.append(ChatMessage(role: .assistant, text: "", state: .streaming))
         reasoning = ""
@@ -213,6 +210,13 @@ public final class LocalInferenceModel {
             loadMilliseconds = Date().timeIntervalSince(start) * 1_000
             loaded = true
         }
+        try Task.checkCancellation()
+        let transcript = messages.dropLast().map {
+            ConversationMessage(
+                role: $0.role, content: $0.text,
+                reasoning: $0.reasoning.isEmpty ? nil : $0.reasoning)
+        }
+        let context = try await prepareContext(transcript: transcript)
         try Task.checkCancellation()
         let run = try await session.generate(messages: context)
         activeRun = run
@@ -247,6 +251,56 @@ public final class LocalInferenceModel {
         status = metrics?.finishReason == "length" ? "Output limit reached." : "Finished."
     }
 
+    /// Summarizes through the same serial session and atomically replaces only inference context.
+    private func prepareContext(transcript: [ConversationMessage]) async throws
+        -> [ConversationMessage]
+    {
+        let context = compactionPolicy.context(transcript: transcript, state: compaction)
+        guard try await session.tokenCount(messages: context) > compactionPolicy.triggerTokens else {
+            return context
+        }
+        compacting = true
+        status = "Compacting earlier messages…"
+        defer { compacting = false }
+        let plan = try compactionPolicy.plan(transcript: transcript, state: compaction)
+        let run = try await session.generate(
+            messages: plan.messages,
+            options: GenerationOptions(maxTokens: compactionPolicy.summaryTokens))
+        activeRun = run
+        if Task.isCancelled { run.cancel() }
+        var summary = ""
+        var finishReason: String?
+        var streamError: Error?
+        do {
+            for try await event in run.events {
+                if Task.isCancelled { run.cancel(); break }
+                switch event {
+                case let .answer(text): summary += text
+                case let .finished(metrics): finishReason = metrics.finishReason
+                case .reasoning: break
+                }
+            }
+        } catch { streamError = error }
+        await run.waitUntilFinished()
+        activeRun = nil
+        if case let .failed(message) = await session.state {
+            loaded = false
+            throw PresentationFailure(message: message)
+        }
+        if let streamError { throw streamError }
+        try Task.checkCancellation()
+        let candidate = try compactionPolicy.candidate(
+            text: summary, finishReason: finishReason, plan: plan)
+        let compacted = compactionPolicy.context(transcript: transcript, state: candidate)
+        let count = try await session.tokenCount(messages: compacted)
+        guard count + compactionPolicy.responseTokens < compactionPolicy.contextSize else {
+            throw CompactionError.summaryDoesNotFit
+        }
+        try Task.checkCancellation()
+        compaction = candidate
+        return compacted
+    }
+
     private func finishDeferredActions() async {
         // Main-actor callbacks can enqueue another action while reset/unload awaits the session.
         while pendingUnload || pendingClear {
@@ -264,6 +318,7 @@ public final class LocalInferenceModel {
                     if loaded { try await session.reset() }
                     prompt = ""
                     messages.removeAll()
+                    compaction = CompactionState()
                     reasoning = ""
                     answer = ""
                     metrics = nil
