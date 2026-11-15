@@ -9,7 +9,7 @@ struct ContentView: View {
     @State private var model = LocalInferenceModel()
     @State private var sheet: Sheet?
     @State private var confirmNewChat = false
-    @State private var followingOutput = true
+    @State private var transcriptScroll = TranscriptScrollState()
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
 
@@ -20,7 +20,22 @@ struct ContentView: View {
 
     private struct Viewport: Equatable {
         let height: CGFloat
+        let contentHeight: CGFloat
+        let offset: Double
+        let bounds: ClosedRange<Double>
         let nearBottom: Bool
+
+        init(_ geometry: ScrollGeometry) {
+            height = geometry.containerSize.height
+            contentHeight = geometry.contentSize.height
+            offset = geometry.contentOffset.y
+            bounds = TranscriptScrollState.scrollBounds(
+                contentHeight: geometry.contentSize.height,
+                viewportHeight: geometry.containerSize.height,
+                topInset: geometry.contentInsets.top, bottomInset: geometry.contentInsets.bottom)
+            nearBottom = TranscriptScrollState.boundedOffset(offset, within: bounds)
+                >= bounds.upperBound - 100
+        }
     }
 
     var body: some View {
@@ -30,7 +45,7 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 24) {
                             ForEach(model.messages) { message in
-                                ChatMessageRow(message: message)
+                                ChatMessageRow(message: message).equatable()
                             }
                             Color.clear.frame(height: 1).id("latest-message")
                         }
@@ -41,28 +56,66 @@ struct ContentView: View {
                     .clipped()
                     .scrollDismissesKeyboard(.interactively)
                     .onScrollGeometryChange(for: Viewport.self) { geometry in
-                        Viewport(
-                            height: geometry.containerSize.height,
-                            nearBottom: geometry.contentOffset.y + geometry.containerSize.height
-                                >= geometry.contentSize.height - 100)
+                        Viewport(geometry)
                     } action: { old, new in
-                        if old.height != new.height && followingOutput {
+                        transcriptScroll.geometryChanged(
+                            offset: new.offset, nearBottom: new.nearBottom, bounds: new.bounds)
+                        if transcriptScroll.shouldScrollAutomatically && (
+                            old.height != new.height || old.contentHeight != new.contentHeight
+                        ) {
                             reader.scrollTo("latest-message", anchor: .bottom)
-                        } else {
-                            followingOutput = new.nearBottom
+                        }
+                    }
+                    .onScrollPhaseChange { _, phase, context in
+                        let viewport = Viewport(context.geometry)
+                        transcriptScroll.phaseChanged(
+                            scrolling: phase == .tracking || phase == .interacting
+                                || phase == .decelerating,
+                            offset: viewport.offset, nearBottom: viewport.nearBottom,
+                            bounds: viewport.bounds)
+                        if phase == .idle && transcriptScroll.shouldScrollAutomatically {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        if !transcriptScroll.followingOutput {
+                            Button {
+                                transcriptScroll.resumeFollowing()
+                                reader.scrollTo("latest-message", anchor: .bottom)
+                            } label: {
+                                Label("Jump to latest", systemImage: "arrow.down")
+                                    .font(.callout)
+                                    .padding(12)
+                                    .background(.regularMaterial, in: Capsule())
+                            }
+                            .padding(12)
                         }
                     }
                     .onChange(of: model.messages.last?.text) { _, _ in
-                        if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                        if transcriptScroll.shouldScrollAutomatically {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
                     }
                     .onChange(of: model.messages.last?.reasoning) { _, _ in
-                        if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                        if transcriptScroll.shouldScrollAutomatically {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
                     }
-                    .onChange(of: model.messages.count) { _, _ in
-                        followingOutput = true
-                        reader.scrollTo("latest-message", anchor: .bottom)
+                    .onChange(of: model.messages.count) { oldCount, _ in
+                        if model.messages.isEmpty || model.messages.dropFirst(oldCount).contains(
+                            where: { $0.role == .user }
+                        ) {
+                            transcriptScroll.resumeFollowing()
+                        }
+                        if transcriptScroll.shouldScrollAutomatically {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
                     }
                     composer
+                }
+                .onChange(of: model.conversationID) { _, _ in
+                    transcriptScroll = TranscriptScrollState()
+                    reader.scrollTo("latest-message", anchor: .bottom)
                 }
             }
             .navigationTitle("Embla Chat")
@@ -209,7 +262,7 @@ struct ContentView: View {
 }
 
 /// A stable transcript row; interrupted and limited output remain visibly identified.
-private struct ChatMessageRow: View {
+private struct ChatMessageRow: View, Equatable {
     let message: ChatMessage
 
     var body: some View {
@@ -232,12 +285,15 @@ private struct ChatMessageRow: View {
                         if message.role == .user {
                             Text(message.text)
                         } else {
-                            Text(.init(message.text))
+                            MessageMarkdownView(source: message.text)
                         }
                     }
                     .textSelection(.enabled)
                     .lineSpacing(3)
                     .accessibilityIdentifier(message.role == .user ? "user-message" : "answer")
+                }
+                if !message.text.isEmpty && message.state != .streaming {
+                    CopyTextButton(text: message.text, label: "Copy message")
                 }
                 switch message.state {
                 case .streaming:
@@ -437,4 +493,98 @@ private struct ModelSettingsView: View {
     }
 
     private func milliseconds(_ time: Double) -> String { String(format: "%.0f ms", time) }
+}
+
+
+/// Renders Foundation Markdown blocks using native selectable text and semantic fonts.
+private struct MessageMarkdownView: View {
+    let document: Result<MessageMarkdown, Error>
+
+    init(source: String) {
+        document = Result { try MessageMarkdown(source) }
+    }
+
+    var body: some View {
+        switch document {
+        case .success(let document):
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(document.blocks) { block in
+                    Group {
+                        switch block.style {
+                        case .code(let language):
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(language ?? "Code").font(.caption).foregroundStyle(.secondary)
+                                    Spacer()
+                                    CopyTextButton(text: block.plainText, label: "Copy code")
+                                }
+                                ScrollView(.horizontal) {
+                                    Text(block.plainText)
+                                        .font(.system(.body, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
+                            }
+                            .padding(12)
+                            .background(Color(uiColor: .secondarySystemBackground),
+                                        in: .rect(cornerRadius: 14))
+                        case .heading(let level):
+                            Text(block.text)
+                                .font(level == 1 ? .title2.bold() : .headline)
+                                .accessibilityAddTraits(.isHeader)
+                        case .listItem(let marker, let showsMarker):
+                            HStack(alignment: .top, spacing: 10) {
+                                Text(marker).foregroundStyle(.secondary)
+                                    .opacity(showsMarker ? 1 : 0)
+                                    .accessibilityHidden(!showsMarker)
+                                Text(block.text)
+                            }
+                        case .quote:
+                            HStack(alignment: .top, spacing: 10) {
+                                Rectangle().fill(.secondary.opacity(0.4)).frame(width: 3)
+                                Text(block.text).foregroundStyle(.secondary)
+                            }.fixedSize(horizontal: false, vertical: true)
+                        case .prose:
+                            Text(block.text)
+                        }
+                    }
+                    .padding(.leading, CGFloat(max(0, block.listDepth - 1)) * 12)
+                }
+            }
+            .textSelection(.enabled)
+        case .failure(let error):
+            Text("Unable to render Markdown: \(error.localizedDescription)")
+                .font(.caption).foregroundStyle(.red).textSelection(.enabled)
+        }
+    }
+}
+
+/// Copies the exact source text; code copying retains indentation and line breaks.
+private struct CopyTextButton: View {
+    let text: String
+    let label: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = text
+            copied = true
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(.caption)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(label)
+        .accessibilityValue(copied ? "Copied" : "")
+        .onChange(of: text) { _, _ in copied = false }
+        .task(id: copied) {
+            if copied {
+                try? await Task.sleep(for: .seconds(2))
+                if !Task.isCancelled { copied = false }
+            }
+        }
+    }
 }

@@ -20,7 +20,9 @@ The chat screen retains one active transcript and supplies prior turns to follow
 requests. A bottom composer provides Send/Stop; model controls and measurements live in
 Settings. The composer follows the supplied ChatGPT reference, with its Send control
 inside one rounded card and no separate keyboard Done row. Visual acceptance is tracked
-in [chat UI validation](docs/chat-ui-validation.md). Automatic on-device compaction is
+in [chat UI validation](docs/chat-ui-validation.md). Basic Markdown/code rendering, selection,
+Copy and output-follow behavior are described in [chat polish](docs/chat-polish.md).
+Automatic on-device compaction is
 implemented; see [the policy and validation status](docs/context-compaction.md). Local
 chat and draft persistence are integrated, including restoration after process exit. Optional,
 default-off iCloud Drive synchronization has real iPhone/Mac transfer and restoration evidence; see

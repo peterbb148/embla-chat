@@ -5,8 +5,9 @@
 The main screen is a chronological user/assistant transcript with a bottom composer,
 Send/Stop, New Chat and Settings. Reasoning is expandable within the assistant turn.
 Model download, integrity checking, storage deletion and last-response measurements
-live in Settings rather than above the chat. Basic assistant Markdown uses native
-SwiftUI Text rendering; broader rendering/copy/accessibility polish remains #18.
+live in Settings rather than above the chat. Subsequent [chat polish](chat-polish.md)
+adds native Markdown block rendering, selectable code, Copy and refined output-follow.
+The observations below retain their historical source commits.
 
 At the #25 acceptance milestone, each Send supplied all prior user turns and actual
 nonempty assistant text/reasoning
