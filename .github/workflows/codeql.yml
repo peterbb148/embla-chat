@@ -36,7 +36,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
       CODEQL_ACTION_DIFF_INFORMED_QUERIES: "false"
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Resolve locked Swift dependencies
@@ -76,7 +76,7 @@ jobs:
         env:
           ANALYSIS_RESULT: ${{ needs.analyze.result }}
         run: test "$ANALYSIS_RESULT" = success
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Test whole-head and baseline failure paths
