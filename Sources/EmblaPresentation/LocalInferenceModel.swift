@@ -159,6 +159,7 @@ public final class LocalInferenceModel {
     public var manualCompactionUnavailableReason: String? {
         if !chatRestored || resetting { return "Wait for the saved chat to open." }
         if storageError != nil { return "Resolve the chat storage error first." }
+        if replacingContext { return "Wait for the completed summary to finish saving." }
         if busy || cloud.resolving { return "Wait for the current operation or stop it first." }
         if readyDirectory == nil { return "Download and verify the model in Settings first." }
         let transcript = conversationMessages() + [ConversationMessage(role: .user, content: prompt)]
@@ -218,7 +219,7 @@ public final class LocalInferenceModel {
 
     /// Requests cancellation but leaves controls busy until the worker has actually stopped.
     public func stop() {
-        guard busy else { return }
+        guard busy, !replacingContext else { return }
         status = "Stopping…"
         activeRun?.cancel()
         task?.cancel()
@@ -471,7 +472,10 @@ public final class LocalInferenceModel {
         }
         try Task.checkCancellation()
         if force {
+            // Once the completed summary enters its atomic commit, Stop is no longer offered.
             replacingContext = true
+            running = false
+            status = "Saving completed summary…"
             let snapshot = ConversationSnapshot(
                 conversationID: conversationID, messages: messages, compaction: candidate)
             try await saveChatNow(snapshot: snapshot)

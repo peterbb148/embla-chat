@@ -977,3 +977,30 @@ func countingFailureHasNoInventedUsageAndExplicitRetryCanRecover() async throws 
     #expect(backend.calls == 0)
     #expect(!model.loaded)
 }
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func completedManualSummarySaveIsExplicitlyNonCancellableAndKeepsDiskAndMemoryConsistent() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let file = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    let archive = manualCompactionArchive()
+    try await file.save(archive)
+    let store = ManualSummaryStore(wrapped: file, holdSummary: true)
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = LocalInferenceModel(repository: fixture.repository, manifest: fixture.manifest,
+        session: InferenceSession { _, _ in backend }, chatStore: store)
+    model.check(); await model.waitUntilIdle()
+    model.compactNow()
+    try await store.waitForEntry()
+    #expect(model.busy)
+    #expect(!model.running)  // The composer no longer offers Stop.
+    #expect(model.status == "Saving completed summary…")
+    #expect(model.compaction == archive.snapshot.compaction)
+    model.stop()
+    #expect(model.status == "Saving completed summary…")
+    await store.release()
+    await model.waitUntilIdle()
+    #expect(model.error == nil)
+    #expect(!model.compaction.summary.isEmpty)
+    #expect(model.messages == archive.snapshot.messages)
+    #expect(try await file.load()?.snapshot.compaction == model.compaction)
+}

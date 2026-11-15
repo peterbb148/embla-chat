@@ -48,10 +48,11 @@ func realHostModelManuallyCompactsBelowThresholdAndRecallsTheRetainedFact() asyn
     }
     #expect(before.inputTokens < 5888)
     let visible = model.messages
+    #expect(!visible.suffix(4).contains { $0.text.uppercased().contains("EMBER-42") })
     model.compactNow(); await model.waitUntilIdle()
     try #require(model.error == nil)
     #expect(model.messages == visible)
-    #expect(!model.compaction.summary.isEmpty)
+    #expect(model.compaction.summary.uppercased().contains("EMBER-42"))
     #expect(model.compaction.summarizedMessageCount > 0)
     #expect(try await store.load()?.snapshot.compaction == model.compaction)
     await model.waitForContextUsage()

@@ -36,8 +36,9 @@ and draft remain intact, and no artificial assistant turn is appended.
 
 Stop during summary generation retains the previous committed summary/boundary. Empty,
 limited, failed or oversized summaries are rejected. A valid completed manual summary is
-saved atomically before being published. Failed saves retain the previous visible and
-stored context. Checkpoints and cloud-setting writes cannot queue the old summary behind
+saved atomically before being published. This explicit Saving completed summary phase
+no longer offers Stop; it finishes the commit or reports the actual save error. Failed
+saves retain the previous visible and stored context. Checkpoints and cloud-setting writes cannot queue the old summary behind
 that replacement. The completed summary is saved with the existing local/optional iCloud
 snapshot; the indicator does not introduce a new cloud setting or additional uploads.
 
