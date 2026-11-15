@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var model = LocalInferenceModel()
     @State private var sheet: Sheet?
     @State private var confirmNewChat = false
+    @State private var showHistory = false
     @State private var transcriptScroll = TranscriptScrollState()
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
@@ -131,9 +132,9 @@ struct ContentView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         composerFocused = false
-                        sheet = .settings
+                        withAnimation(.easeInOut(duration: 0.2)) { showHistory = true }
                     } label: {
-                        Label("Settings", systemImage: "gearshape")
+                        Label("Chat history", systemImage: "line.3.horizontal")
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -154,13 +155,13 @@ struct ContentView: View {
                 }
             }
             .alert("Start a new chat?", isPresented: $confirmNewChat) {
-                Button("Start new chat", role: .destructive) {
+                Button("Start new chat") {
                     composerFocused = false
                     model.newChat()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This clears the current conversation after any active response stops.")
+                Text("Your current chat and draft will be saved in history. Any active response stops first.")
             }
             .task { model.check() }
             .onChange(of: model.resetting) { _, resetting in
@@ -175,6 +176,81 @@ struct ContentView: View {
                 if phase == .inactive { model.becameInactive() }
                 if phase == .background { model.enteredBackground() }
                 updateIdleTimer()
+            }
+        }
+        .allowsHitTesting(!showHistory)
+        .accessibilityHidden(showHistory)
+        .overlay(alignment: .leading) {
+            if showHistory { historySidebar.transition(.move(edge: .leading).combined(with: .opacity)) }
+        }
+    }
+
+    private var historySidebar: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showHistory = false }
+                } label: {
+                    Color.black.opacity(0.25).ignoresSafeArea()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close chat history")
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Chats").font(.title2.bold())
+                        Spacer()
+                        Button {
+                            showHistory = false
+                            confirmNewChat = true
+                        } label: { Label("New Chat", systemImage: "square.and.pencil") }
+                        .labelStyle(.iconOnly)
+                        .accessibilityIdentifier("sidebar-new-chat")
+                        .disabled(!model.canNavigateChats || (model.messages.isEmpty && model.prompt.isEmpty))
+                    }
+                    .padding(.horizontal, 20)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.savedChats) { chat in
+                                Button {
+                                    model.selectChat(chat.id)
+                                    withAnimation(.easeInOut(duration: 0.2)) { showHistory = false }
+                                } label: {
+                                    HStack {
+                                        Text(chat.title).lineLimit(2).multilineTextAlignment(.leading)
+                                        Spacer(minLength: 8)
+                                        if chat.id == model.conversationID {
+                                            Image(systemName: "checkmark").accessibilityLabel("Current chat")
+                                        }
+                                    }
+                                    .padding(14)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        chat.id == model.conversationID
+                                            ? Color(uiColor: .tertiarySystemFill) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 14))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!model.canNavigateChats)
+                                .accessibilityLabel(chat.title)
+                                .accessibilityValue(chat.id == model.conversationID ? "Current chat" : "Saved chat")
+                                .accessibilityIdentifier("history-\(chat.id.uuidString)")
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                    }
+                    Divider()
+                    Button {
+                        showHistory = false
+                        sheet = .settings
+                    } label: { Label("Settings", systemImage: "gearshape") }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                }
+                .padding(.top, 16)
+                .frame(width: min(geometry.size.width * 0.86, 360))
+                .frame(maxHeight: .infinity)
+                .background(Color(uiColor: .systemBackground))
+                .accessibilityIdentifier("chat-sidebar")
             }
         }
     }
@@ -437,7 +513,7 @@ private struct ModelSettingsView: View {
             switch self {
             case .deleteModel: return "Delete downloaded model files?"
             case .cloudConsent: return "Enable iCloud Drive?"
-            case .cloudChoice: return "Use selected chat?"
+            case .cloudChoice: return "Use selected chat library?"
             }
         }
         var message: String {
@@ -445,12 +521,12 @@ private struct ModelSettingsView: View {
             case .deleteModel:
                 return "You will need to download the model again. This does not clear your conversation."
             case .cloudConsent:
-                return "Your chat and summary will be stored in iCloud Drive/EmblaChat/Chats. "
+                return "All saved chats and their summaries will be stored in iCloud Drive/EmblaChat/Chats. "
                     + "Select the EmblaChat folder; Skills is reserved for portable skills. "
                     + "Your draft and model stay on this device. Choose or create EmblaChat in Files."
             case .cloudChoice:
-                return "This replaces the active chat in the chosen location. Using an iCloud copy "
-                    + "also replaces this device’s chat and unsent draft. Other conflicting copies "
+                return "This replaces the entire chat library in the chosen location. Using an iCloud copy "
+                    + "also replaces all this device’s chats and unsent drafts. Other conflicting copies "
                     + "will be marked resolved."
             }
         }
@@ -488,7 +564,7 @@ private struct ModelSettingsView: View {
                 } label: {
                     VStack(alignment: .leading) {
                         Text(choice.label)
-                        Text("\(choice.snapshot.messages.count) messages")
+                        Text("\(choice.snapshot.chats.count) chats · \(choice.snapshot.chats.reduce(0) { $0 + $1.messages.count }) messages")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

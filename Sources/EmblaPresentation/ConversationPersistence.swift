@@ -31,11 +31,60 @@ public struct ConversationSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+/// One portable library. Selection, drafts, bookmarks and device preferences stay local.
+public struct ConversationLibrary: Codable, Sendable, Equatable {
+    public var formatVersion = 2
+    public var chats: [ConversationSnapshot]
+
+    public init(chats: [ConversationSnapshot]) {
+        self.chats = chats.sorted { $0.conversationID.uuidString < $1.conversationID.uuidString }
+    }
+
+    /// The prior single-chat cloud document is an explicit supported migration format.
+    public init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try keys.decode(Int.self, forKey: .formatVersion)
+        if version == 1 {
+            self.init(chats: [try ConversationSnapshot(from: decoder)])
+        } else {
+            guard version == 2 else { throw ConversationStorageError.unsupportedVersion }
+            self.init(chats: try keys.decode([ConversationSnapshot].self, forKey: .chats))
+        }
+        try validate()
+    }
+
+    public func validate() throws {
+        guard formatVersion == 2 else { throw ConversationStorageError.unsupportedVersion }
+        guard !chats.isEmpty,
+            Set(chats.map(\.conversationID)).count == chats.count
+        else { throw ConversationStorageError.invalidDocument }
+        for chat in chats { try chat.validate() }
+    }
+}
+
+/// Local history entry; drafts are deliberately excluded from the portable library.
+public struct SavedConversation: Codable, Sendable, Equatable, Identifiable {
+    public var snapshot: ConversationSnapshot
+    public var draft: String
+    public var id: UUID { snapshot.conversationID }
+    public var title: String {
+        let first = snapshot.messages.first(where: { $0.role == .user })?.text ?? draft
+        let line = first.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        return line.trimmingCharacters(in: .whitespaces).isEmpty ? "New chat" : String(line.prefix(80))
+    }
+
+    public init(snapshot: ConversationSnapshot, draft: String = "") {
+        self.snapshot = snapshot
+        self.draft = draft
+    }
+}
+
 /// Device-local envelope. The global cloud setting is off until explicitly enabled.
 public struct ConversationArchive: Codable, Sendable, Equatable {
     public var sequence: UInt64
     public var snapshot: ConversationSnapshot
     public var draft = ""
+    public var history: [SavedConversation]?
     public var cloudEnabled = false
     public var cloudFolderBookmark: Data?
     public var cloudBaseFingerprint: String?
@@ -46,17 +95,28 @@ public struct ConversationArchive: Codable, Sendable, Equatable {
         self.draft = draft
     }
 
-    /// A restored streaming turn is interrupted; loading never restarts generation.
+    public var library: ConversationLibrary {
+        ConversationLibrary(chats: [snapshot] + (history ?? []).map(\.snapshot))
+    }
+
+    public func validate() throws { try library.validate() }
+
+    /// Interrupted output in any saved chat never resumes generation on restoration.
     public func recoveringInterruptedResponses() -> ConversationArchive {
-        guard snapshot.messages.contains(where: { $0.state == .streaming }) else { return self }
         var recovered = self
-        for index in recovered.snapshot.messages.indices {
-            if recovered.snapshot.messages[index].state == .streaming {
-                recovered.snapshot.messages[index].state = .interrupted
+        func interrupt(_ snapshot: inout ConversationSnapshot) {
+            guard snapshot.messages.contains(where: { $0.state == .streaming }) else { return }
+            for index in snapshot.messages.indices where snapshot.messages[index].state == .streaming {
+                snapshot.messages[index].state = .interrupted
             }
+            snapshot.revision = UUID()
         }
-        recovered.snapshot.revision = UUID()
-        recovered.sequence += 1
+        interrupt(&recovered.snapshot)
+        if var entries = recovered.history {
+            for index in entries.indices { interrupt(&entries[index].snapshot) }
+            recovered.history = entries
+        }
+        if recovered != self { recovered.sequence += 1 }
         return recovered
     }
 }
@@ -93,14 +153,14 @@ public actor ConversationStore: ConversationStoring {
             throw error
         }
         let archive = try JSONDecoder().decode(ConversationArchive.self, from: bytes)
-        try archive.snapshot.validate()
+        try archive.validate()
         lastSequence = archive.sequence
         return archive
     }
 
     /// Local-only data is excluded from automatic iCloud backup as well as app-managed sync.
     public func save(_ archive: ConversationArchive) throws {
-        try archive.snapshot.validate()
+        try archive.validate()
         if let lastSequence, archive.sequence <= lastSequence {
             throw ConversationStorageError.staleWrite
         }

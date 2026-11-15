@@ -27,9 +27,10 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     }
 }
 
-/// Shared presentation state for model setup and the single active conversation.
+/// Model setup, saved history and inference state for the selected conversation.
 @MainActor @Observable
 public final class LocalInferenceModel {
+    public private(set) var history: [SavedConversation] = []
     public private(set) var conversationID = UUID()
     public private(set) var compaction = CompactionState() {
         didSet { refreshContextUsage() }
@@ -91,6 +92,7 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var operationID: UUID?
     @ObservationIgnored private var pendingUnload = false
     @ObservationIgnored private var pendingClear = false
+    @ObservationIgnored private var pendingSelection: UUID?
     @ObservationIgnored private var replacementWaiters: [CheckedContinuation<Void, Never>] = []
 
     public var canRun: Bool {
@@ -226,13 +228,29 @@ public final class LocalInferenceModel {
         task?.cancel()
     }
 
-    /// Defers clearing until any current generation has drained, preventing stale text.
-    public func newChat() {
-        guard chatRestored, !cloud.resolving, !busy || running else { return }
+    public var savedChats: [SavedConversation] {
+        [SavedConversation(snapshot: currentSnapshot(), draft: prompt)] + history
+    }
+
+    public var canNavigateChats: Bool {
+        chatRestored && !resetting && !cloud.resolving && (!busy || running)
+    }
+
+    /// Navigation drains generation, then saves the previous chat and the new selection atomically.
+    public func newChat() { navigate(to: nil) }
+
+    public func selectChat(_ id: UUID) {
+        guard id != conversationID, history.contains(where: { $0.id == id }) else { return }
+        navigate(to: id)
+    }
+
+    private func navigate(to id: UUID?) {
+        guard canNavigateChats else { return }
         cloud.pause()
         cloud.refresh()
         resetting = true
         pendingClear = true
+        pendingSelection = id
         if busy { stop() } else { start(.clear) }
     }
 
@@ -518,6 +536,7 @@ public final class LocalInferenceModel {
             )).recoveringInterruptedResponses()
             if existing == nil || archive != existing { try await chatStore.save(archive) }
             restoringChat = true
+            history = archive.history ?? []
             conversationID = archive.snapshot.conversationID
             messages = archive.snapshot.messages
             compaction = archive.snapshot.compaction
@@ -562,7 +581,8 @@ public final class LocalInferenceModel {
     /// Captures on the main actor and queues writes in order; only the latest write sets status.
     private func saveChatNow(
         snapshot replacement: ConversationSnapshot? = nil, draft: String? = nil,
-        notifyCloud: Bool = true, cloudSettings requestedSettings: PersistedCloudSettings? = nil
+        notifyCloud: Bool = true, cloudSettings requestedSettings: PersistedCloudSettings? = nil,
+        history replacementHistory: [SavedConversation]? = nil
     ) async throws {
         guard chatRestored, let chatStore else { return }
         checkpointTask?.cancel()
@@ -579,8 +599,10 @@ public final class LocalInferenceModel {
         if replacement == nil { lastSnapshot = snapshot }
         persistenceSequence += 1
         let sequence = persistenceSequence
-        let pendingArchive = ConversationArchive(
+        var pendingArchive = ConversationArchive(
             sequence: sequence, snapshot: snapshot, draft: draft ?? prompt)
+        pendingArchive.history = replacementHistory ?? history
+        let capturedArchive = pendingArchive
         storageStatus = "Saving on this device…"
         let previous = saveTask
         let write = Task {
@@ -589,7 +611,7 @@ public final class LocalInferenceModel {
             // never from an opt-in whose own save is still pending or has failed.
             var settings = requestedSettings ?? self.persistedCloudSettings
             if requestedSettings == nil && !self.cloud.enabled { settings.enabled = false }
-            var archive = pendingArchive
+            var archive = capturedArchive
             archive.cloudEnabled = settings.enabled
             archive.cloudFolderBookmark = settings.bookmark
             archive.cloudBaseFingerprint = settings.base
@@ -631,7 +653,8 @@ public final class LocalInferenceModel {
         cloud.current = { [weak self] in
             guard let self, self.chatRestored else { return nil }
             return CloudLocalConversation(
-                snapshot: self.currentSnapshot(), hasDraft: !self.prompt.isEmpty,
+                snapshot: self.currentLibrary(),
+                hasDraft: !self.prompt.isEmpty || self.history.contains(where: { !$0.draft.isEmpty }),
                 canReplace: !self.busy && !self.resetting && self.storageError == nil)
         }
         cloud.persist = { [weak self] in
@@ -652,33 +675,51 @@ public final class LocalInferenceModel {
         }
     }
 
-    private func applyCloudSnapshot(_ snapshot: ConversationSnapshot, expected: String) async throws {
-        guard !busy, !resetting, try currentSnapshot().fingerprint() == expected else {
+    private func currentLibrary() -> ConversationLibrary {
+        ConversationLibrary(chats: [currentSnapshot()] + history.map(\.snapshot))
+    }
+
+    private func applyCloudSnapshot(_ library: ConversationLibrary, expected: String) async throws {
+        guard !busy, !resetting, try currentLibrary().fingerprint() == expected else {
             throw CloudConversationError.changed
         }
+        try library.validate()
         try Task.checkCancellation()
         busy = true
         resetting = true
-        let recovered = ConversationArchive(sequence: 0, snapshot: snapshot)
-            .recoveringInterruptedResponses().snapshot
+        // Selection is device-local; a replacement library may not include the current ID.
+        guard let selected = library.chats.first(where: { $0.conversationID == conversationID })
+            ?? library.chats.first else { throw ConversationStorageError.invalidDocument }
+        var archive = ConversationArchive(sequence: 0, snapshot: selected)
+        archive.history = library.chats.filter { $0.conversationID != selected.conversationID }
+            .map { SavedConversation(snapshot: $0) }
+        archive = archive.recoveringInterruptedResponses()
         do {
             if loaded { try await session.reset() }
-            try await saveChatNow(snapshot: recovered, draft: "", notifyCloud: false)
-            restoringChat = true
-            messages = recovered.messages
-            compaction = recovered.compaction
-            conversationID = recovered.conversationID
-            prompt = ""
-            reasoning = ""
-            answer = ""
-            metrics = nil
-            restoringChat = false
-            status = "Restored the iCloud chat."
+            try await saveChatNow(
+                snapshot: archive.snapshot, draft: "", notifyCloud: false, history: archive.history)
+            publish(archive.snapshot, draft: "", history: archive.history ?? [])
+            status = "Restored the iCloud chat library."
         } catch {
             await finishDeferredActions()
             throw error
         }
         await finishDeferredActions()
+    }
+
+    private func publish(
+        _ snapshot: ConversationSnapshot, draft: String, history: [SavedConversation]
+    ) {
+        restoringChat = true
+        self.history = history
+        messages = snapshot.messages
+        compaction = snapshot.compaction
+        conversationID = snapshot.conversationID
+        prompt = draft
+        reasoning = ""
+        answer = ""
+        metrics = nil
+        restoringChat = false
     }
 
     private func finishDeferredActions() async {
@@ -696,20 +737,23 @@ public final class LocalInferenceModel {
                 }
                 if clear {
                     if loaded { try await session.reset() }
-                    let newID = UUID()
-                    let snapshot = ConversationSnapshot(
-                        conversationID: newID, messages: [], compaction: CompactionState())
-                    try await saveChatNow(snapshot: snapshot, draft: "")
-                    restoringChat = true
-                    prompt = ""
-                    messages.removeAll()
-                    compaction = CompactionState()
-                    reasoning = ""
-                    answer = ""
-                    metrics = nil
-                    conversationID = newID
-                    restoringChat = false
-                    status = error == nil ? "New chat." : "Chat cleared after an error."
+                    var saved = history
+                    let selected: SavedConversation
+                    if let id = pendingSelection {
+                        guard let index = saved.firstIndex(where: { $0.id == id }) else {
+                            throw ConversationStorageError.invalidDocument
+                        }
+                        selected = saved.remove(at: index)
+                    } else {
+                        selected = SavedConversation(snapshot: ConversationSnapshot(
+                            conversationID: UUID(), messages: [], compaction: CompactionState()))
+                    }
+                    pendingSelection = nil
+                    saved.insert(SavedConversation(snapshot: currentSnapshot(), draft: prompt), at: 0)
+                    try await saveChatNow(
+                        snapshot: selected.snapshot, draft: selected.draft, history: saved)
+                    publish(selected.snapshot, draft: selected.draft, history: saved)
+                    status = "Chat ready."
                 }
             } catch {
                 self.error = error.localizedDescription

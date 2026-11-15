@@ -15,10 +15,13 @@ EmblaChat/
         └── assets/        (optional)
 ```
 
-`Chats/ActiveChat.json` contains the single active transcript and rolling summary. This is
-still one chat, without an archive or chat list. Chat synchronization, conflict resolution and
-New Chat operate on that document. They do not replace, clear or scan skill contents. Chat
-sync remains optional and off by default; disabled mode does not open the folder provider.
+`Chats/ActiveChat.json` now contains the format-2 library of all saved transcripts and
+rolling summaries. The original filename is retained for migration from the supported
+format-1 single-chat document. Drafts and selected-chat state remain local. New Chat archives
+the previous chat, and the [left sidebar](chat-history.md) reopens saved context. The one
+global iCloud switch is optional and off by default; explicit On consent covers all saved
+chats. Disabled mode never opens the folder provider. Conflict choices replace a whole
+library with explicit confirmation. These operations do not replace, clear or scan Skills.
 
 `Skills` reserves the portable skill library requested in #27. Each copied skill retains its
 own directory and relative supporting files. The [Agent Skills specification](https://agentskills.io/specification)

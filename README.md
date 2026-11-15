@@ -28,7 +28,9 @@ implemented; see [the policy and validation status](docs/context-compaction.md).
 chat and draft persistence are integrated, including restoration after process exit. Optional,
 default-off iCloud Drive synchronization has real iPhone/Mac transfer and restoration evidence; see
 [the persistence design and validation status](docs/chat-persistence.md).
-The selected cloud root separates `Chats/ActiveChat.json` from portable `Skills` folders;
+The left sidebar reopens [saved chats](docs/chat-history.md), each with its own summary and local draft.
+The global iCloud switch covers all saved chats when explicitly enabled.
+The selected cloud root separates the `Chats/ActiveChat.json` library from portable `Skills` folders;
 see [the storage layout](docs/storage-layout.md). Skill loading and MCP execution remain #27.
 
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,
