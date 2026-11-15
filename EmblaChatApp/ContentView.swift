@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var sheet: Sheet?
     @State private var confirmNewChat = false
     @State private var followingOutput = true
+    @State private var readerScrolling = false
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
 
@@ -30,7 +31,7 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 24) {
                             ForEach(model.messages) { message in
-                                ChatMessageRow(message: message)
+                                ChatMessageRow(message: message).equatable()
                             }
                             Color.clear.frame(height: 1).id("latest-message")
                         }
@@ -45,11 +46,28 @@ struct ContentView: View {
                             height: geometry.containerSize.height,
                             nearBottom: geometry.contentOffset.y + geometry.containerSize.height
                                 >= geometry.contentSize.height - 100)
-                    } action: { old, new in
-                        if old.height != new.height && followingOutput {
-                            reader.scrollTo("latest-message", anchor: .bottom)
-                        } else {
+                    } action: { _, new in
+                        if readerScrolling {
                             followingOutput = new.nearBottom
+                        } else if followingOutput {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
+                    }
+                    .onScrollPhaseChange { _, phase in
+                        readerScrolling = phase == .interacting || phase == .decelerating
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        if !followingOutput {
+                            Button {
+                                followingOutput = true
+                                reader.scrollTo("latest-message", anchor: .bottom)
+                            } label: {
+                                Label("Jump to latest", systemImage: "arrow.down")
+                                    .font(.callout)
+                                    .padding(12)
+                                    .background(.regularMaterial, in: Capsule())
+                            }
+                            .padding(12)
                         }
                     }
                     .onChange(of: model.messages.last?.text) { _, _ in
@@ -59,8 +77,10 @@ struct ContentView: View {
                         if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
                     }
                     .onChange(of: model.messages.count) { _, _ in
-                        followingOutput = true
-                        reader.scrollTo("latest-message", anchor: .bottom)
+                        if model.messages.isEmpty || model.messages.last?.role == .user {
+                            followingOutput = true
+                        }
+                        if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
                     }
                     composer
                 }
@@ -109,6 +129,7 @@ struct ContentView: View {
                 composerFocused = !resetting
             }
             .onChange(of: model.conversationID) { _, _ in
+                followingOutput = true
                 composerFocused = true
             }
             .onChange(of: model.busy) { _, _ in updateIdleTimer() }
@@ -209,7 +230,7 @@ struct ContentView: View {
 }
 
 /// A stable transcript row; interrupted and limited output remain visibly identified.
-private struct ChatMessageRow: View {
+private struct ChatMessageRow: View, Equatable {
     let message: ChatMessage
 
     var body: some View {
@@ -232,12 +253,15 @@ private struct ChatMessageRow: View {
                         if message.role == .user {
                             Text(message.text)
                         } else {
-                            Text(.init(message.text))
+                            MessageMarkdownView(source: message.text)
                         }
                     }
                     .textSelection(.enabled)
                     .lineSpacing(3)
                     .accessibilityIdentifier(message.role == .user ? "user-message" : "answer")
+                }
+                if !message.text.isEmpty && message.state != .streaming {
+                    CopyTextButton(text: message.text, label: "Copy message")
                 }
                 switch message.state {
                 case .streaming:
@@ -437,4 +461,93 @@ private struct ModelSettingsView: View {
     }
 
     private func milliseconds(_ time: Double) -> String { String(format: "%.0f ms", time) }
+}
+
+
+/// Renders Foundation Markdown blocks using native selectable text and semantic fonts.
+private struct MessageMarkdownView: View {
+    let document: Result<MessageMarkdown, Error>
+
+    init(source: String) {
+        document = Result { try MessageMarkdown(source) }
+    }
+
+    var body: some View {
+        switch document {
+        case .success(let document):
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(document.blocks) { block in
+                    switch block.style {
+                    case .code(let language):
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(language ?? "Code").font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                CopyTextButton(text: block.plainText, label: "Copy code")
+                            }
+                            ScrollView(.horizontal) {
+                                Text(block.plainText)
+                                    .font(.system(.body, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
+                        }
+                        .padding(12)
+                        .background(Color(uiColor: .secondarySystemBackground),
+                                    in: .rect(cornerRadius: 14))
+                    case .heading(let level):
+                        Text(block.text)
+                            .font(level == 1 ? .title2.bold() : .headline)
+                            .accessibilityAddTraits(.isHeader)
+                    case .listItem(let marker):
+                        HStack(alignment: .top, spacing: 10) {
+                            Text(marker).foregroundStyle(.secondary)
+                            Text(block.text)
+                        }
+                    case .quote:
+                        HStack(alignment: .top, spacing: 10) {
+                            Rectangle().fill(.secondary.opacity(0.4)).frame(width: 3)
+                            Text(block.text).foregroundStyle(.secondary)
+                        }.fixedSize(horizontal: false, vertical: true)
+                    case .prose:
+                        Text(block.text)
+                    }
+                }
+            }
+            .textSelection(.enabled)
+        case .failure(let error):
+            Text("Unable to render Markdown: \(error.localizedDescription)")
+                .font(.caption).foregroundStyle(.red).textSelection(.enabled)
+        }
+    }
+}
+
+/// Copies the exact source text; code copying retains indentation and line breaks.
+private struct CopyTextButton: View {
+    let text: String
+    let label: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = text
+            copied = true
+        } label: {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(.caption)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(label)
+        .accessibilityValue(copied ? "Copied" : "")
+        .onChange(of: text) { _, _ in copied = false }
+        .task(id: copied) {
+            if copied {
+                try? await Task.sleep(for: .seconds(2))
+                if !Task.isCancelled { copied = false }
+            }
+        }
+    }
 }

@@ -42,7 +42,7 @@ The documentation audit receives its own final-head CI and review before merging
 
 Epic 3 delivers a working version, not final release acceptance:
 
-- #18: Markdown/code rendering, Copy/selection, scrolling, broader accessibility/storage
+- #18: Markdown/code rendering, Copy/selection, scrolling and storage-control
   polish and investigation of the earlier large remotely injected input exit.
 - #7: final release/device matrix, including physical OS-generated NSFileVersion conflicts
   and forced account, permission and transfer failures. Those OS scenarios were not forced;
