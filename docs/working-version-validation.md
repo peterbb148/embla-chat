@@ -67,3 +67,6 @@ The [history/sidebar](chat-history.md) extends the original single-chat checkpoi
 separate transcripts, summaries and drafts on navigation; New Chat is no longer destructive.
 The global cloud option now covers the complete library, with drafts remaining local. The
 physical single-chat evidence above does not validate this new multi-chat document format.
+
+The user explicitly deferred new real multi-chat iCloud provider/failure checks to unplanned
+#45. Those checks no longer block Epic 4; existing physical evidence remains commit-specific.

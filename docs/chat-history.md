@@ -53,5 +53,21 @@ cloud/inference fixtures. They cover migration, all-chat opt-in without drafts, 
 conflicts, exact summary/draft restoration after restart, interrupted navigation and failed
 writes. Simulator UI checks use the production app without model downloads or synthetic
 assistant responses. They do not prove real iCloud transfer or model inference. Physical
-single-chat iCloud evidence in chat-persistence.md predates this format; multi-chat provider
-validation must be reported separately under #7.
+single-chat iCloud evidence in chat-persistence.md predates this format; the user deferred real multi-chat provider
+validation to unplanned #45. It is not an Epic 4 completion gate.
+
+Local Xcode 27.2 validation: 112 package cases and all seven production UI checks passed on
+the existing iPhone 17 Pro/iOS 27.2 simulator. The history UI check restores both drafts after
+process restart. No extra local simulator is created for subsequent validation.
+
+Real-host inference on Apple M1/macOS 26.7.3 with the verified pinned model passed the
+opt-in `realHostHistoryRestoresTwoIndependentConversationContexts` test in 40.23 seconds.
+Actual model-generated chats retained BLUE PENGUIN and RED FOX independently. Switching
+back to the first chat recalled BLUE PENGUIN; a fresh controller/session after restart
+reopened the second and recalled RED FOX. Neither reply included the other chat's fact.
+This is functional host evidence, not simulator inference or iPhone performance evidence.
+
+The production simulator's sidebar and restored first-chat draft were also inspected visually.
+The personal-iCloud attempt was cancelled because Files reported Drive off and the user chose
+"Defer the real iCloud check". Settings remained Off. The existing Mac cloud document's hash
+was unchanged and the empty preparation folders were removed. No real transfer is claimed.

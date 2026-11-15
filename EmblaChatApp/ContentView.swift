@@ -523,7 +523,7 @@ private struct ModelSettingsView: View {
             case .cloudConsent:
                 return "All saved chats and their summaries will be stored in iCloud Drive/EmblaChat/Chats. "
                     + "Select the EmblaChat folder; Skills is reserved for portable skills. "
-                    + "Your draft and model stay on this device. Choose or create EmblaChat in Files."
+                    + "Your drafts and model stay on this device. Choose or create EmblaChat in Files."
             case .cloudChoice:
                 return "This replaces the entire chat library in the chosen location. Using an iCloud copy "
                     + "also replaces all this device’s chats and unsent drafts. Other conflicting copies "

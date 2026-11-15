@@ -67,7 +67,8 @@ Do not substitute total device RAM for the app's measured memory footprint.
    The old generation must not overlap or append stale text to this request.
 4. Start another request and choose New Chat > Start new chat. It must stop and
    drain before clearing the prompt/output. Cancelling the confirmation must keep
-   the text. New Chat does not delete model files or create a saved-chat archive.
+   the text. New Chat keeps model files and now saves the previous conversation in history.
+   Reopen it from the left sidebar and verify its partial output, summary and draft.
 5. Background during a run and reopen. Work must stop and unload as supported by
    the runtime; it must not silently resume. Record any GPU or memory crash.
 

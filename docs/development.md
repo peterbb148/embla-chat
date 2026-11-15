@@ -114,8 +114,9 @@ mirrored view rather than adding an app-level forced-keyboard workaround.
 
 Idle sleep is disabled only during foreground work. Inactivity requests cancellation;
 backgrounding cancels and unloads once the worker drains. New Chat uses the same stop/wait
-sequence before clearing transcript, draft and inference context. The composer is disabled
-while confirmed clearing drains, and focus returns when the new conversation is ready.
+sequence before archiving the old transcript/draft and resetting inference context. The composer
+is disabled until navigation is saved. The left sidebar restores each chat’s summary and draft;
+Settings is inside that sidebar. Focus returns when the selected conversation is ready.
 Expanded reasoning participates in scroll-follow while the reader remains near the bottom.
 Model deletion never
 clears the conversation.
