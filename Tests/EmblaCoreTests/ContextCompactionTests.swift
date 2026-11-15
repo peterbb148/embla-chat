@@ -42,3 +42,25 @@ import Testing
             state: CompactionState())
     }
 }
+
+@Test func emptyPlaceholdersDoNotBecomeModelTurnsOrShiftTheSummaryBoundary() throws {
+    let policy = ContextCompaction()
+    let transcript: [ConversationMessage] = [
+        .init(role: .user, content: "older request"),
+        .init(role: .assistant, content: ""),
+        .init(role: .user, content: "recent one"),
+        .init(role: .assistant, content: "real answer"),
+        .init(role: .user, content: "recent two"),
+        .init(role: .assistant, content: ""),
+        .init(role: .user, content: "current request"),
+    ]
+    let plan = try policy.plan(transcript: transcript, state: CompactionState())
+    #expect(plan.boundary == 2) // Counts visible entries, including the empty interrupted row.
+    #expect(!plan.messages.contains { $0.role == .assistant && $0.content.isEmpty })
+    let state = try policy.candidate(text: "Earlier summary", finishReason: "stop", plan: plan)
+    let context = policy.context(transcript: transcript, state: state)
+    #expect(context.map(\.content) == [
+        "Summary of earlier conversation (may omit details):\nEarlier summary",
+        "recent one", "real answer", "recent two", "current request",
+    ])
+}

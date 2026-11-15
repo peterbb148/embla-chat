@@ -501,3 +501,27 @@ func stopDuringCompactionPreservesHistoryWithoutCommittingAPartialSummary() asyn
     #expect(model.messages.first?.text == String(repeating: "x", count: 1_600))
     #expect(model.error == nil && model.loaded && !model.busy)
 }
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func retryAfterFailedSummaryExcludesTheEmptyFailedAssistantTurn() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(
+        pauseFirst: false, countCharacters: true, emptySummaryCall: 1)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    for _ in 0..<4 {
+        model.prompt = String(repeating: "x", count: 1_600)
+        model.run()
+        await model.waitUntilIdle()
+    }
+    #expect(model.messages.last?.state == .failed)
+    let failedID = model.messages.last?.id
+    model.prompt = "Retry and continue"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.error == nil && model.messages.last?.state == .complete)
+    #expect(model.messages[7].id == failedID && model.messages[7].state == .failed)
+    #expect(backend.calls == 6)
+    #expect(!backend.encodedMessages.contains { context in
+        context.contains { $0.role == .assistant && $0.content.isEmpty && $0.reasoning == nil }
+    })
+}

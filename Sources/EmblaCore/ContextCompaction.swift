@@ -39,7 +39,10 @@ public struct ContextCompaction: Sendable {
                 role: .system,
                 content: "Summary of earlier conversation (may omit details):\n" + state.summary)
         ]
-        return prefix + transcript.dropFirst(state.summarizedMessageCount)
+        let recent = transcript.dropFirst(state.summarizedMessageCount).filter {
+            !$0.content.isEmpty || !($0.reasoning ?? "").isEmpty
+        }
+        return prefix + recent
     }
 
     /// Keeps two completed exchanges and the current user turn verbatim.

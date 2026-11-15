@@ -66,5 +66,8 @@ sequence completed the compaction tests without another exit. Long-input stabili
 tracked under #18; this result does not establish that arbitrary large drafts are safe.
 
 Signed Xcode 27.2 Release device builds and package tests pass. Hosted build/UI checks and
-final-head Copilot review remain PR gates.
+final-head Copilot review remain PR gates. A subsequent review fix filters empty
+failed/interrupted assistant placeholders after applying the transcript boundary; focused
+retry and boundary-index tests cover that change. The full physical sequence above was
+not repeated for that filtering fix.
 Local and optional iCloud persistence remain in #9, with iCloud off by default.
