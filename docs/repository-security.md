@@ -15,18 +15,27 @@ The existing `ios` check builds the unsigned device app and runs package/UI test
 development and unknown scopes without advisory exceptions or warning-only mode. Its base
 is the repository's initial README-only commit `240ad61445b4d7f9c39a354ec6661d036cc315a8`,
 so it reviews the full proposed dependency graph rather than only newly changed packages.
-This also permits a PR to fix a vulnerable default-branch dependency instead of deadlocking
+A separate fail-closed guard rejects remaining snapshot warnings, malformed/empty data and
+missing application lockfile snapshots after the action retries. That same completed response
+also rejects any remaining vulnerability, so a newly complete graph cannot escape the earlier
+advisory check. The intentionally README-only
+base has an empty graph, not an ignored unavailable-snapshot warning. This also permits a PR
+to fix a vulnerable default-branch dependency instead of deadlocking
 on an alert that can close only after the fix merges.
 
 `Secret scan` uses a checksummed, pinned Gitleaks binary against full fetched Git history,
-with findings redacted. A disposable synthetic-history smoke check proves a clean history
+with per-parent merge diffs (`--all -m`) and findings redacted. A disposable synthetic-history
+smoke check proves a clean history
 passes and a credential removed from the latest tree is still rejected without exposing
 its value. No real credential is used in the fixture.
 
-The explicit CodeQL workflow analyzes **Swift and GitHub Actions** with extended queries.
+The explicit CodeQL workflow analyzes **Swift, GitHub Actions and the security helpers’ Python** with extended queries.
 Swift extraction builds the actual iPhone application with the locked Xcode toolchain;
-Actions uses its supported buildless mode. Both jobs are required separately, as well as
-native all-severity CodeQL merge protection. Actual main/PR results must be verified, not
+Actions uses its supported buildless mode. All three jobs are required separately, as well as
+native all-severity CodeQL merge protection. Required `Security inventory` reads all three full
+published final-head SARIF results, rejects every finding (including unchanged files), requires
+successful exact-head analyses, and reconciles open main alerts against exact-head fixed
+instances. Missing/failed evidence blocks the check. Actual main/PR results are verified, not
 inferred from a settings request succeeding.
 Dependabot alerts/security updates, secret scanning, push protection and private
 vulnerability reporting are enabled. Weekly version-update configuration covers Swift and
@@ -76,7 +85,8 @@ actual detector. Local smoke checks pass, including redaction and historical det
 the full local history scan reports zero findings across 78 commits at this checkpoint.
 
 Verified API settings: main integrity/security ruleset **27331567** has no bypass actors,
-requires `ios`, `Dependency audit` and `Secret scan` from GitHub Actions (app 15368), requires
+requires `ios`, `Dependency audit`, `Secret scan`, `CodeQL (swift)`, `CodeQL (actions)`, `CodeQL (python)` and
+`Security inventory` from GitHub Actions (app 15368), requires
 the branch to be up to date, blocks deletion/force-push and requires resolved conversations.
 Its CodeQL thresholds are both `all`, including low-severity security findings. Separate
 owner-review ruleset **27331553** requires one code-owner approval with stale approvals
@@ -86,3 +96,25 @@ Default CodeQL setup was rejected as insufficient: its overall setup run succeed
 autobuild failed and silently reduced coverage to Actions. Swift's failed analysis is not
 a pass. The checked-in manual build replaces that configuration; a temporary, genuine
 scan of the exact existing main seeds the required baseline and is removed before merge.
+
+Copilot review regressions additionally cover incomplete snapshot data after retry timeout,
+including rejecting unavailable-base warnings rather than treating them as intentional
+emptiness. Seven standard-library tests pass, and the guard also succeeds against the exact
+live PR comparison. A real disposable merge fixture proves ordinary history diffs miss a
+merge-only synthetic credential while `-m` rejects it with redacted output. The full local
+merge-aware history scan reports zero findings. These are detector/metadata fixtures, not
+real credentials, model output or personal-data access.
+
+The whole-result inventory is separate from native PR-diff protection: result ingestion alone
+does not mean zero findings. Five regression cases cover missing language/head evidence,
+failed zero-result extraction, findings in unchanged files, unavailable full SARIF and stale/
+unfixed main alert instances. A baseline finding may be fixed by a PR only when the complete
+final-head result is clean and GitHub publishes its exact-head fixed instance; absence of
+that evidence is a failure rather than a reason to ignore the baseline.
+
+The initial real main baseline passed in [run 43762455410](https://github.com/peterbb148/embla-chat/actions/runs/43762455410).
+Both existing languages published zero full results with empty error/warning metadata at
+`4ea2e7bd8814fd4ca7082e757ca5b3082337afc2`; the inventory helper also verified their complete
+published SARIF and zero open main alerts. The one-time bootstrap workflow was then removed.
+Python is additionally required on the final head because this change introduces Python
+security helpers; the earlier main had no Python source to analyze.

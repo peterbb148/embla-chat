@@ -6,3 +6,6 @@ DerivedData/
 xcuserdata/
 *.xcresult/
 *.safetensors
+
+# Standard-library security-check helpers
+__pycache__/

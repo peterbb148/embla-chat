@@ -29,6 +29,9 @@ jobs:
           - language: actions
             runner: ubuntu-24.04
             build-mode: none
+          - language: python
+            runner: ubuntu-24.04
+            build-mode: none
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
@@ -57,3 +60,27 @@ jobs:
         with:
           category: /language:${{ matrix.language }}
           wait-for-processing: true
+
+  security-inventory:
+    name: Security inventory
+    if: ${{ always() }}
+    needs: [analyze]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: read
+    steps:
+      - name: Require completed analysis jobs
+        env:
+          ANALYSIS_RESULT: ${{ needs.analyze.result }}
+        run: test "$ANALYSIS_RESULT" = success
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Test whole-head and baseline failure paths
+        run: python3 -m unittest discover -s scripts -p test_codeql_inventory.py
+      - name: Require clean full final-head results and reconcile main findings
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_codeql_inventory.py

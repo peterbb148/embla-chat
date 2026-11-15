@@ -17,6 +17,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Test fail-closed dependency completeness guard
+        run: python3 -m unittest discover -s scripts -p test_dependency_snapshot.py
       # The initial commit contains only README.md: comparing against it audits the
       # complete proposed dependency graph, including an unchanged vulnerable baseline.
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
@@ -32,6 +37,10 @@ jobs:
           show-openssf-scorecard: false
           retry-on-snapshot-warnings: true
           retry-on-snapshot-warnings-timeout: 300
+      - name: Reject unresolved snapshot warnings and incomplete head data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_dependency_snapshot.py
   secret-scan:
     name: Secret scan
     runs-on: ubuntu-24.04
@@ -54,4 +63,4 @@ jobs:
       - name: Verify scanner enforcement with disposable synthetic history
         run: bash scripts/check-secret-scanner.sh "$RUNNER_TEMP/gitleaks"
       - name: Scan full history without exposing secret values
-        run: '"$RUNNER_TEMP/gitleaks" git --redact=100 --no-banner --exit-code=1 --log-opts="--all" .'
+        run: '"$RUNNER_TEMP/gitleaks" git --redact=100 --no-banner --exit-code=1 --log-opts="--all -m" .'
