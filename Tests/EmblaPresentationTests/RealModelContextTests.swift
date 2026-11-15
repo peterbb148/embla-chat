@@ -134,3 +134,73 @@ func realHostHistoryRestoresTwoIndependentConversationContexts() async throws {
     #expect(secondAnswer.contains("RED FOX") && !secondAnswer.contains("BLUE PENGUIN"))
     reopened.enteredBackground(); await reopened.waitUntilIdle()
 }
+
+/// Cross-chat memory uses real generated turns and explicit saves, edits and clear only.
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"] != nil),
+    .timeLimit(.minutes(5))
+) @MainActor
+func realHostProjectMemorySharesOnlyExplicitNotesAndHonorsEditsAndClear() async throws {
+    let root = URL(fileURLWithPath: try #require(
+        ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"]))
+    let manifest = try ModelManifest.bundled()
+    let repository = ModelRepository(root: root, manifest: manifest)
+    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    let model = LocalInferenceModel(repository: repository, manifest: manifest,
+        session: EmblaRuntime.makeSession(), chatStore: ConversationStore(root: temporary))
+    model.check(); await model.waitUntilIdle()
+    try #require(model.readyDirectory != nil && model.error == nil)
+    model.prompt = "Remember this fact: the project codename is BLUE PENGUIN. Reply only Noted."
+    model.run(); await model.waitUntilIdle()
+    try #require(model.error == nil && model.messages.last?.state == .complete)
+    let sourceChat = model.conversationID
+    let source = try #require(model.messages.first)
+    let a = try await model.createProject(name: "Explicit shared memory")
+    let b = try await model.createProject(name: "Isolated project")
+    try await model.moveChat(sourceChat, to: a)
+    #expect(model.projects.allSatisfy { $0.memory.isEmpty })
+    try await model.saveProjectMemory(projectID: a, text: "The project codename is BLUE PENGUIN.",
+        sourceChatID: sourceChat, sourceMessageID: source.id)
+    let question = "What is the project codename? If none was supplied, reply UNKNOWN. "
+        + "Reply only with the codename or UNKNOWN."
+    model.newChat(in: a); await model.waitUntilIdle()
+    #expect(model.messages.isEmpty)
+    model.prompt = question
+    model.run(); await model.waitUntilIdle()
+    try #require(model.error == nil && model.messages.last?.state == .complete)
+    print("Real shared-project recall: \(model.answer)")
+    #expect(model.answer.uppercased().contains("BLUE PENGUIN"))
+    model.newChat(in: b); await model.waitUntilIdle()
+    model.prompt = question
+    model.run(); await model.waitUntilIdle()
+    try #require(model.error == nil && model.messages.last?.state == .complete)
+    print("Real isolated-project response: \(model.answer)")
+    #expect(model.answer.uppercased().contains("UNKNOWN"))
+    #expect(!model.answer.uppercased().contains("BLUE PENGUIN"))
+    let entry = try #require(model.projects.first(where: { $0.id == a })?.memory.first)
+    try await model.editProjectMemory(projectID: a, entryID: entry.id,
+        text: "The project codename is RED FOX.")
+    model.enteredBackground(); await model.waitUntilIdle()
+    let reopened = LocalInferenceModel(repository: repository, manifest: manifest,
+        session: EmblaRuntime.makeSession(), chatStore: ConversationStore(root: temporary))
+    reopened.check(); await reopened.waitUntilIdle()
+    #expect(reopened.projects.first(where: { $0.id == a })?.memory.first?.sourceMessageID
+        == source.id)
+    reopened.newChat(in: a); await reopened.waitUntilIdle()
+    reopened.prompt = question
+    reopened.run(); await reopened.waitUntilIdle()
+    try #require(reopened.error == nil && reopened.messages.last?.state == .complete)
+    print("Real edited-memory recall after restart: \(reopened.answer)")
+    #expect(reopened.answer.uppercased().contains("RED FOX"))
+    #expect(!reopened.answer.uppercased().contains("BLUE PENGUIN"))
+    try await reopened.removeProjectMemory(projectID: a)
+    reopened.newChat(in: a); await reopened.waitUntilIdle()
+    reopened.prompt = question
+    reopened.run(); await reopened.waitUntilIdle()
+    try #require(reopened.error == nil && reopened.messages.last?.state == .complete)
+    print("Real cleared-memory response: \(reopened.answer)")
+    #expect(reopened.answer.uppercased().contains("UNKNOWN"))
+    #expect(!reopened.answer.uppercased().contains("RED FOX"))
+    reopened.enteredBackground(); await reopened.waitUntilIdle()
+}

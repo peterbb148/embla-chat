@@ -7,15 +7,18 @@ public struct ConversationSnapshot: Codable, Sendable, Equatable {
     public var formatVersion = 1
     public var conversationID: UUID
     public var revision = UUID()
+    public var projectID: UUID?
     public var messages: [ChatMessage]
     public var compaction: CompactionState
 
     public init(
-        conversationID: UUID, messages: [ChatMessage], compaction: CompactionState
+        conversationID: UUID, messages: [ChatMessage], compaction: CompactionState,
+        projectID: UUID? = nil
     ) {
         self.conversationID = conversationID
         self.messages = messages
         self.compaction = compaction
+        self.projectID = projectID
     }
 
     /// Rejects incompatible/corrupt documents without silently resetting the conversation.
@@ -33,11 +36,13 @@ public struct ConversationSnapshot: Codable, Sendable, Equatable {
 
 /// One portable library. Selection, drafts, bookmarks and device preferences stay local.
 public struct ConversationLibrary: Codable, Sendable, Equatable {
-    public var formatVersion = 2
+    public var formatVersion = 3
     public var chats: [ConversationSnapshot]
+    public var projects: [ChatProject]
 
-    public init(chats: [ConversationSnapshot]) {
+    public init(chats: [ConversationSnapshot], projects: [ChatProject] = []) {
         self.chats = chats.sorted { $0.conversationID.uuidString < $1.conversationID.uuidString }
+        self.projects = projects.sorted { $0.id.uuidString < $1.id.uuidString }
     }
 
     /// The prior single-chat cloud document is an explicit supported migration format.
@@ -47,18 +52,38 @@ public struct ConversationLibrary: Codable, Sendable, Equatable {
         if version == 1 {
             self.init(chats: [try ConversationSnapshot(from: decoder)])
         } else {
-            guard version == 2 else { throw ConversationStorageError.unsupportedVersion }
-            self.init(chats: try keys.decode([ConversationSnapshot].self, forKey: .chats))
+            guard version == 2 || version == 3 else {
+                throw ConversationStorageError.unsupportedVersion
+            }
+            self.init(chats: try keys.decode([ConversationSnapshot].self, forKey: .chats),
+                projects: version == 2 ? [] : try keys.decode(
+                    [ChatProject].self, forKey: .projects))
         }
         try validate()
     }
 
     public func validate() throws {
-        guard formatVersion == 2 else { throw ConversationStorageError.unsupportedVersion }
+        guard formatVersion == 3 else { throw ConversationStorageError.unsupportedVersion }
         guard !chats.isEmpty,
             Set(chats.map(\.conversationID)).count == chats.count
         else { throw ConversationStorageError.invalidDocument }
+        let projectIDs = Set(projects.map(\.id))
+        guard projectIDs.count == projects.count,
+            chats.allSatisfy({ $0.projectID == nil || projectIDs.contains($0.projectID!) })
+        else { throw ConversationStorageError.invalidDocument }
         for chat in chats { try chat.validate() }
+        for project in projects {
+            guard !project.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                Set(project.memory.map(\.id)).count == project.memory.count
+            else { throw ConversationStorageError.invalidDocument }
+            for entry in project.memory {
+                guard !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    chats.contains(where: { chat in
+                        chat.conversationID == entry.sourceConversationID
+                            && chat.messages.contains(where: { $0.id == entry.sourceMessageID })
+                    }) else { throw ConversationStorageError.invalidDocument }
+            }
+        }
     }
 }
 
@@ -85,6 +110,8 @@ public struct ConversationArchive: Codable, Sendable, Equatable {
     public var snapshot: ConversationSnapshot
     public var draft = ""
     public var history: [SavedConversation]?
+    public var projects: [ChatProject]?
+    public var cloudConsentVersion: Int?
     public var cloudEnabled = false
     public var cloudFolderBookmark: Data?
     public var cloudBaseFingerprint: String?
@@ -96,7 +123,8 @@ public struct ConversationArchive: Codable, Sendable, Equatable {
     }
 
     public var library: ConversationLibrary {
-        ConversationLibrary(chats: [snapshot] + (history ?? []).map(\.snapshot))
+        ConversationLibrary(
+            chats: [snapshot] + (history ?? []).map(\.snapshot), projects: projects ?? [])
     }
 
     public func validate() throws { try library.validate() }

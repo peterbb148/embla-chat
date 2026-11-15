@@ -29,7 +29,9 @@ chat and draft persistence are integrated, including restoration after process e
 default-off iCloud Drive synchronization has real iPhone/Mac transfer and restoration evidence; see
 [the persistence design and validation status](docs/chat-persistence.md).
 The left sidebar reopens [saved chats](docs/chat-history.md), each with its own summary and local draft.
-The global iCloud switch covers all saved chats when explicitly enabled.
+[Projects](docs/projects.md) group chats and share only notes you explicitly save,
+with editable text and source-chat links. The global iCloud switch covers all saved
+chats and project memory after consent.
 The selected cloud root separates the `Chats/ActiveChat.json` library from portable `Skills` folders;
 see [the storage layout](docs/storage-layout.md). Skill loading and MCP execution remain #27.
 

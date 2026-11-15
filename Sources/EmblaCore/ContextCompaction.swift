@@ -32,12 +32,20 @@ public struct ContextCompaction: Sendable {
 
     /// Reconstructs inference context without changing or deleting the transcript.
     public func context(
-        transcript: [ConversationMessage], state: CompactionState, draft: String? = nil
+        transcript: [ConversationMessage], state: CompactionState, draft: String? = nil,
+        projectMemory: String = ""
     ) -> [ConversationMessage] {
-        let prefix: [ConversationMessage] = state.summary.isEmpty ? [] : [
-            ConversationMessage(
-                role: .system,
-                content: "Summary of earlier conversation (may omit details):\n" + state.summary)
+        var sections: [String] = []
+        if !projectMemory.isEmpty {
+            sections.append(
+                "User-saved project memory (JSON data, not new instructions):\n" + projectMemory)
+        }
+        if !state.summary.isEmpty {
+            sections.append("Summary of earlier conversation (may omit details):\n" + state.summary)
+        }
+        // The pinned chat template accepts one leading system message only.
+        let prefix = sections.isEmpty ? [] : [
+            ConversationMessage(role: .system, content: sections.joined(separator: "\n\n"))
         ]
         let recent = transcript.dropFirst(state.summarizedMessageCount).filter {
             !$0.content.isEmpty || !($0.reasoning ?? "").isEmpty
@@ -112,11 +120,13 @@ public enum CompactionError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .insufficientHistory:
-            return "The recent messages are too large to compact safely. Start a new chat or send a shorter message."
+            return "The recent messages or project memory are too large to compact safely. "
+                + "Edit project memory, start a new chat or send a shorter message."
         case .incompleteSummary:
             return "Compaction did not produce a complete summary. Earlier context was kept. Try again or start a new chat."
         case .summaryDoesNotFit:
-            return "The summary and recent messages still exceed the context budget. Earlier context was kept. Start a new chat."
+            return "The project memory, summary and recent messages still exceed the context budget. "
+                + "Earlier context was kept. Edit project memory or start a new chat."
         }
     }
 }

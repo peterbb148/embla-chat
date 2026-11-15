@@ -70,3 +70,10 @@ physical single-chat evidence above does not validate this new multi-chat docume
 
 The user explicitly deferred new real multi-chat iCloud provider/failure checks to unplanned
 #45. Those checks no longer block Epic 4; existing physical evidence remains commit-specific.
+
+## Projects extension (#34)
+
+[Project memory](projects.md) adds explicit user-retained, sourced notes shared only inside
+a project. It is separate from rolling summaries and included in exact context counting.
+The single global iCloud scope now names chats and project memory; older On installations
+pause until new consent. Actual new-format provider transfer remains deferred to #45.

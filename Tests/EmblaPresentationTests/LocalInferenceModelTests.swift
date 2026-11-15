@@ -1089,3 +1089,65 @@ func navigatingDuringGenerationArchivesInterruptedOutputBeforeSwitching() async 
     #expect(model.messages.last?.state == .interrupted)
     #expect(backend.calls == 1 && !model.busy)
 }
+
+@Test @MainActor
+func projectMemoryIsCountedAndSentOnlyToChatsInTheAssignedProject() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let source = ChatMessage(role: .user, text: "Synthetic source fact BLUE PENGUIN")
+    let chatID = UUID()
+    let project = ChatProject(name: "A", memory: [ProjectMemoryEntry(text: "BLUE PENGUIN",
+        sourceConversationID: chatID, sourceMessageID: source.id)])
+    let other = ChatProject(name: "B")
+    var archive = ConversationArchive(sequence: 1, snapshot: ConversationSnapshot(
+        conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
+    archive.projects = [project, other]
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("Projects"))
+    try await store.save(archive)
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend }, chatStore: store,
+        countTokens: { _, messages in messages.reduce(0) { $0 + $1.content.count + 4 } })
+    model.newChat(in: project.id); await model.waitUntilIdle()
+    await model.waitForContextUsage()
+    guard case .ready(let usage) = model.contextUsage else {
+        Issue.record("Project context counter did not become ready"); return
+    }
+    #expect(usage.inputTokens > "BLUE PENGUIN".count)
+    model.prompt = "What is the saved fact?"
+    model.run(); await model.waitUntilIdle()
+    let a = try #require(backend.encodedMessages.last)
+    #expect(a.filter { $0.role == .system }.count == 1)
+    #expect(a.first?.content.contains("BLUE PENGUIN") == true)
+    #expect(!model.messages.contains { $0.text.contains("BLUE PENGUIN") })
+    model.newChat(in: other.id); await model.waitUntilIdle()
+    model.prompt = "What is the saved fact?"
+    model.run(); await model.waitUntilIdle()
+    #expect(backend.encodedMessages.last?.contains { $0.content.contains("BLUE PENGUIN") } == false)
+    model.newChat(); await model.waitUntilIdle()
+    model.prompt = "An unrelated chat"
+    model.run(); await model.waitUntilIdle()
+    #expect(backend.encodedMessages.last?.contains { $0.content.contains("BLUE PENGUIN") } == false)
+    #expect(model.projects.first(where: { $0.id == project.id })?.memory == project.memory)
+}
+
+@Test @MainActor
+func oversizedProjectMemoryFailsClearlyWithoutTruncatingOrGenerating() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let source = ChatMessage(role: .user, text: "Synthetic source for an oversized note")
+    let chatID = UUID()
+    let project = ChatProject(name: "Large notes", memory: [ProjectMemoryEntry(
+        text: String(repeating: "Synthetic saved note. ", count: 500),
+        sourceConversationID: chatID, sourceMessageID: source.id)])
+    var archive = ConversationArchive(sequence: 1, snapshot: ConversationSnapshot(
+        conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
+    archive.projects = [project]
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("Projects"))
+    try await store.save(archive)
+    let backend = PresentationBackend(pauseFirst: false, countCharacters: true)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend }, chatStore: store)
+    model.prompt = "Please answer"
+    model.run(); await model.waitUntilIdle()
+    #expect(model.error?.contains("project memory") == true)
+    #expect(backend.calls == 0)
+    #expect(model.projects == [project] && model.compaction.summary.isEmpty)
+    #expect(try await store.load()?.projects == [project])
+}

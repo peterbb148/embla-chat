@@ -88,3 +88,7 @@ Matching MTLCompilerService crash reports show an LLVM fatal diagnostic/abort. T
 not prove the specific cause. Apple documents [different simulator GPU capabilities](https://developer.apple.com/documentation/metal/developing-metal-apps-that-run-in-simulator).
 No alternate model/runtime or simulator response substitute was added. UI/state checks
 continue in Simulator; physical validation and the compiler limitation remain recorded in #7.
+
+Project chats also count [explicit project memory](projects.md) in the same leading system
+prefix used for inference. Notes remain separate from rolling summaries; changing/clearing
+notes refreshes the ring. Oversized notes fail clearly without hidden truncation.

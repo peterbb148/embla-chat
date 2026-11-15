@@ -15,12 +15,15 @@ EmblaChat/
         └── assets/        (optional)
 ```
 
-`Chats/ActiveChat.json` now contains the format-2 library of all saved transcripts and
-rolling summaries. The original filename is retained for migration from the supported
-format-1 single-chat document. Drafts and selected-chat state remain local. New Chat archives
+`Chats/ActiveChat.json` now contains the format-3 library of all saved transcripts,
+rolling summaries, project assignments and explicit project memory. The original filename
+is retained for migration from the supported format-1 single-chat and format-2 history
+documents. Drafts and selected-chat state remain local. New Chat archives
 the previous chat, and the [left sidebar](chat-history.md) reopens saved context. The one
 global iCloud switch is optional and off by default; explicit On consent covers all saved
-chats. Disabled mode never opens the folder provider. Conflict choices replace a whole
+chats and project memory after consent. Existing On installations must confirm that expanded
+scope before provider access. Disabled mode never opens the folder provider. Conflict
+choices replace a whole
 library with explicit confirmation. These operations do not replace, clear or scan Skills.
 
 `Skills` reserves the portable skill library requested in #27. Each copied skill retains its
