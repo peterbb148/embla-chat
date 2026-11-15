@@ -78,26 +78,29 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 65 package tests pass. These include coordinated temporary-file tests,
+On 2026-11-15, all 66 package tests pass. These include coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
 17 Pro / iOS 27.2 simulator UI tests pass, including opt-in cancellation and local draft
 restoration. These tests do not prove iCloud authentication, transfer or cross-device conflicts.
 
-The production native Files picker was opened on that simulator. Browse exposed only
-On My iPhone; simulator Settings showed Apple Account signed out. Personal-account sign-in
-is handed to the user before live cloud testing. No live cloud upload or restoration is
-claimed. Do not run simulator UI automation while the user is completing sign-in.
+The production native Files picker and consent flow have been exercised manually on the
+simulator. Actual iCloud folder access, transfer, restoration and cross-device conflicts still
+require live validation. Personal account identifiers, authentication state, and system Drive
+settings are not part of public test records. Do not run UI automation during a user handoff.
 
 The first Copilot review found reset/upload, stale conflict-callback, transfer-error and
 background-resume gaps. Fixes now have deterministic package regressions, including holding a
 real reset archive write's completion while the old visible chat and cloud upload still exist.
-A fresh review of those fixes and hosted checks remain pending.
+The next review also identified stale conflict choices after New Chat. Reset now clears those
+choices while paused, then reevaluates them against the reset conversation when synchronization
+resumes. A regression verifies no manual Refresh is needed. Fresh review and hosted checks
+remain pending.
 
 Remaining gates for #9:
 
 - Verify persistent folder permission and actual personal-iCloud upload/download/restoration,
-  including the transcript and summary, after the simulator is signed in.
+  including the transcript and summary, in an authenticated test environment.
 - Record provider account/network errors and real conflict behavior separately from fixtures.
 - Complete final-head Copilot review, fixes/re-review, and hosted checks before merge.
 

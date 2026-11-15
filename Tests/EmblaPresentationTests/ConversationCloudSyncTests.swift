@@ -450,3 +450,39 @@ func providerTransferFailureStaysAnErrorRatherThanPendingConfirmation() async th
     harness.cloud.pause()
     await harness.cloud.waitUntilIdle()
 }
+
+
+@Test @MainActor
+func newChatReevaluatesPendingConflictChoicesWithoutManualRefresh() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let baseline = syncSnapshot("baseline")
+    let local = syncSnapshot("local edit")
+    let remote = syncSnapshot("remote edit")
+    var archive = ConversationArchive(sequence: 1, snapshot: local)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture permission".utf8)
+    archive.cloudBaseFingerprint = try baseline.fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: remote))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: ConversationStore(root: root), cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    #expect(cloud.choices.contains(where: { $0.snapshot == local }))
+    let reads = await provider.reads
+    model.newChat()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    let reset = try #require(try await ConversationStore(root: root).load()).snapshot
+    #expect(model.messages.isEmpty)
+    #expect(cloud.choices.contains(where: { $0.snapshot == reset }))
+    #expect(!cloud.choices.contains(where: { $0.snapshot == local }))
+    #expect(await provider.reads > reads)
+    cloud.pause()
+    await cloud.waitUntilIdle()
+}

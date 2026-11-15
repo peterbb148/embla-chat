@@ -130,6 +130,7 @@ public final class LocalInferenceModel {
     public func newChat() {
         guard chatRestored, !cloud.resolving, !busy || running else { return }
         cloud.pause()
+        cloud.refresh()
         resetting = true
         pendingClear = true
         if busy { stop() } else { start(.clear) }
@@ -478,7 +479,10 @@ public final class LocalInferenceModel {
                 snapshot: self.currentSnapshot(), hasDraft: !self.prompt.isEmpty,
                 canReplace: !self.busy && !self.resetting && self.storageError == nil)
         }
-        cloud.persist = { [weak self] in try await self?.saveChatNow(notifyCloud: false) }
+        cloud.persist = { [weak self] in
+            guard let self else { throw CancellationError() }
+            try await self.saveChatNow(notifyCloud: false)
+        }
         cloud.apply = { [weak self] snapshot, expected in
             guard let self else { throw CancellationError() }
             try await self.applyCloudSnapshot(snapshot, expected: expected)

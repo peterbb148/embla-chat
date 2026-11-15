@@ -139,7 +139,12 @@ public final class ConversationCloudSync {
         }
     }
 
-    public func refresh() { choices = []; conflictRead = nil; requestSync() }
+    public func refresh() {
+        choices = []
+        conflictRead = nil
+        conflictLocal = nil
+        requestSync()
+    }
 
     func setForeground(_ active: Bool) {
         foreground = active
