@@ -27,14 +27,7 @@ private struct MetalBackend: InferenceBackend {
     }
 
     func encode(_ messages: [ConversationMessage]) throws -> [Int] {
-        let turns = messages.map {
-            ChatMessage(role: $0.role.rawValue, content: $0.content, reasoning: $0.reasoning)
-        }
-        do {
-            return try model.tokenizer.encode(ChatTemplate.render(turns))
-        } catch {
-            throw RuntimeFailure(message: "Embla rejected the conversation: \(error)")
-        }
+        try encodedPrompt(messages, tokenizer: model.tokenizer)
     }
 
     func generate(
@@ -65,4 +58,38 @@ private struct MetalBackend: InferenceBackend {
 private struct RuntimeFailure: LocalizedError {
     let message: String
     var errorDescription: String? { message }
+}
+
+
+/// Counts with the pinned tokenizer/template without constructing an engine or loading weights.
+public actor EmblaPromptTokenizer {
+    private var cachedDirectory: URL?
+    private var tokenizer: Tokenizer?
+
+    public init() {}
+
+    public func count(messages: [ConversationMessage], in directory: URL) throws -> Int {
+        try Task.checkCancellation()
+        if cachedDirectory != directory {
+            let loaded = try Tokenizer(url: directory.appendingPathComponent("tokenizer.json"))
+            tokenizer = loaded
+            cachedDirectory = directory
+        }
+        guard let tokenizer else { throw InferenceError.notLoaded }
+        let count = try encodedPrompt(messages, tokenizer: tokenizer).count
+        try Task.checkCancellation()
+        return count
+    }
+}
+
+/// Both the engine and the standalone counter use this exact upstream rendering path.
+private func encodedPrompt(_ messages: [ConversationMessage], tokenizer: Tokenizer) throws -> [Int] {
+    let turns = messages.map {
+        ChatMessage(role: $0.role.rawValue, content: $0.content, reasoning: $0.reasoning)
+    }
+    do {
+        return try tokenizer.encode(ChatTemplate.render(turns))
+    } catch {
+        throw RuntimeFailure(message: "Embla rejected the conversation: \(error)")
+    }
 }
