@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A02800000000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A02800000000000000000002 /* Assets.xcassets */; };
 		15A5F22D05D3B51B4774DD0B /* embla-metal-LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = B95C22A930CBD2A857E7F2A2 /* embla-metal-LICENSE */; };
 		1F559B06A802518BF1B02D77 /* EmblaChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7E1FDF7FFA10D11F9E6842 /* EmblaChatApp.swift */; };
 		40811A3E961AEAF7F9FCE6D4 /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA2F787EF64BAC9D92D3B25C /* LaunchTests.swift */; };
@@ -32,6 +33,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A02800000000000000000002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2299900845A4D12BAE7AAFC6 /* EmblaChatUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = EmblaChatUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		511FAB6E22339EC1602F447B /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		6285176BA2C09CD88592557F /* ContentView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -88,6 +90,7 @@
 		735004A72294412A46834327 /* EmblaChatApp */ = {
 			isa = PBXGroup;
 			children = (
+				A02800000000000000000002 /* Assets.xcassets */,
 				6285176BA2C09CD88592557F /* ContentView.swift */,
 				8D7E1FDF7FFA10D11F9E6842 /* EmblaChatApp.swift */,
 			);
@@ -228,6 +231,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A02800000000000000000001 /* Assets.xcassets in Resources */,
 				E7D4670D18AB32F680ED15CF /* Embla1-4bit-LICENSE in Resources */,
 				15A5F22D05D3B51B4774DD0B /* embla-metal-LICENSE in Resources */,
 			);
@@ -286,7 +290,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -425,7 +428,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
