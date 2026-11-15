@@ -81,7 +81,7 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 79 package tests pass (one has two parameterized cases). These include
+On 2026-11-15, all 81 package tests pass, including parameterized consent and sync-base cases. These include
 coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
@@ -105,8 +105,13 @@ regression fails the preference save once, lets the queued checkpoint succeed, t
 the saved archive and verifies iCloud stays off with no provider reads/writes.
 Other regressions hold actual local replacement writes open to verify
 preference saves cannot resurrect the old conversation after either New Chat or cloud restore.
-An explicit completion barrier covers both replacement paths. Unchanged polls do not rewrite
-the archive. Retry recreates a missing local store. The UI reset helper waits for an enabled,
+An explicit completion barrier covers both replacement paths. Unchanged polls avoid rewriting
+already committed metadata. Failed sync-base writes stay pending and are retried even if the
+next poll sees identical content; only a successful save in the current generation clears that
+pending state. Tests reproduce failures after upload, download and conflict resolution, then
+verify retry and reopening accept a later remote-only edit without an unnecessary conflict.
+A real local-archive regression also covers storage Retry followed by Sync now.
+Retry recreates a missing local store. The UI reset helper waits for an enabled,
 empty composer rather than a disabled New Chat button, which also describes an active reset.
 Explicit provider fixtures now supply multiple unresolved copies: automatic writes stay
 blocked, every distinct copy is offered, explicit selection resolves the copies, and a newly
@@ -163,7 +168,7 @@ snapshot with matching IDs and cleared summary to the new path. The old root-lev
 remained absent, Settings reported Synced, and app sync was disabled afterward. The model
 remained stored locally. This follow-up proves the changed path; the earlier recall,
 divergent-copy and missing-file tests above were not repeated for this path-only change.
-The subsequent consent-lifecycle and deletion recovery fixes have focused package regressions;
+The subsequent consent-lifecycle, checkpoint, sync-base and deletion recovery fixes have focused package regressions;
 the physical cloud sequence was not repeated for those control-flow changes.
 
 Final-head Copilot review, fixes/re-review and hosted checks are required before merge.

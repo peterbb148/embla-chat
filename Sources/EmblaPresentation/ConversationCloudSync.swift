@@ -56,6 +56,7 @@ public final class ConversationCloudSync {
     // Lifecycle pauses invalidate transfers, while only a setting change supersedes consent saving.
     @ObservationIgnored private var configurationID = UUID()
     @ObservationIgnored private var needsSync = false
+    @ObservationIgnored private var baseNeedsSave = false
     @ObservationIgnored private var foreground = true
     @ObservationIgnored private var paused = true
     @ObservationIgnored private var conflictRead: CloudConversationRead?
@@ -74,6 +75,7 @@ public final class ConversationCloudSync {
         self.enabled = enabled
         self.bookmark = bookmark
         baseFingerprint = base
+        baseNeedsSave = false
         storage = enabled ? bookmark.map(factory) : nil
         error = enabled && bookmark == nil ? CloudConversationError.permission.localizedDescription : nil
         status = enabled ? "Waiting to synchronize…" : "iCloud is off."
@@ -105,6 +107,7 @@ public final class ConversationCloudSync {
         enabled = true
         self.bookmark = bookmark
         baseFingerprint = nil
+        baseNeedsSave = false
         choices = []
         conflictRead = nil
         conflictLocal = nil
@@ -243,7 +246,12 @@ public final class ConversationCloudSync {
             return
         case .removed: throw CloudConversationError.removed
         }
-        if baseFingerprint != previousBase { try await persistSettings() }
+        if baseFingerprint != previousBase { baseNeedsSave = true }
+        if baseNeedsSave {
+            try await persistSettings()
+            guard generation == epoch, enabled else { return }
+            baseNeedsSave = false
+        }
         guard generation == epoch, enabled else { return }
         error = nil
         let same = try current?()?.snapshot.fingerprint() == remote.current?.fingerprint()
@@ -292,9 +300,11 @@ public final class ConversationCloudSync {
                 try Task.checkCancellation()
                 guard generation == epoch, enabled else { finish(epoch: epoch); return }
                 baseFingerprint = try choice.snapshot.fingerprint()
+                baseNeedsSave = true
                 try await persistSettings()
                 try Task.checkCancellation()
                 guard generation == epoch, enabled else { finish(epoch: epoch); return }
+                baseNeedsSave = false
                 choices = []
                 conflictRead = nil
                 conflictLocal = nil

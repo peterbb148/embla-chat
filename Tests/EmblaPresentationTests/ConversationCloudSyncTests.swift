@@ -123,6 +123,108 @@ func disabledCloudPerformsNoProviderReadsOrWrites() async throws {
     #expect(!harness.cloud.enabled)
 }
 
+@Test(arguments: ["upload", "download", "resolution"]) @MainActor
+func failedSyncBaseSaveRetriesBeforeSyncedAndPreservesRemoteOnlyEdits(mode: String) async throws {
+    let baseline = syncSnapshot("previous shared base")
+    let local = syncSnapshot("local edit")
+    let remote = syncSnapshot("remote edit")
+    let provider = SyncProviderFixture(.init(
+        current: mode == "upload" ? baseline : remote, uploaded: true))
+    let harness = SyncHarness(local: mode == "download" ? baseline : local, provider: provider)
+    var saves = 0
+    var durableBase: String?
+    harness.cloud.persist = { [weak cloud = harness.cloud] in
+        saves += 1
+        if saves == 1 { throw CocoaError(.fileWriteOutOfSpace) }
+        durableBase = cloud?.baseFingerprint
+    }
+    harness.start(base: mode == "resolution" ? nil : try baseline.fingerprint())
+    await harness.cloud.waitUntilIdle()
+    if mode == "resolution" {
+        let choice = try #require(harness.cloud.choices.first { $0.snapshot == local })
+        harness.cloud.resolve(choiceID: choice.id)
+        await harness.cloud.waitUntilIdle()
+    }
+    #expect(harness.cloud.error != nil && durableBase == nil)
+    #expect(harness.cloud.status != "Synced with iCloud Drive.")
+    await provider.confirmUpload()
+    harness.cloud.refresh()
+    await harness.cloud.waitUntilIdle()
+    #expect(saves == 2)
+    #expect(durableBase == (try harness.local.fingerprint()))
+    #expect(harness.cloud.error == nil && harness.cloud.status == "Synced with iCloud Drive.")
+    let laterEdit = syncSnapshot("edit made only on another device after synchronization")
+    let reopened = SyncHarness(
+        local: harness.local, provider: SyncProviderFixture(.init(current: laterEdit, uploaded: true)))
+    reopened.start(base: try #require(durableBase))
+    await reopened.cloud.waitUntilIdle()
+    #expect(reopened.local == laterEdit && reopened.applications == 1)
+    #expect(reopened.cloud.choices.isEmpty)
+    harness.cloud.pause()
+    reopened.cloud.pause()
+}
+
+private actor BaseSaveFailureStore: ConversationStoring {
+    private let store: ConversationStore
+    private let originalBase: String
+    private var failNextBase = true
+    init(root: URL, originalBase: String) {
+        store = ConversationStore(root: root)
+        self.originalBase = originalBase
+    }
+    func load() async throws -> ConversationArchive? { try await store.load() }
+    func save(_ archive: ConversationArchive) async throws {
+        if failNextBase, archive.cloudEnabled, archive.cloudBaseFingerprint != originalBase {
+            failNextBase = false
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
+        try await store.save(archive)
+    }
+}
+
+@Test @MainActor
+func storageRetryThenSyncSavesTheNewBaseBeforeReopeningAndAcceptingRemoteEdits() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let baseline = syncSnapshot("old shared base")
+    let local = syncSnapshot("new local chat")
+    let base = try baseline.fingerprint()
+    var archive = ConversationArchive(sequence: 1, snapshot: local)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture permission".utf8)
+    archive.cloudBaseFingerprint = base
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: baseline))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: BaseSaveFailureStore(root: root, originalBase: base), cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    #expect(model.storageError != nil && cloud.error != nil)
+    #expect(try await ConversationStore(root: root).load()?.cloudBaseFingerprint == base)
+    try await model.flushChatStorage()
+    cloud.refresh()
+    await cloud.waitUntilIdle()
+    let saved = try #require(try await ConversationStore(root: root).load())
+    #expect(saved.cloudBaseFingerprint == (try local.fingerprint()))
+    let laterEdit = syncSnapshot("another device's subsequent edit")
+    let laterProvider = SyncProviderFixture(.init(current: laterEdit, uploaded: true))
+    let laterCloud = ConversationCloudSync(factory: { _ in laterProvider })
+    let reopened = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: ConversationStore(root: root), cloud: laterCloud)
+    reopened.check()
+    await reopened.waitUntilIdle()
+    await laterCloud.waitUntilIdle()
+    #expect(reopened.messages == laterEdit.messages && laterCloud.choices.isEmpty)
+    cloud.pause()
+    laterCloud.pause()
+}
+
 @Test @MainActor
 func unresolvedCopiesBlockAutomaticWritesEvenWhenCurrentMatchesLocal() async throws {
     let local = syncSnapshot("shared current chat")
