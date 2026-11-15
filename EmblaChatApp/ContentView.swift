@@ -14,9 +14,19 @@ struct ContentView: View {
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
 
-    private enum Sheet: String, Identifiable {
-        case settings, context
-        var id: String { rawValue }
+    private enum Sheet: Identifiable {
+        case settings, context, newProject
+        case project(UUID), moveChat(UUID), memory(UUID, UUID, ChatMessage)
+        var id: String {
+            switch self {
+            case .settings: return "settings"
+            case .context: return "context"
+            case .newProject: return "new-project"
+            case .project(let id): return "project-" + id.uuidString
+            case .moveChat(let id): return "move-" + id.uuidString
+            case .memory(_, _, let message): return "memory-" + message.id.uuidString
+            }
+        }
     }
 
     private struct Viewport: Equatable {
@@ -46,7 +56,13 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 24) {
                             ForEach(model.messages) { message in
-                                ChatMessageRow(message: message).equatable()
+                                ChatMessageRow(message: message,
+                                    canSaveMemory: model.activeProjectID != nil, model: model
+                                ) {
+                                    guard let projectID = model.activeProjectID else { return }
+                                    composerFocused = false
+                                    sheet = .memory(projectID, model.conversationID, message)
+                                }.equatable()
                             }
                             Color.clear.frame(height: 1).id("latest-message")
                         }
@@ -123,7 +139,7 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    Text("Embla")
+                    Text(model.activeProject?.name ?? "Embla")
                         .font(.headline)
                         .padding(.horizontal, 22)
                         .padding(.vertical, 9)
@@ -152,6 +168,12 @@ struct ContentView: View {
                 switch destination {
                 case .settings: ModelSettingsView(model: model)
                 case .context: ContextUsageView(model: model)
+                case .newProject: ProjectNameEditor(model: model, projectID: nil, name: "")
+                case .project(let id): ProjectDetailView(model: model, projectID: id)
+                case .moveChat(let id): MoveChatView(model: model, chatID: id)
+                case .memory(let projectID, let chatID, let message):
+                    ProjectMemoryEditor(model: model, projectID: projectID,
+                        sourceChatID: chatID, message: message)
                 }
             }
             .alert("Start a new chat?", isPresented: $confirmNewChat) {
@@ -210,6 +232,28 @@ struct ContentView: View {
                     .padding(.horizontal, 20)
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Projects").font(.caption).foregroundStyle(.secondary)
+                                Spacer()
+                                Button("New project", systemImage: "plus") {
+                                    showHistory = false
+                                    sheet = .newProject
+                                }
+                                .labelStyle(.iconOnly)
+                                .disabled(!model.canEditProjects)
+                            }.padding(.horizontal, 14).padding(.vertical, 8)
+                            ForEach(model.projects) { project in
+                                Button {
+                                    showHistory = false
+                                    sheet = .project(project.id)
+                                } label: {
+                                    Label(project.name, systemImage: "folder")
+                                        .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            Text("All chats").font(.caption).foregroundStyle(.secondary)
+                                .padding(.horizontal, 14).padding(.top, 12)
                             ForEach(model.savedChats) { chat in
                                 Button {
                                     model.selectChat(chat.id)
@@ -231,6 +275,12 @@ struct ContentView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(!model.canNavigateChats)
+                                .contextMenu {
+                                    Button("Move to project", systemImage: "folder") {
+                                        showHistory = false
+                                        sheet = .moveChat(chat.id)
+                                    }.disabled(!model.canEditProjects)
+                                }
                                 .accessibilityLabel(chat.title)
                                 .accessibilityValue(chat.id == model.conversationID ? "Current chat" : "Saved chat")
                                 .accessibilityIdentifier("history-\(chat.id.uuidString)")
@@ -349,6 +399,14 @@ struct ContentView: View {
 /// A stable transcript row; interrupted and limited output remain visibly identified.
 private struct ChatMessageRow: View, Equatable {
     let message: ChatMessage
+    let canSaveMemory: Bool
+    let model: LocalInferenceModel
+    let saveMemory: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.message == rhs.message && lhs.canSaveMemory == rhs.canSaveMemory
+            && lhs.model === rhs.model
+    }
 
     var body: some View {
         HStack(alignment: .top) {
@@ -378,7 +436,12 @@ private struct ChatMessageRow: View, Equatable {
                     .accessibilityIdentifier(message.role == .user ? "user-message" : "answer")
                 }
                 if !message.text.isEmpty && message.state != .streaming {
-                    CopyTextButton(text: message.text, label: "Copy message")
+                    HStack(spacing: 20) {
+                        CopyTextButton(text: message.text, label: "Copy message")
+                        if canSaveMemory {
+                            ProjectMemoryAction(model: model, save: saveMemory)
+                        }
+                    }
                 }
                 switch message.state {
                 case .streaming:
@@ -400,6 +463,18 @@ private struct ChatMessageRow: View, Equatable {
             if message.role == .assistant { Spacer(minLength: 12) }
         }
         .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+    }
+}
+
+/// Observe edit availability separately so unchanged Markdown rows stay cached.
+private struct ProjectMemoryAction: View {
+    let model: LocalInferenceModel
+    let save: () -> Void
+
+    var body: some View {
+        Button("Save to project memory", systemImage: "bookmark", action: save)
+            .labelStyle(.iconOnly).font(.caption).tint(.secondary)
+            .disabled(!model.canEditProjects)
     }
 }
 
@@ -521,12 +596,15 @@ private struct ModelSettingsView: View {
             case .deleteModel:
                 return "You will need to download the model again. This does not clear your conversation."
             case .cloudConsent:
-                return "All saved chats and their summaries will be stored in iCloud Drive/EmblaChat/Chats. "
+                return "All saved chats, their summaries and project memory will be stored in "
+                    + "iCloud Drive/EmblaChat/Chats. "
                     + "Select the EmblaChat folder; Skills is reserved for portable skills. "
                     + "Your drafts and model stay on this device. Choose or create EmblaChat in Files."
             case .cloudChoice:
-                return "This replaces the entire chat library in the chosen location. Using an iCloud copy "
-                    + "also replaces all this device’s chats and unsent drafts. Other conflicting copies "
+                return "This replaces all chats and project memory in the chosen location. "
+                    + "Using an iCloud copy "
+                    + "also replaces all this device’s chats, project memory and unsent drafts. "
+                    + "Other conflicting copies "
                     + "will be marked resolved."
             }
         }
@@ -534,14 +612,14 @@ private struct ModelSettingsView: View {
 
     private var cloudSection: some View {
         Section("iCloud") {
-            Toggle("Store chats in iCloud Drive", isOn: Binding(
+            Toggle("Store chats and project memory in iCloud Drive", isOn: Binding(
                 get: { model.cloud.enabled },
                 set: { enabled in
                     if enabled { activeAlert = .cloudConsent } else { model.cloud.disable() }
                 }))
                 .disabled(!model.chatRestored || model.busy || model.cloud.resolving)
                 .accessibilityIdentifier("icloud-toggle")
-            Text("Off by default. This setting applies to all chats.")
+            Text("Off by default. This setting applies to all chats and project memory.")
                 .font(.caption).foregroundStyle(.secondary)
             Text(model.cloud.status).accessibilityIdentifier("icloud-status")
             if let error = model.cloud.error {
@@ -552,7 +630,7 @@ private struct ModelSettingsView: View {
                 Button("Sync now") { model.cloud.refresh() }
                     .disabled(model.cloud.syncing || model.busy)
                 Button("Choose iCloud folder…") { activeAlert = .cloudConsent }
-                    .disabled(model.cloud.syncing || model.busy)
+                    .disabled(model.cloud.syncing || model.busy || model.cloud.requiresScopeConsent)
                 Text(
                     "Turning this off stops new app writes and keeps existing cloud files. "
                         + "iCloud Drive may finish transfers already queued."

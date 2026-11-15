@@ -36,6 +36,8 @@ enum CloudSyncPolicy {
 @MainActor @Observable
 public final class ConversationCloudSync {
     public private(set) var enabled = false
+    public private(set) var requiresScopeConsent = false
+    public private(set) var consentVersion = 1
     public private(set) var status = "iCloud is off."
     public private(set) var error: String?
     public private(set) var syncing = false
@@ -71,19 +73,24 @@ public final class ConversationCloudSync {
         self.factory = factory
     }
 
-    func restore(enabled: Bool, bookmark: Data?, base: String?) {
+    func restore(enabled: Bool, bookmark: Data?, base: String?, consentVersion: Int = 1) {
         pause()
         configurationID = UUID()
         self.enabled = enabled
+        self.consentVersion = consentVersion
+        requiresScopeConsent = enabled && consentVersion != 1
         storedEnabled = enabled
         offPreferencePending = false
         self.bookmark = bookmark
         baseFingerprint = base
         baseNeedsSave = false
-        storage = enabled ? bookmark.map(factory) : nil
+        storage = enabled && !requiresScopeConsent ? bookmark.map(factory) : nil
         error = enabled && bookmark == nil ? CloudConversationError.permission.localizedDescription : nil
         status = enabled ? "Waiting to synchronize…" : "iCloud is off."
         if error != nil { status = "iCloud folder access is unavailable." }
+        if requiresScopeConsent {
+            status = "iCloud paused. Confirm syncing chats and project memory in Settings."
+        }
     }
 
     /// Called only after explicit consent and successful Files folder selection.
@@ -110,6 +117,8 @@ public final class ConversationCloudSync {
         configurationID = configuration
         offPreferencePending = false
         enabled = true
+        requiresScopeConsent = false
+        consentVersion = 1
         self.bookmark = bookmark
         baseFingerprint = nil
         baseNeedsSave = false
@@ -143,6 +152,7 @@ public final class ConversationCloudSync {
         configurationID = UUID()
         let configuration = configurationID
         enabled = false
+        requiresScopeConsent = false
         offPreferencePending = true
         storage = nil
         choices = []

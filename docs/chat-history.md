@@ -71,3 +71,9 @@ The production simulator's sidebar and restored first-chat draft were also inspe
 The personal-iCloud attempt was cancelled because Files reported Drive off and the user chose
 "Defer the real iCloud check". Settings remained Off. The existing Mac cloud document's hash
 was unchanged and the empty preparation folders were removed. No real transfer is claimed.
+
+## Projects extension (#34)
+
+[Projects](projects.md) extends this history checkpoint with format 3, explicit manual memory
+and renewed global cloud consent. The format-2 history behavior/evidence above predates that
+extension; formats 1 and 2 remain explicit migrations.

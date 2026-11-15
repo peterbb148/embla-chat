@@ -30,6 +30,10 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
 /// Model setup, saved history and inference state for the selected conversation.
 @MainActor @Observable
 public final class LocalInferenceModel {
+    public private(set) var projects: [ChatProject] = [] {
+        didSet { refreshContextUsage() }
+    }
+    public private(set) var activeProjectID: UUID?
     public private(set) var history: [SavedConversation] = []
     public private(set) var conversationID = UUID()
     public private(set) var compaction = CompactionState() {
@@ -80,6 +84,7 @@ public final class LocalInferenceModel {
         var enabled = false
         var bookmark: Data?
         var base: String?
+        var consentVersion = 0
     }
     @ObservationIgnored private var persistedCloudSettings = PersistedCloudSettings()
     @ObservationIgnored private var persistedDraft = ""
@@ -93,6 +98,7 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var pendingUnload = false
     @ObservationIgnored private var pendingClear = false
     @ObservationIgnored private var pendingSelection: UUID?
+    @ObservationIgnored private var pendingProjectID: UUID?
     @ObservationIgnored private var replacementWaiters: [CheckedContinuation<Void, Never>] = []
 
     public var canRun: Bool {
@@ -198,7 +204,8 @@ public final class LocalInferenceModel {
                 guard let self, self.usageRequest == request else { return }
                 let context = self.compactionPolicy.context(
                     transcript: self.conversationMessages(), state: self.compaction,
-                    draft: self.prompt.trimmingCharacters(in: .whitespacesAndNewlines))
+                    draft: self.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                    projectMemory: try self.projectContext())
                 let count = try await countTokens(directory, context)
                 try Task.checkCancellation()
                 guard self.usageRequest == request else { return }
@@ -211,6 +218,16 @@ public final class LocalInferenceModel {
                 self.contextUsage = .failed(error.localizedDescription)
             }
         }
+    }
+
+    public var activeProject: ChatProject? { projects.first(where: { $0.id == activeProjectID }) }
+
+    private func projectContext() throws -> String {
+        guard let activeProjectID else { return "" }
+        guard let project = projects.first(where: { $0.id == activeProjectID }) else {
+            throw ProjectError.missingProject
+        }
+        return try project.contextText()
     }
 
     private func conversationMessages() -> [ConversationMessage] {
@@ -237,7 +254,11 @@ public final class LocalInferenceModel {
     }
 
     /// Navigation drains generation, then saves the previous chat and the new selection atomically.
-    public func newChat() { navigate(to: nil) }
+    public func newChat(in projectID: UUID? = nil) {
+        guard projectID == nil || projects.contains(where: { $0.id == projectID }) else { return }
+        pendingProjectID = projectID
+        navigate(to: nil)
+    }
 
     public func selectChat(_ id: UUID) {
         guard id != conversationID, history.contains(where: { $0.id == id }) else { return }
@@ -452,7 +473,9 @@ public final class LocalInferenceModel {
     ) async throws
         -> [ConversationMessage]
     {
-        let context = compactionPolicy.context(transcript: transcript, state: compaction, draft: draft)
+        let memory = try projectContext()
+        let context = compactionPolicy.context(
+            transcript: transcript, state: compaction, draft: draft, projectMemory: memory)
         if !force {
             let count = try await session.tokenCount(messages: context)
             if count <= compactionPolicy.triggerTokens { return context }
@@ -491,7 +514,8 @@ public final class LocalInferenceModel {
         try Task.checkCancellation()
         let candidate = try compactionPolicy.candidate(
             text: summary, finishReason: finishReason, plan: plan)
-        let compacted = compactionPolicy.context(transcript: transcript, state: candidate, draft: draft)
+        let compacted = compactionPolicy.context(
+            transcript: transcript, state: candidate, draft: draft, projectMemory: memory)
         let count = try await session.tokenCount(messages: compacted)
         guard count + compactionPolicy.responseTokens < compactionPolicy.contextSize else {
             throw CompactionError.summaryDoesNotFit
@@ -503,7 +527,8 @@ public final class LocalInferenceModel {
             running = false
             status = "Saving completed summary…"
             let snapshot = ConversationSnapshot(
-                conversationID: conversationID, messages: messages, compaction: candidate)
+                conversationID: conversationID, messages: messages, compaction: candidate,
+                projectID: activeProjectID)
             try await saveChatNow(snapshot: snapshot)
         }
         compaction = candidate
@@ -536,6 +561,8 @@ public final class LocalInferenceModel {
             )).recoveringInterruptedResponses()
             if existing == nil || archive != existing { try await chatStore.save(archive) }
             restoringChat = true
+            projects = archive.projects ?? []
+            activeProjectID = archive.snapshot.projectID
             history = archive.history ?? []
             conversationID = archive.snapshot.conversationID
             messages = archive.snapshot.messages
@@ -546,10 +573,12 @@ public final class LocalInferenceModel {
             persistedDraft = archive.draft
             persistedCloudSettings = PersistedCloudSettings(
                 enabled: archive.cloudEnabled, bookmark: archive.cloudFolderBookmark,
-                base: archive.cloudBaseFingerprint)
+                base: archive.cloudBaseFingerprint,
+                consentVersion: archive.cloudConsentVersion ?? 0)
             cloud.restore(
                 enabled: archive.cloudEnabled, bookmark: archive.cloudFolderBookmark,
-                base: archive.cloudBaseFingerprint)
+                base: archive.cloudBaseFingerprint,
+                consentVersion: archive.cloudConsentVersion ?? 0)
             restoringChat = false
             chatRestored = true
             storageError = nil
@@ -582,16 +611,20 @@ public final class LocalInferenceModel {
     private func saveChatNow(
         snapshot replacement: ConversationSnapshot? = nil, draft: String? = nil,
         notifyCloud: Bool = true, cloudSettings requestedSettings: PersistedCloudSettings? = nil,
-        history replacementHistory: [SavedConversation]? = nil
+        history replacementHistory: [SavedConversation]? = nil,
+        projects replacementProjects: [ChatProject]? = nil
     ) async throws {
         guard chatRestored, let chatStore else { return }
         checkpointTask?.cancel()
         checkpointTask = nil
         var snapshot = replacement ?? ConversationSnapshot(
-            conversationID: conversationID, messages: messages, compaction: compaction)
+            conversationID: conversationID, messages: messages, compaction: compaction,
+            projectID: activeProjectID)
         if replacement == nil, let lastSnapshot,
             lastSnapshot.conversationID == snapshot.conversationID,
-            lastSnapshot.messages == snapshot.messages, lastSnapshot.compaction == snapshot.compaction
+            lastSnapshot.messages == snapshot.messages,
+            lastSnapshot.compaction == snapshot.compaction,
+            lastSnapshot.projectID == snapshot.projectID
         {
             snapshot.revision = lastSnapshot.revision
         }
@@ -602,6 +635,7 @@ public final class LocalInferenceModel {
         var pendingArchive = ConversationArchive(
             sequence: sequence, snapshot: snapshot, draft: draft ?? prompt)
         pendingArchive.history = replacementHistory ?? history
+        pendingArchive.projects = replacementProjects ?? projects
         let capturedArchive = pendingArchive
         storageStatus = "Saving on this device…"
         let previous = saveTask
@@ -615,6 +649,7 @@ public final class LocalInferenceModel {
             archive.cloudEnabled = settings.enabled
             archive.cloudFolderBookmark = settings.bookmark
             archive.cloudBaseFingerprint = settings.base
+            archive.cloudConsentVersion = settings.consentVersion
             try await chatStore.save(archive)
             self.persistedDraft = archive.draft
             self.persistedCloudSettings = settings
@@ -640,9 +675,11 @@ public final class LocalInferenceModel {
 
     private func currentSnapshot() -> ConversationSnapshot {
         var snapshot = ConversationSnapshot(
-            conversationID: conversationID, messages: messages, compaction: compaction)
+            conversationID: conversationID, messages: messages, compaction: compaction,
+            projectID: activeProjectID)
         if let lastSnapshot, lastSnapshot.conversationID == conversationID,
-            lastSnapshot.messages == messages, lastSnapshot.compaction == compaction
+            lastSnapshot.messages == messages, lastSnapshot.compaction == compaction,
+            lastSnapshot.projectID == activeProjectID
         {
             snapshot.revision = lastSnapshot.revision
         }
@@ -666,7 +703,7 @@ public final class LocalInferenceModel {
             }
             let settings = PersistedCloudSettings(
                 enabled: self.cloud.enabled, bookmark: self.cloud.bookmark,
-                base: self.cloud.baseFingerprint)
+                base: self.cloud.baseFingerprint, consentVersion: self.cloud.consentVersion)
             try await self.saveChatNow(notifyCloud: false, cloudSettings: settings)
         }
         cloud.apply = { [weak self] snapshot, expected in
@@ -675,8 +712,43 @@ public final class LocalInferenceModel {
         }
     }
 
+    /// Project edits preserve every chat/draft and become visible only after one durable write.
+    func commitProjectLibrary(_ library: ConversationLibrary) async throws {
+        guard canEditProjects else { throw ProjectError.busy }
+        try library.validate()
+        guard Set(library.chats.map(\.conversationID)) == Set(savedChats.map(\.id)),
+            let selected = library.chats.first(where: { $0.conversationID == conversationID })
+        else { throw ConversationStorageError.invalidDocument }
+        let saved = try history.map { old in
+            guard let snapshot = library.chats.first(where: { $0.conversationID == old.id }) else {
+                throw ConversationStorageError.invalidDocument
+            }
+            return SavedConversation(snapshot: snapshot, draft: old.draft)
+        }
+        let draft = prompt
+        try Task.checkCancellation()
+        busy = true
+        resetting = true
+        cloud.pause()
+        do {
+            if loaded { try await session.reset() }
+            try Task.checkCancellation()
+            try await saveChatNow(
+                snapshot: selected, draft: draft, history: saved, projects: library.projects)
+            projects = library.projects
+            publish(selected, draft: draft, history: saved)
+            status = "Project changes saved."
+        } catch {
+            self.error = error.localizedDescription
+            await finishDeferredActions()
+            throw error
+        }
+        await finishDeferredActions()
+    }
+
     private func currentLibrary() -> ConversationLibrary {
-        ConversationLibrary(chats: [currentSnapshot()] + history.map(\.snapshot))
+        ConversationLibrary(
+            chats: [currentSnapshot()] + history.map(\.snapshot), projects: projects)
     }
 
     private func applyCloudSnapshot(_ library: ConversationLibrary, expected: String) async throws {
@@ -691,13 +763,16 @@ public final class LocalInferenceModel {
         guard let selected = library.chats.first(where: { $0.conversationID == conversationID })
             ?? library.chats.first else { throw ConversationStorageError.invalidDocument }
         var archive = ConversationArchive(sequence: 0, snapshot: selected)
+        archive.projects = library.projects
         archive.history = library.chats.filter { $0.conversationID != selected.conversationID }
             .map { SavedConversation(snapshot: $0) }
         archive = archive.recoveringInterruptedResponses()
         do {
             if loaded { try await session.reset() }
             try await saveChatNow(
-                snapshot: archive.snapshot, draft: "", notifyCloud: false, history: archive.history)
+                snapshot: archive.snapshot, draft: "", notifyCloud: false,
+                history: archive.history, projects: archive.projects)
+            projects = library.projects
             publish(archive.snapshot, draft: "", history: archive.history ?? [])
             status = "Restored the iCloud chat library."
         } catch {
@@ -712,6 +787,7 @@ public final class LocalInferenceModel {
     ) {
         restoringChat = true
         self.history = history
+        activeProjectID = snapshot.projectID
         messages = snapshot.messages
         compaction = snapshot.compaction
         conversationID = snapshot.conversationID
@@ -746,9 +822,11 @@ public final class LocalInferenceModel {
                         selected = saved.remove(at: index)
                     } else {
                         selected = SavedConversation(snapshot: ConversationSnapshot(
-                            conversationID: UUID(), messages: [], compaction: CompactionState()))
+                            conversationID: UUID(), messages: [], compaction: CompactionState(),
+                            projectID: pendingProjectID))
                     }
                     pendingSelection = nil
+                    pendingProjectID = nil
                     saved.insert(SavedConversation(snapshot: currentSnapshot(), draft: prompt), at: 0)
                     try await saveChatNow(
                         snapshot: selected.snapshot, draft: selected.draft, history: saved)

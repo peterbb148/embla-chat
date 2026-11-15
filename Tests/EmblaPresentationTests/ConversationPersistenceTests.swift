@@ -113,7 +113,7 @@ private func savedFixture() -> ConversationArchive {
     let legacy = savedFixture().snapshot
     let bytes = try legacy.encodedDocument()
     let migrated = try JSONDecoder().decode(ConversationLibrary.self, from: bytes)
-    #expect(migrated.formatVersion == 2 && migrated.chats == [legacy])
+    #expect(migrated.formatVersion == 3 && migrated.chats == [legacy])
     let roundTrip = try JSONDecoder().decode(
         ConversationLibrary.self, from: migrated.encodedDocument())
     #expect(roundTrip == migrated)

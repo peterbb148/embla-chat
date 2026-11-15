@@ -191,4 +191,55 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(app.buttons["Send"].isEnabled)
     }
 
+    @MainActor
+    func testProjectsPersistAssignmentAndSeparateDrafts() throws {
+        let app = try launchCleanChat()
+        let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
+        let name = "Project \(UUID().uuidString.prefix(8))"
+        let first = "First project draft \(UUID().uuidString.prefix(8))"
+        let second = "Second project draft \(UUID().uuidString.prefix(8))"
+        composer.tap()
+        composer.typeText(first)
+        app.buttons["Chat history"].tap()
+        app.buttons["New project"].tap()
+        let field = app.textFields["project-name"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText(name)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 10))
+        app.buttons["Chat history"].tap()
+        XCTAssertTrue(app.buttons[first].waitForExistence(timeout: 5))
+        app.buttons[first].press(forDuration: 1)
+        app.buttons["Move to project"].tap()
+        XCTAssertTrue(app.buttons[name].waitForExistence(timeout: 5))
+        app.buttons[name].tap()
+        XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 10))
+        app.buttons["Chat history"].tap()
+        app.buttons[name].tap()
+        let newChat = app.buttons["New chat in project"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        newChat.tap()
+        let empty = XCTNSPredicateExpectation(
+            predicate: NSPredicate(
+                format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
+            object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [empty], timeout: 10), .completed)
+        composer.tap()
+        composer.typeText(second)
+        app.buttons["Chat history"].tap()
+        app.buttons[name].tap()
+        XCTAssertTrue(app.buttons[first].waitForExistence(timeout: 5))
+        app.buttons[first].tap()
+        let original = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", first), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [original], timeout: 10), .completed)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts[name].waitForExistence(timeout: 10))
+        let restored = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", first), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
+    }
+
 }
