@@ -25,6 +25,12 @@ transcript is not restored after the process exits.
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,
 licensing, build requirements, limitations, and remaining validation.
 
+## App identity
+
+The elm-inspired leaf icon and its generation prompt are preserved in
+[branding](docs/branding/README.md), including the sources and uncertainty behind
+the name Embla.
+
 ## Delivery plan
 
 - [Epic 1: Scaffold and get ready](https://github.com/peterbb148/embla-chat/issues/12)
