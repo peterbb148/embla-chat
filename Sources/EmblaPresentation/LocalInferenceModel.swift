@@ -445,7 +445,8 @@ public final class LocalInferenceModel {
         {
             snapshot.revision = lastSnapshot.revision
         }
-        lastSnapshot = snapshot
+        // A replacement is not the visible conversation until its write succeeds.
+        if replacement == nil { lastSnapshot = snapshot }
         persistenceSequence += 1
         let sequence = persistenceSequence
         let pendingArchive = ConversationArchive(
@@ -468,6 +469,7 @@ public final class LocalInferenceModel {
         saveTask = write
         do {
             try await write.value
+            if replacement != nil { lastSnapshot = snapshot }
             if notifyCloud && cloud.enabled { cloud.requestSync() }
             if sequence == persistenceSequence && checkpointTask == nil {
                 storageError = nil

@@ -81,7 +81,8 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 81 package tests pass, including parameterized consent and sync-base cases. These include
+On 2026-11-15, all 82 package tests pass, including parameterized consent and sync-base cases.
+These include
 coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
@@ -113,6 +114,10 @@ verify retry and reopening accept a later remote-only edit without an unnecessar
 A real local-archive regression also covers storage Retry followed by Sync now.
 Retry recreates a missing local store. The UI reset helper waits for an enabled,
 empty composer rather than a disabled New Chat button, which also describes an active reset.
+The cached identity of a replacement advances only after its archive save succeeds. A failed
+cloud restore or New Chat save leaves the old visible conversation's fingerprint intact.
+Real-file regressions reproduce both identity changes without the fix, then verify local Retry
+and Sync now accept the remote-only update without inventing a local edit/conflict.
 Explicit provider fixtures now supply multiple unresolved copies: automatic writes stay
 blocked, every distinct copy is offered, explicit selection resolves the copies, and a newly
 arrived copy invalidates the old choice until refreshed. A coordinated temporary-file test

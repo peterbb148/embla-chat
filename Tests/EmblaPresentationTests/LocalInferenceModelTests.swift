@@ -659,11 +659,13 @@ func failedResetSaveKeepsTheVisibleChatUntilAnActualDurableResetSucceeds() async
     try await model.flushChatStorage()
     let original = model.messages
     let originalID = model.conversationID
+    let originalSnapshot = model.cloud.current?()?.snapshot
     try FileManager.default.moveItem(at: root, to: backup)
     try Data("blocked directory".utf8).write(to: root)
     model.newChat()
     await model.waitUntilIdle()
     #expect(model.messages == original && model.conversationID == originalID)
+    #expect(model.cloud.current?()?.snapshot == originalSnapshot)
     #expect(model.storageError != nil)
     try FileManager.default.removeItem(at: root)
     try FileManager.default.moveItem(at: backup, to: root)

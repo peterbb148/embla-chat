@@ -182,6 +182,59 @@ private actor BaseSaveFailureStore: ConversationStoring {
     }
 }
 
+private actor ReplacementSaveFailureStore: ConversationStoring {
+    private let store: ConversationStore
+    private let replacementID: UUID
+    private var failOnce = true
+    init(root: URL, replacementID: UUID) {
+        store = ConversationStore(root: root)
+        self.replacementID = replacementID
+    }
+    func load() async throws -> ConversationArchive? { try await store.load() }
+    func save(_ archive: ConversationArchive) async throws {
+        if failOnce, archive.snapshot.conversationID == replacementID {
+            failOnce = false
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
+        try await store.save(archive)
+    }
+}
+
+@Test @MainActor
+func failedCloudReplacementKeepsVisibleIdentityAndRetryDownloadsWithoutConflict() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let baseline = syncSnapshot("unchanged local chat")
+    let remote = syncSnapshot("remote-only edit")
+    var archive = ConversationArchive(sequence: 1, snapshot: baseline)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture permission".utf8)
+    archive.cloudBaseFingerprint = try baseline.fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: remote, uploaded: true))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: ReplacementSaveFailureStore(root: root, replacementID: remote.conversationID),
+        cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    #expect(model.storageError != nil && cloud.error != nil)
+    #expect(model.messages == baseline.messages)
+    #expect(cloud.current?()?.snapshot == baseline)
+    #expect(try await ConversationStore(root: root).load()?.snapshot == baseline)
+    try await model.flushChatStorage()
+    #expect(cloud.current?()?.snapshot == baseline)
+    cloud.refresh()
+    await cloud.waitUntilIdle()
+    #expect(model.messages == remote.messages)
+    #expect(model.storageError == nil && cloud.error == nil && cloud.choices.isEmpty)
+    #expect(try await ConversationStore(root: root).load()?.snapshot == remote)
+    cloud.pause()
+}
+
 @Test @MainActor
 func storageRetryThenSyncSavesTheNewBaseBeforeReopeningAndAcceptingRemoteEdits() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
