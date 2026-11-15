@@ -1034,3 +1034,58 @@ func draftEditedDuringTheFinalManualSaveIsCheckpointedAfterTheBarrierClears() as
     #expect(saved.draft == "Newest draft while final save is pending")
     #expect(saved.snapshot.compaction == model.compaction)
 }
+
+@Test @MainActor
+func twoChatsKeepExactSummariesAndDraftsAcrossNavigationAndRestart() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let root = fixture.root.appendingPathComponent("History")
+    let first = ConversationSnapshot(
+        conversationID: UUID(), messages: [
+            ChatMessage(role: .user, text: "First chat requirement"),
+            ChatMessage(role: .assistant, text: "First reply"),
+            ChatMessage(role: .user, text: "Follow up"),
+            ChatMessage(role: .assistant, text: "Second reply"),
+        ], compaction: CompactionState(summary: "Retain first requirement", summarizedMessageCount: 2))
+    try await ConversationStore(root: root).save(
+        ConversationArchive(sequence: 1, snapshot: first, draft: "First unsent draft"))
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    model.newChat()
+    await model.waitUntilIdle()
+    let secondID = model.conversationID
+    model.prompt = "Second unsent draft"
+    model.selectChat(first.conversationID)
+    await model.waitUntilIdle()
+    #expect(model.messages == first.messages && model.compaction == first.compaction)
+    #expect(model.prompt == "First unsent draft")
+    #expect(model.history.first?.id == secondID)
+    let reopened = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    #expect(reopened.messages == first.messages && reopened.prompt == "First unsent draft")
+    reopened.selectChat(secondID)
+    await reopened.waitUntilIdle()
+    #expect(reopened.messages.isEmpty && reopened.prompt == "Second unsent draft")
+    #expect(reopened.history.first?.snapshot == first)
+    #expect(!reopened.cloud.enabled && backend.calls == 0)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func navigatingDuringGenerationArchivesInterruptedOutputBeforeSwitching() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend()
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    model.prompt = "A cancellable first chat"
+    model.run()
+    try await backend.waitForStart()
+    let firstID = model.conversationID
+    model.newChat()
+    await model.waitUntilIdle()
+    #expect(model.conversationID != firstID && model.messages.isEmpty)
+    #expect(model.history.first?.id == firstID)
+    #expect(model.history.first?.snapshot.messages.last?.state == .interrupted)
+    model.selectChat(firstID)
+    await model.waitUntilIdle()
+    #expect(model.messages.last?.state == .interrupted)
+    #expect(backend.calls == 1 && !model.busy)
+}

@@ -87,3 +87,39 @@ private func savedFixture() -> ConversationArchive {
     }
     #expect(try Data(contentsOf: root) == existing)
 }
+
+@Test func historyRoundTripRecoversEveryChatAndRejectsDuplicateIdentities() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    var archive = savedFixture()
+    let earlier = savedFixture()
+    archive.history = [SavedConversation(snapshot: earlier.snapshot, draft: "Earlier local draft")]
+    let store = ConversationStore(root: root)
+    try await store.save(archive)
+    let reopened = try #require(try await store.load()).recoveringInterruptedResponses()
+    #expect(reopened.snapshot.messages.last?.state == .interrupted)
+    #expect(reopened.history?.first?.snapshot.messages.last?.state == .interrupted)
+    #expect(reopened.history?.first?.draft == "Earlier local draft")
+    #expect(reopened.history?.first?.snapshot.compaction == earlier.snapshot.compaction)
+    let portable = String(decoding: try archive.library.encodedDocument(), as: UTF8.self)
+    #expect(!portable.contains("Earlier local draft") && !portable.contains(archive.draft))
+    archive.history = [SavedConversation(snapshot: archive.snapshot)]
+    archive.sequence += 1
+    await #expect(throws: ConversationStorageError.self) { try await store.save(archive) }
+    #expect(try await store.load()?.history?.first?.snapshot == earlier.snapshot)
+}
+
+@Test func legacySingleChatCloudDocumentMigratesWithoutDroppingItsContext() throws {
+    let legacy = savedFixture().snapshot
+    let bytes = try legacy.encodedDocument()
+    let migrated = try JSONDecoder().decode(ConversationLibrary.self, from: bytes)
+    #expect(migrated.formatVersion == 2 && migrated.chats == [legacy])
+    let roundTrip = try JSONDecoder().decode(
+        ConversationLibrary.self, from: migrated.encodedDocument())
+    #expect(roundTrip == migrated)
+    // A malformed library must never be retried as a legacy single chat.
+    let invalid = Data("{\"formatVersion\":2,\"chats\":false}".utf8)
+    #expect(throws: DecodingError.self) {
+        try JSONDecoder().decode(ConversationLibrary.self, from: invalid)
+    }
+}

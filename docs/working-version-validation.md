@@ -60,3 +60,13 @@ The initial cloud toggle applies to all chats and defaults off. Future per-chat 
 must also cover derived project memory. The current app has one active chat, creates
 `EmblaChat/Chats` and `EmblaChat/Skills` in the selected cloud root, and does not load
 skills or execute tools. `EmblaChat/Actions` remains a future configuration path in #37.
+
+## History extension (#33)
+
+The [history/sidebar](chat-history.md) extends the original single-chat checkpoint. It preserves
+separate transcripts, summaries and drafts on navigation; New Chat is no longer destructive.
+The global cloud option now covers the complete library, with drafts remaining local. The
+physical single-chat evidence above does not validate this new multi-chat document format.
+
+The user explicitly deferred new real multi-chat iCloud provider/failure checks to unplanned
+#45. Those checks no longer block Epic 4; existing physical evidence remains commit-specific.

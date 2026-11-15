@@ -3,9 +3,9 @@ import Testing
 @testable import EmblaCore
 @testable import EmblaPresentation
 
-private func cloudFileSnapshot(_ text: String) -> ConversationSnapshot {
-    ConversationSnapshot(
-        conversationID: UUID(), messages: [ChatMessage(role: .user, text: text)], compaction: .init())
+private func cloudFileSnapshot(_ text: String) -> ConversationLibrary {
+    ConversationLibrary(chats: [ConversationSnapshot(
+        conversationID: UUID(), messages: [ChatMessage(role: .user, text: text)], compaction: .init())])
 }
 
 @Test func sharedCloudRootSeparatesChatsAndPreservesPortableSkills() throws {
@@ -83,7 +83,7 @@ private func cloudFileSnapshot(_ text: String) -> ConversationSnapshot {
     try CoordinatedConversationFile.write(original, at: file, replacing: .init())
     let staleRead = try CoordinatedConversationFile.read(at: file)
     var externalEdit = original
-    externalEdit.messages[0].text = "edited by another client"
+    externalEdit.chats[0].messages[0].text = "edited by another client"
     try externalEdit.encodedDocument().write(to: file, options: .atomic)
     #expect(throws: CloudConversationError.self) {
         try CoordinatedConversationFile.write(original, at: file, replacing: staleRead)

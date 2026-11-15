@@ -68,7 +68,9 @@ marks a failed backend reusable.
 The shared controller keeps a chronological `messages` transcript and supplies all
 user turns and nonempty actual assistant text/reasoning on every Send. Cancelled and
 limited responses keep their explicit UI state and their real partial content. New Chat
-waits for active work to drain before clearing both transcript and inference state.
+waits for active work to drain, saves the previous transcript/summary/draft in history,
+and resets inference state. Selecting an earlier chat restores its own context without
+starting generation.
 
 The application supplies the conversation. The adapter uses upstream ChatTemplate
 and Tokenizer without heuristic substitutes. Earlier assistant reasoning is handled

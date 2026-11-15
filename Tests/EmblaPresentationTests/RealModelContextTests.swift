@@ -86,3 +86,51 @@ func realHostModelManuallyCompactsBelowThresholdAndRecallsTheRetainedFact() asyn
     #expect(model.messages.last?.text.uppercased().contains("BLUE PENGUIN") == true)
     model.enteredBackground(); await model.waitUntilIdle()
 }
+
+/// Real inference after navigation and restart; host evidence is not iPhone performance evidence.
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"] != nil),
+    .timeLimit(.minutes(5))
+) @MainActor
+func realHostHistoryRestoresTwoIndependentConversationContexts() async throws {
+    let root = URL(fileURLWithPath: try #require(
+        ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"]))
+    let manifest = try ModelManifest.bundled()
+    let repository = ModelRepository(root: root, manifest: manifest)
+    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    let session = EmblaRuntime.makeSession()
+    let model = LocalInferenceModel(repository: repository, manifest: manifest,
+        session: session, chatStore: ConversationStore(root: temporary))
+    model.check(); await model.waitUntilIdle()
+    try #require(model.error == nil && model.readyDirectory != nil)
+    model.prompt = "Remember: the project codename is BLUE PENGUIN. Reply only Noted."
+    model.run(); await model.waitUntilIdle()
+    try #require(model.error == nil && model.messages.last?.state == .complete)
+    let firstID = model.conversationID
+    model.newChat(); await model.waitUntilIdle()
+    let secondID = model.conversationID
+    model.prompt = "Remember: the project codename is RED FOX. Reply only Noted."
+    model.run(); await model.waitUntilIdle()
+    try #require(model.error == nil && model.messages.last?.state == .complete)
+    model.selectChat(firstID); await model.waitUntilIdle()
+    model.prompt = "What is the project codename? Reply with only the codename."
+    model.run(); await model.waitUntilIdle()
+    try #require(model.error == nil && model.messages.last?.state == .complete)
+    let firstAnswer = model.messages.last?.text.uppercased() ?? ""
+    print("Real first-chat recall after switching: \(firstAnswer)")
+    #expect(firstAnswer.contains("BLUE PENGUIN") && !firstAnswer.contains("RED FOX"))
+    model.enteredBackground(); await model.waitUntilIdle()
+    let reopened = LocalInferenceModel(repository: repository, manifest: manifest,
+        session: EmblaRuntime.makeSession(), chatStore: ConversationStore(root: temporary))
+    reopened.check(); await reopened.waitUntilIdle()
+    #expect(reopened.conversationID == firstID && reopened.history.count == 1)
+    reopened.selectChat(secondID); await reopened.waitUntilIdle()
+    reopened.prompt = "What is the project codename? Reply with only the codename."
+    reopened.run(); await reopened.waitUntilIdle()
+    try #require(reopened.error == nil && reopened.messages.last?.state == .complete)
+    let secondAnswer = reopened.messages.last?.text.uppercased() ?? ""
+    print("Real second-chat recall after restart: \(secondAnswer)")
+    #expect(secondAnswer.contains("RED FOX") && !secondAnswer.contains("BLUE PENGUIN"))
+    reopened.enteredBackground(); await reopened.waitUntilIdle()
+}

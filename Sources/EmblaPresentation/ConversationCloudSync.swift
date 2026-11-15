@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 public struct CloudLocalConversation: Sendable {
-    public let snapshot: ConversationSnapshot
+    public let snapshot: ConversationLibrary
     public let hasDraft: Bool
     public let canReplace: Bool
 }
@@ -10,7 +10,7 @@ public struct CloudLocalConversation: Sendable {
 public struct CloudChatChoice: Identifiable, Sendable {
     public let id: String
     public let label: String
-    public let snapshot: ConversationSnapshot
+    public let snapshot: ConversationLibrary
 }
 
 enum CloudSyncAction { case identical, upload, download, conflict, removed }
@@ -44,7 +44,7 @@ public final class ConversationCloudSync {
     @ObservationIgnored var bookmark: Data?
     @ObservationIgnored var baseFingerprint: String?
     @ObservationIgnored var current: (() -> CloudLocalConversation?)?
-    @ObservationIgnored var apply: ((ConversationSnapshot, String) async throws -> Void)?
+    @ObservationIgnored var apply: ((ConversationLibrary, String) async throws -> Void)?
     @ObservationIgnored var persist: (() async throws -> Void)?
     @ObservationIgnored private let factory: @Sendable (Data) -> any CloudConversationStorage
     @ObservationIgnored private var storage: (any CloudConversationStorage)?
@@ -288,22 +288,22 @@ public final class ConversationCloudSync {
         if let now = current?(), try now.snapshot.fingerprint() != baseFingerprint { needsSync = true }
     }
 
-    private func showConflict(local: ConversationSnapshot, remote: CloudConversationRead) throws {
+    private func showConflict(local: ConversationLibrary, remote: CloudConversationRead) throws {
         conflictRead = remote
         conflictLocal = try local.fingerprint()
         var result = [CloudChatChoice(
-            id: try local.fingerprint(), label: "Keep this device’s chat", snapshot: local)]
+            id: try local.fingerprint(), label: "Keep this device’s chat library", snapshot: local)]
         for (index, snapshot) in ([remote.current].compactMap { $0 } + remote.conflicts).enumerated() {
             let id = try snapshot.fingerprint()
             if !result.contains(where: { $0.id == id }) {
                 result.append(CloudChatChoice(
-                    id: id, label: index == 0 ? "Use iCloud chat" : "Use iCloud conflict copy \(index)",
+                    id: id, label: index == 0 ? "Use iCloud chat library" : "Use iCloud conflict copy \(index)",
                     snapshot: snapshot))
             }
         }
         choices = result
         error = nil
-        status = "Choose which chat to keep. Nothing has been overwritten."
+        status = "Choose which chat library to keep. Nothing has been overwritten."
     }
 
     /// The UI confirms this replacement, including discarding the current unsent draft if needed.
@@ -362,7 +362,7 @@ public final class ConversationCloudSync {
         try await persist()
     }
 
-    private func applySnapshot(_ snapshot: ConversationSnapshot, expected: String) async throws {
+    private func applySnapshot(_ snapshot: ConversationLibrary, expected: String) async throws {
         guard let apply else { throw CloudConversationError.configuration }
         try await apply(snapshot, expected)
     }

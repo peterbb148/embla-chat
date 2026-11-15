@@ -1,6 +1,14 @@
 # Chat persistence (#9)
 
-## Implementation checkpoint
+## Current history extension
+
+[Chat history](chat-history.md) extends the original single-chat implementation below.
+New Chat now archives the previous chat, and one global opt-in synchronizes all saved
+transcripts/summaries as a format-2 library. Drafts remain local. The physical evidence below
+is commit-specific single-chat evidence, not a claim that the new library format was tested
+with the personal iCloud provider.
+
+## Original implementation checkpoint
 
 Local persistence and the optional iCloud Drive flow are integrated on the issue branch.
 Real iCloud Drive transfer/restoration has been validated on an iPhone 17 Pro; see the

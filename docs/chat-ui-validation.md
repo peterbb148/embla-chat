@@ -1,6 +1,12 @@
 # Conversational UI validation (#25)
 
-## Implemented behavior
+## Current history extension
+
+The [history sidebar](chat-history.md) now opens from the leading menu, holds Settings and
+reopens saved chats. New Chat archives the previous transcript/summary/draft. The source-commit
+observations below describe the earlier UI milestones.
+
+## Original implemented behavior
 
 The main screen is a chronological user/assistant transcript with a bottom composer,
 Send/Stop, New Chat and Settings. Reasoning is expandable within the assistant turn.

@@ -3,9 +3,9 @@ import Testing
 @testable import EmblaCore
 @testable import EmblaPresentation
 
-private func syncSnapshot(_ text: String) -> ConversationSnapshot {
-    ConversationSnapshot(
-        conversationID: UUID(), messages: [ChatMessage(role: .user, text: text)], compaction: .init())
+private func syncSnapshot(_ text: String) -> ConversationLibrary {
+    ConversationLibrary(chats: [ConversationSnapshot(
+        conversationID: UUID(), messages: [ChatMessage(role: .user, text: text)], compaction: .init())])
 }
 
 /// Explicit simulated provider for synchronization policy tests; never used by the app constructor.
@@ -39,7 +39,7 @@ private actor SyncProviderFixture: CloudConversationStorage {
         return document
     }
     func write(
-        _ snapshot: ConversationSnapshot, replacing: CloudConversationRead,
+        _ snapshot: ConversationLibrary, replacing: CloudConversationRead,
         resolvingConflicts: Bool
     ) async throws {
         try Task.checkCancellation()
@@ -67,7 +67,7 @@ private actor SyncProviderFixture: CloudConversationStorage {
     }
     func releaseRead() { gate?.resume(); gate = nil }
     func confirmUpload() { document.uploaded = true }
-    func addConflict(_ snapshot: ConversationSnapshot) { document.conflicts.append(snapshot) }
+    func addConflict(_ snapshot: ConversationLibrary) { document.conflicts.append(snapshot) }
     func waitForRead() async throws {
         for _ in 0..<1_000 {
             if reads > 0 { return }
@@ -79,14 +79,14 @@ private actor SyncProviderFixture: CloudConversationStorage {
 
 @MainActor
 private final class SyncHarness {
-    var local: ConversationSnapshot
+    var local: ConversationLibrary
     var draft = false
     var busy = false
     var applications = 0
     var settingsSaves = 0
     let cloud: ConversationCloudSync
 
-    init(local: ConversationSnapshot, provider: SyncProviderFixture) {
+    init(local: ConversationLibrary, provider: SyncProviderFixture) {
         self.local = local
         cloud = ConversationCloudSync(factory: { _ in provider })
         cloud.current = { [weak self] in
@@ -206,7 +206,7 @@ func failedCloudReplacementKeepsVisibleIdentityAndRetryDownloadsWithoutConflict(
     defer { try? FileManager.default.removeItem(at: root) }
     let baseline = syncSnapshot("unchanged local chat")
     let remote = syncSnapshot("remote-only edit")
-    var archive = ConversationArchive(sequence: 1, snapshot: baseline)
+    var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
@@ -216,22 +216,22 @@ func failedCloudReplacementKeepsVisibleIdentityAndRetryDownloadsWithoutConflict(
     let model = LocalInferenceModel(
         repository: nil, manifest: try ModelManifest.bundled(),
         session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
-        chatStore: ReplacementSaveFailureStore(root: root, replacementID: remote.conversationID),
+        chatStore: ReplacementSaveFailureStore(root: root, replacementID: remote.chats[0].conversationID),
         cloud: cloud)
     model.check()
     await model.waitUntilIdle()
     await cloud.waitUntilIdle()
     #expect(model.storageError != nil && cloud.error != nil)
-    #expect(model.messages == baseline.messages)
+    #expect(model.messages == baseline.chats[0].messages)
     #expect(cloud.current?()?.snapshot == baseline)
-    #expect(try await ConversationStore(root: root).load()?.snapshot == baseline)
+    #expect(try await ConversationStore(root: root).load()?.library == baseline)
     try await model.flushChatStorage()
     #expect(cloud.current?()?.snapshot == baseline)
     cloud.refresh()
     await cloud.waitUntilIdle()
-    #expect(model.messages == remote.messages)
+    #expect(model.messages == remote.chats[0].messages)
     #expect(model.storageError == nil && cloud.error == nil && cloud.choices.isEmpty)
-    #expect(try await ConversationStore(root: root).load()?.snapshot == remote)
+    #expect(try await ConversationStore(root: root).load()?.library == remote)
     cloud.pause()
 }
 
@@ -242,7 +242,7 @@ func storageRetryThenSyncSavesTheNewBaseBeforeReopeningAndAcceptingRemoteEdits()
     let baseline = syncSnapshot("old shared base")
     let local = syncSnapshot("new local chat")
     let base = try baseline.fingerprint()
-    var archive = ConversationArchive(sequence: 1, snapshot: local)
+    var archive = ConversationArchive(sequence: 1, snapshot: local.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = base
@@ -273,7 +273,7 @@ func storageRetryThenSyncSavesTheNewBaseBeforeReopeningAndAcceptingRemoteEdits()
     reopened.check()
     await reopened.waitUntilIdle()
     await laterCloud.waitUntilIdle()
-    #expect(reopened.messages == laterEdit.messages && laterCloud.choices.isEmpty)
+    #expect(reopened.messages == laterEdit.chats[0].messages && laterCloud.choices.isEmpty)
     cloud.pause()
     laterCloud.pause()
 }
@@ -413,7 +413,8 @@ func remoteReadStartedBeforeNewChatCannotRestoreTheOldConversation() async throw
     harness.start(base: try baseline.fingerprint())
     defer { harness.cloud.disable() }
     try await provider.waitForRead()
-    let reset = ConversationSnapshot(conversationID: UUID(), messages: [], compaction: .init())
+    let reset = ConversationLibrary(chats: [ConversationSnapshot(
+        conversationID: UUID(), messages: [], compaction: .init())])
     harness.local = reset
     await provider.releaseRead()
     await harness.cloud.waitUntilIdle()
@@ -439,7 +440,7 @@ func cloudRestorationIsSavedLocallyBeforeBeingShownInTheController() async throw
     defer { try? FileManager.default.removeItem(at: root) }
     let baseline = syncSnapshot("old shared message")
     let remote = syncSnapshot("new shared message")
-    var archive = ConversationArchive(sequence: 1, snapshot: baseline)
+    var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
@@ -453,10 +454,10 @@ func cloudRestorationIsSavedLocallyBeforeBeingShownInTheController() async throw
     model.check()
     await model.waitUntilIdle()
     await cloud.waitUntilIdle()
-    #expect(model.messages == remote.messages)
-    #expect(model.conversationID == remote.conversationID)
+    #expect(model.messages == remote.chats[0].messages)
+    #expect(model.conversationID == remote.chats[0].conversationID)
     let local = try await ConversationStore(root: root).load()
-    #expect(local?.snapshot == remote)
+    #expect(local?.library == remote)
     let remoteFingerprint = try remote.fingerprint()
     #expect(local?.cloudBaseFingerprint == remoteFingerprint)
     cloud.disable()
@@ -469,7 +470,7 @@ func controllerNewChatDuringCloudReadSynchronizesTheResetWithoutRestoringOldMess
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let baseline = syncSnapshot("old chat that must stay cleared")
-    var archive = ConversationArchive(sequence: 1, snapshot: baseline)
+    var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
@@ -489,8 +490,9 @@ func controllerNewChatDuringCloudReadSynchronizesTheResetWithoutRestoringOldMess
     await provider.releaseRead()
     await cloud.waitUntilIdle()
     #expect(model.messages.isEmpty && model.conversationID == resetID)
-    #expect(await provider.document.current?.messages.isEmpty == true)
-    #expect(await provider.document.current?.conversationID == resetID)
+    let uploaded = try #require(await provider.document.current)
+    #expect(uploaded.chats.first(where: { $0.conversationID == resetID })?.messages.isEmpty == true)
+    #expect(uploaded.chats.contains(baseline.chats[0]))
     #expect(try await ConversationStore(root: root).load()?.snapshot.conversationID == resetID)
     cloud.pause()
     await cloud.waitUntilIdle()
@@ -500,7 +502,7 @@ func controllerNewChatDuringCloudReadSynchronizesTheResetWithoutRestoringOldMess
 func disabledPreferenceWithAnOldFolderBookmarkNeverOpensTheProviderOnRestore() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    var archive = ConversationArchive(sequence: 1, snapshot: syncSnapshot("private local message"))
+    var archive = ConversationArchive(sequence: 1, snapshot: syncSnapshot("private local message").chats[0])
     archive.cloudFolderBookmark = Data("previously granted permission".utf8)
     try await ConversationStore(root: root).save(archive)
     let provider = SyncProviderFixture()
@@ -602,7 +604,7 @@ func backgroundPauseDoesNotHideFailedOffSaveAndStorageRetryConfirmsOff() async t
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = syncSnapshot("saved cloud chat")
-    var archive = ConversationArchive(sequence: 1, snapshot: snapshot)
+    var archive = ConversationArchive(sequence: 1, snapshot: snapshot.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("saved permission".utf8)
     archive.cloudBaseFingerprint = try snapshot.fingerprint()
@@ -638,7 +640,7 @@ func checkpointQueuedDuringFailedConsentCannotEnableCloudAfterReopening() async 
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = syncSnapshot("local conversation before consent")
-    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot))
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
     let provider = SyncProviderFixture()
     let cloud = ConversationCloudSync(factory: { _ in provider })
     let store = PreferenceCheckpointStore(root: root, failEnabled: true)
@@ -661,7 +663,7 @@ func checkpointQueuedDuringFailedConsentCannotEnableCloudAfterReopening() async 
     try await checkpoint.value
     let saved = try #require(try await ConversationStore(root: root).load())
     #expect(!cloud.enabled && !saved.cloudEnabled)
-    #expect(saved.draft == model.prompt && saved.snapshot == snapshot)
+    #expect(saved.draft == model.prompt && saved.library == snapshot)
     let reopenedCloud = ConversationCloudSync(factory: { _ in provider })
     let reopened = LocalInferenceModel(
         repository: nil, manifest: try ModelManifest.bundled(),
@@ -683,7 +685,7 @@ func optInWaitsForDurableConsentAndPendingDisablePreventsProviderAccess(
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = syncSnapshot("private until consent is saved")
-    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot))
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
     let provider = SyncProviderFixture()
     let cloud = ConversationCloudSync(factory: { _ in provider })
     let store = PreferenceCheckpointStore(root: root)
@@ -709,7 +711,7 @@ func optInWaitsForDurableConsentAndPendingDisablePreventsProviderAccess(
     await cloud.waitUntilIdle()
     let saved = try #require(try await ConversationStore(root: root).load())
     #expect(saved.cloudEnabled == !disableWhileSaving)
-    #expect(saved.snapshot == snapshot)
+    #expect(saved.library == snapshot)
     if disableWhileSaving {
         #expect(await provider.reads == 0)
         #expect(await provider.writes == 0)
@@ -725,7 +727,7 @@ func failedOptInSaveStaysOffWithoutProviderAccessAndCanBeRetried() async throws 
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = syncSnapshot("preserve this local chat")
-    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot))
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
     let provider = SyncProviderFixture()
     let cloud = ConversationCloudSync(factory: { _ in provider })
     let store = PreferenceCheckpointStore(root: root, failEnabled: true)
@@ -746,7 +748,7 @@ func failedOptInSaveStaysOffWithoutProviderAccessAndCanBeRetried() async throws 
     #expect(await provider.reads == 0)
     #expect(await provider.writes == 0)
     let saved = try #require(try await ConversationStore(root: root).load())
-    #expect(!saved.cloudEnabled && saved.snapshot == snapshot)
+    #expect(!saved.cloudEnabled && saved.library == snapshot)
     await store.allowEnabledSaves()
     try await cloud.enable(bookmark: Data("fixture permission".utf8))
     await cloud.waitUntilIdle()
@@ -780,14 +782,14 @@ func disablingDuringCloudReplacementPreservesTheDurableRestoredChat() async thro
     defer { try? FileManager.default.removeItem(at: root) }
     let baseline = syncSnapshot("old shared chat")
     let remote = syncSnapshot("restored shared chat")
-    var archive = ConversationArchive(sequence: 1, snapshot: baseline)
+    var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
     try await ConversationStore(root: root).save(archive)
     let provider = SyncProviderFixture(.init(current: remote, uploaded: true))
     let cloud = ConversationCloudSync(factory: { _ in provider })
-    let store = ResetCheckpointStore(root: root, heldConversationID: remote.conversationID)
+    let store = ResetCheckpointStore(root: root, heldConversationID: remote.chats[0].conversationID)
     let model = LocalInferenceModel(
         repository: nil, manifest: try ModelManifest.bundled(),
         session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
@@ -795,13 +797,13 @@ func disablingDuringCloudReplacementPreservesTheDurableRestoredChat() async thro
     model.check()
     await model.waitUntilIdle()
     try await store.resetGate.waitForEntry()
-    #expect(model.messages == baseline.messages && model.resetting)
+    #expect(model.messages == baseline.chats[0].messages && model.resetting)
     cloud.disable()
     for _ in 0..<20 { await Task.yield() }
     await store.resetGate.release()
     await cloud.waitUntilIdle()
     let reopened = try #require(try await ConversationStore(root: root).load())
-    #expect(model.messages == remote.messages && reopened.snapshot == remote)
+    #expect(model.messages == remote.chats[0].messages && reopened.library == remote)
     #expect(!reopened.cloudEnabled)
 }
 
@@ -810,7 +812,7 @@ func unchangedCloudPollDoesNotRewriteTheLocalArchive() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = syncSnapshot("unchanged shared chat")
-    var archive = ConversationArchive(sequence: 1, snapshot: snapshot)
+    var archive = ConversationArchive(sequence: 1, snapshot: snapshot.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try snapshot.fingerprint()
@@ -840,7 +842,7 @@ func disablingCloudDuringDurableResetCannotSaveTheOldTranscriptAgain() async thr
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let local = syncSnapshot("chat being cleared")
-    var archive = ConversationArchive(sequence: 1, snapshot: local)
+    var archive = ConversationArchive(sequence: 1, snapshot: local.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try local.fingerprint()
@@ -857,7 +859,7 @@ func disablingCloudDuringDurableResetCannotSaveTheOldTranscriptAgain() async thr
     await cloud.waitUntilIdle()
     model.newChat()
     try await store.resetGate.waitForEntry()
-    #expect(model.messages == local.messages)
+    #expect(model.messages == local.chats[0].messages)
     cloud.disable()
     // Let the preference task enter persistence while reset completion is held.
     for _ in 0..<20 { await Task.yield() }
@@ -876,7 +878,7 @@ func cloudUploadCannotQueueOldMetadataWhileResetArchiveCompletionIsPending() asy
     defer { try? FileManager.default.removeItem(at: root) }
     let baseline = syncSnapshot("previous shared baseline")
     let local = syncSnapshot("current local conversation")
-    var archive = ConversationArchive(sequence: 1, snapshot: local)
+    var archive = ConversationArchive(sequence: 1, snapshot: local.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
@@ -959,7 +961,7 @@ func backgroundUnloadAndLocalSavesDoNotRestartCloudUntilForeground() async throw
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let baseline = syncSnapshot("shared")
-    var archive = ConversationArchive(sequence: 1, snapshot: baseline)
+    var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
@@ -1011,7 +1013,7 @@ func newChatReevaluatesPendingConflictChoicesWithoutManualRefresh() async throws
     let baseline = syncSnapshot("baseline")
     let local = syncSnapshot("local edit")
     let remote = syncSnapshot("remote edit")
-    var archive = ConversationArchive(sequence: 1, snapshot: local)
+    var archive = ConversationArchive(sequence: 1, snapshot: local.chats[0])
     archive.cloudEnabled = true
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
@@ -1030,11 +1032,76 @@ func newChatReevaluatesPendingConflictChoicesWithoutManualRefresh() async throws
     model.newChat()
     await model.waitUntilIdle()
     await cloud.waitUntilIdle()
-    let reset = try #require(try await ConversationStore(root: root).load()).snapshot
+    let reset = try #require(try await ConversationStore(root: root).load()).library
     #expect(model.messages.isEmpty)
     #expect(cloud.choices.contains(where: { $0.snapshot == reset }))
     #expect(!cloud.choices.contains(where: { $0.snapshot == local }))
     #expect(await provider.reads > reads)
     cloud.pause()
+    await cloud.waitUntilIdle()
+}
+
+@Test @MainActor
+func globalOptInUploadsAllChatsButNeverAnyDrafts() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let first = syncSnapshot("Earlier saved transcript").chats[0]
+    let active = syncSnapshot("Selected saved transcript").chats[0]
+    var archive = ConversationArchive(sequence: 1, snapshot: active, draft: "PRIVATE ACTIVE DRAFT")
+    archive.history = [SavedConversation(snapshot: first, draft: "PRIVATE HISTORY DRAFT")]
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture()
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: ConversationStore(root: root), cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    model.selectChat(first.conversationID)
+    await model.waitUntilIdle()
+    #expect(await provider.reads == 0)
+    #expect(await provider.writes == 0)
+    try await cloud.enable(bookmark: Data("explicit fixture consent".utf8))
+    await cloud.waitUntilIdle()
+    let uploaded = try #require(await provider.document.current)
+    #expect(Set(uploaded.chats.map(\.conversationID)) == [first.conversationID, active.conversationID])
+    let bytes = String(decoding: try uploaded.encodedDocument(), as: UTF8.self)
+    #expect(!bytes.contains("PRIVATE ACTIVE DRAFT") && !bytes.contains("PRIVATE HISTORY DRAFT"))
+    let saved = try #require(try await ConversationStore(root: root).load())
+    #expect(saved.draft == "PRIVATE HISTORY DRAFT")
+    #expect(saved.history?.first?.draft == "PRIVATE ACTIVE DRAFT")
+    cloud.disable()
+    await cloud.waitUntilIdle()
+}
+
+@Test @MainActor
+func inactiveDraftPreventsAutomaticWholeLibraryReplacement() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let active = syncSnapshot("Selected chat").chats[0]
+    let previous = syncSnapshot("Previous chat").chats[0]
+    var archive = ConversationArchive(sequence: 1, snapshot: active)
+    archive.history = [SavedConversation(snapshot: previous, draft: "Keep this inactive draft")]
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture consent".utf8)
+    archive.cloudBaseFingerprint = try archive.library.fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    var remote = archive.library
+    remote.chats[0].messages[0].text = "Changed on the other device"
+    let provider = SyncProviderFixture(.init(current: remote))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: ConversationStore(root: root), cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    #expect(model.history.first?.draft == "Keep this inactive draft")
+    #expect(model.cloud.current?()?.snapshot == archive.library)
+    #expect(cloud.choices.count == 2)
+    #expect(await provider.writes == 0)
+    cloud.disable()
     await cloud.waitUntilIdle()
 }

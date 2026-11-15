@@ -3,12 +3,12 @@ import Foundation
 
 /// A consistent read of the current document and any unresolved iCloud versions.
 public struct CloudConversationRead: Sendable, Equatable {
-    public var current: ConversationSnapshot?
-    public var conflicts: [ConversationSnapshot]
+    public var current: ConversationLibrary?
+    public var conflicts: [ConversationLibrary]
     public var uploaded: Bool
 
     public init(
-        current: ConversationSnapshot? = nil, conflicts: [ConversationSnapshot] = [],
+        current: ConversationLibrary? = nil, conflicts: [ConversationLibrary] = [],
         uploaded: Bool = false
     ) {
         self.current = current
@@ -27,9 +27,23 @@ public struct CloudConversationRead: Sendable, Equatable {
 public protocol CloudConversationStorage: Sendable {
     func read() async throws -> CloudConversationRead
     func write(
-        _ snapshot: ConversationSnapshot, replacing: CloudConversationRead,
+        _ snapshot: ConversationLibrary, replacing: CloudConversationRead,
         resolvingConflicts: Bool
     ) async throws
+}
+
+extension ConversationLibrary {
+    /// Canonical content identity detects edits even if an external editor retains the revision ID.
+    func encodedDocument() throws -> Data {
+        try validate()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(self)
+    }
+
+    func fingerprint() throws -> String {
+        SHA256.hash(data: try encodedDocument()).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 extension ConversationSnapshot {
@@ -72,7 +86,7 @@ public actor ICloudConversationStore: CloudConversationStorage {
     }
 
     public func write(
-        _ snapshot: ConversationSnapshot, replacing: CloudConversationRead,
+        _ snapshot: ConversationLibrary, replacing: CloudConversationRead,
         resolvingConflicts: Bool = false
     ) throws {
         try withAccess { file in
@@ -135,7 +149,7 @@ enum CoordinatedConversationFile {
     }
 
     static func write(
-        _ snapshot: ConversationSnapshot, at file: URL, replacing expected: CloudConversationRead,
+        _ snapshot: ConversationLibrary, at file: URL, replacing expected: CloudConversationRead,
         resolvingConflicts: Bool = false
     ) throws {
         let bytes = try snapshot.encodedDocument()
@@ -186,12 +200,12 @@ enum CoordinatedConversationFile {
             throw error
         }
         let decoder = JSONDecoder()
-        let snapshot = try decoder.decode(ConversationSnapshot.self, from: bytes)
+        let snapshot = try decoder.decode(ConversationLibrary.self, from: bytes)
         try snapshot.validate()
         versions = NSFileVersion.unresolvedConflictVersionsOfItem(at: file) ?? []
         let conflicts = try versions.map { version in
             let snapshot = try decoder.decode(
-                ConversationSnapshot.self, from: Data(contentsOf: version.url))
+                ConversationLibrary.self, from: Data(contentsOf: version.url))
             try snapshot.validate()
             return snapshot
         }

@@ -43,8 +43,9 @@ final class LaunchTests: XCTestCase {
     @MainActor
     func testModelControlsAreInSettings() throws {
         let app = try launchCleanChat()
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Chat history"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Download model"].exists)
+        app.buttons["Chat history"].tap()
         app.buttons["Settings"].tap()
         reveal(app.buttons["Download model"], in: app)
         XCTAssertTrue(app.buttons["Download model"].exists)
@@ -101,6 +102,7 @@ final class LaunchTests: XCTestCase {
         let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
         composer.tap()
         composer.typeText("Local draft survives restart")
+        app.buttons["Chat history"].tap()
         app.buttons["Settings"].tap()
         let storage = app.staticTexts["chat-storage-status"]
         XCTAssertTrue(storage.waitForExistence(timeout: 10))
@@ -119,6 +121,7 @@ final class LaunchTests: XCTestCase {
     @MainActor
     func testICloudStartsOffAndCancellingConsentKeepsItOff() throws {
         let app = try launchCleanChat()
+        app.buttons["Chat history"].tap()
         app.buttons["Settings"].tap()
         let toggle = app.switches["icloud-toggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
@@ -144,6 +147,48 @@ final class LaunchTests: XCTestCase {
         app.buttons["Done"].tap()
         XCTAssertEqual(composer.value as? String, "Draft retained while viewing context")
         XCTAssertFalse(app.staticTexts["answer"].exists)
+    }
+
+    @MainActor
+    func testHistoryRestoresBothDraftsAfterRestart() throws {
+        let app = try launchCleanChat()
+        let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
+        let first = "First local chat \(UUID().uuidString.prefix(8))"
+        let second = "Second local chat \(UUID().uuidString.prefix(8))"
+        composer.tap()
+        composer.typeText(first)
+        app.buttons["Hide keyboard"].tap()
+        app.buttons["New Chat"].tap()
+        let confirmation = app.alerts["Start a new chat?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["Start new chat"].tap()
+        XCTAssertTrue(confirmation.waitForNonExistence(timeout: 5))
+        let empty = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
+            object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [empty], timeout: 10), .completed)
+        composer.tap()
+        composer.typeText(second)
+        app.buttons["Chat history"].tap()
+        XCTAssertTrue(app.buttons[first].waitForExistence(timeout: 5))
+        app.buttons[first].tap()
+        let firstRestored = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", first), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [firstRestored], timeout: 10), .completed)
+        // Navigation itself saved both drafts; terminate without a test-only persistence hook.
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        let afterRestart = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", first), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [afterRestart], timeout: 10), .completed)
+        app.buttons["Chat history"].tap()
+        XCTAssertTrue(app.buttons[second].waitForExistence(timeout: 5))
+        app.buttons[second].tap()
+        let secondRestored = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", second), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [secondRestored], timeout: 10), .completed)
+        XCTAssertFalse(app.buttons["Send"].isEnabled)
     }
 
 }
