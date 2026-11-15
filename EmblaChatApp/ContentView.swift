@@ -23,6 +23,20 @@ struct ContentView: View {
         let contentHeight: CGFloat
         let offset: CGFloat
         let nearBottom: Bool
+
+        init(_ geometry: ScrollGeometry) {
+            height = geometry.containerSize.height
+            contentHeight = geometry.contentSize.height
+            offset = TranscriptScrollState.boundedOffset(
+                geometry.contentOffset.y, contentHeight: geometry.contentSize.height,
+                viewportHeight: geometry.containerSize.height,
+                topInset: geometry.contentInsets.top, bottomInset: geometry.contentInsets.bottom)
+            let bottom = max(
+                -geometry.contentInsets.top,
+                geometry.contentSize.height - geometry.containerSize.height
+                    + geometry.contentInsets.bottom)
+            nearBottom = offset >= bottom - 100
+        }
     }
 
     var body: some View {
@@ -43,12 +57,7 @@ struct ContentView: View {
                     .clipped()
                     .scrollDismissesKeyboard(.interactively)
                     .onScrollGeometryChange(for: Viewport.self) { geometry in
-                        Viewport(
-                            height: geometry.containerSize.height,
-                            contentHeight: geometry.contentSize.height,
-                            offset: geometry.contentOffset.y,
-                            nearBottom: geometry.contentOffset.y + geometry.containerSize.height
-                                >= geometry.contentSize.height - 100)
+                        Viewport(geometry)
                     } action: { old, new in
                         transcriptScroll.geometryChanged(
                             offset: new.offset, nearBottom: new.nearBottom)
@@ -59,13 +68,11 @@ struct ContentView: View {
                         }
                     }
                     .onScrollPhaseChange { _, phase, context in
-                        let geometry = context.geometry
+                        let viewport = Viewport(context.geometry)
                         transcriptScroll.phaseChanged(
                             scrolling: phase == .tracking || phase == .interacting
                                 || phase == .decelerating,
-                            offset: geometry.contentOffset.y,
-                            nearBottom: geometry.contentOffset.y + geometry.containerSize.height
-                                >= geometry.contentSize.height - 100)
+                            offset: viewport.offset, nearBottom: viewport.nearBottom)
                         if phase == .idle && transcriptScroll.shouldScrollAutomatically {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }

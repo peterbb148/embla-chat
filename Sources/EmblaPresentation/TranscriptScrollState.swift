@@ -6,6 +6,16 @@ public struct TranscriptScrollState {
 
     public init() {}
 
+    /// Rubber-band overscroll is not movement away from the legal bottom/top edge.
+    public static func boundedOffset(
+        _ offset: Double, contentHeight: Double, viewportHeight: Double,
+        topInset: Double = 0, bottomInset: Double = 0
+    ) -> Double {
+        let lower = -topInset
+        let upper = max(lower, contentHeight - viewportHeight + bottomInset)
+        return min(max(offset, lower), upper)
+    }
+
     public var shouldScrollAutomatically: Bool { followingOutput && !readerScrolling }
 
     /// Call with phase-context geometry, including the final offset before ending a gesture.

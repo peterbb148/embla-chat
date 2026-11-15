@@ -42,7 +42,7 @@ separate from New Chat; existing controller tests verify deletion leaves chat da
 
 Focused native-parser tests cover structured blocks, inline attributes, code whitespace,
 literal Markdown in code, ordered list numbering and unfinished streaming fences.
-The complete local package suite passes 92 cases, including nested list/code/heading, continuation paragraph and scroll-intent regressions. The application always uses its real
+The complete local package suite passes 93 cases, including nested list/code/heading, continuation paragraph and scroll-intent regressions. The application always uses its real
 runtime path; saved visual fixtures are not generated answers and do not prove inference.
 
 Simulator UI and visual observations are recorded with the final implementation commit

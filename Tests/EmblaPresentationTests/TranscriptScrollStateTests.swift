@@ -39,3 +39,20 @@ import Testing
     state = TranscriptScrollState()
     #expect(state.shouldScrollAutomatically)
 }
+
+@Test func bottomRubberBandRecoveryDoesNotLookLikeAnUpwardDrag() {
+    func offset(_ value: Double) -> Double {
+        TranscriptScrollState.boundedOffset(value, contentHeight: 900, viewportHeight: 400)
+    }
+    var state = TranscriptScrollState()
+    state.phaseChanged(scrolling: true, offset: offset(500), nearBottom: true)
+    state.geometryChanged(offset: offset(540), nearBottom: true)
+    state.geometryChanged(offset: offset(500), nearBottom: true)
+    state.phaseChanged(scrolling: false, offset: offset(500), nearBottom: true)
+    #expect(state.shouldScrollAutomatically)
+    state.phaseChanged(scrolling: true, offset: offset(500), nearBottom: true)
+    state.geometryChanged(offset: offset(480), nearBottom: true)
+    #expect(!state.followingOutput)
+    #expect(TranscriptScrollState.boundedOffset(
+        -100, contentHeight: 100, viewportHeight: 400, topInset: 20) == -20)
+}
