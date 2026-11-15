@@ -56,6 +56,28 @@ import Testing
     #expect(try await store.read(.device) == .starter)
 }
 
+@Test func replacedLocalActionsDirectoryIsExcludedFromBackupOnReload() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = root.appendingPathComponent("Actions")
+    let store = QuickActionStore(localRoot: local, stateRoot: root.appendingPathComponent("State"))
+    _ = try await store.read(.device)
+    try FileManager.default.removeItem(at: local)
+    try FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)
+    var replacement = local
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = false
+    try replacement.setResourceValues(values)
+    let file = local.appendingPathComponent("actions.json")
+    try QuickActionConfiguration.starter.encoded().write(to: file)
+    #expect(try await store.read(.device) == .starter)
+    #expect(
+        try local.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+    try FileManager.default.removeItem(at: file)
+    await #expect(throws: QuickActionError.self) { try await store.read(.device) }
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+}
+
 @Test func preexistingInvalidConfigurationIsNotOverwrittenDuringFirstInitialization() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

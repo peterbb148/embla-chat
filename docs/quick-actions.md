@@ -84,7 +84,7 @@ in action JSON. No credentials or remote-tool authentication are implemented her
 
 Package tests use real temporary/coordinated local files and explicit provider fixtures.
 They cover first-use defaults, external edits, ordering/disabled entries, validation,
-non-overwrite behavior, missing/corrupt files without regenerated defaults, Off-mode provider
+non-overwrite behavior, reapplying backup exclusion after folder replacement, missing/corrupt files without regenerated defaults, Off-mode provider
 isolation, waiting for durable consent, explicit cloud failure without a local substitute,
 late-result rejection after Off, and changed/skill selections refusing to produce a prompt.
 
@@ -93,7 +93,7 @@ without downloaded weights or fake assistant replies. Real model inference and p
 behavior have separate host/device evidence; a filled composer is not a generated response.
 Actual new-format iCloud provider checks remain explicitly deferred to #45 by the user.
 
-Local validation: the package suite reports 132 tests, and all nine production UI tests
+Local validation: the package suite reports 133 tests, and all nine production UI tests
 passed on the existing iPhone 17 Pro/iOS 27.2. The focused action case also retains app-only
 screenshots in its xcresult; inspection shows the horizontally scrolling cards, filled
 composer above the keyboard, and native replacement confirmation. No assistant response is

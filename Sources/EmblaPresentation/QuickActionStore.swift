@@ -53,14 +53,14 @@ actor QuickActionStore: QuickActionsStoring {
     }
 
     private func initializeDeviceOnce() throws {
+        try prepareLocalDirectory(localRoot)
+        try prepareLocalDirectory(stateRoot)
         let marker = stateRoot.appendingPathComponent("initialized-v1")
         guard !FileManager.default.fileExists(atPath: marker.path) else { return }
-        try prepareLocalDirectory(localRoot)
         let file = localRoot.appendingPathComponent("actions.json")
         if !FileManager.default.fileExists(atPath: file.path) {
             try CoordinatedActionFile.create(at: file)
         }
-        try prepareLocalDirectory(stateRoot)
         try Data([1]).write(to: marker, options: .atomic)
     }
 
