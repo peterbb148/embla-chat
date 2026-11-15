@@ -61,20 +61,24 @@ change can replace the local chat only when local content is unchanged and no un
 would be discarded. Concurrent edits or unresolved versions require an explicit choice.
 Choosing an iCloud copy confirms replacing this device's chat and unsent draft. If a chat
 changes while a cloud read is pending, that old result cannot restore the previous conversation.
-New Chat saves locally first and queues synchronization of the reset.
+New Chat invalidates in-flight cloud work before starting its durable local reset, then queues
+fresh synchronization. An earlier upload whose acknowledgement was interrupted can require an
+explicit conflict choice; it cannot queue the old conversation after the reset and resurrect it.
 
 No provider is opened or called while the preference is disabled, including when an old
 bookmark remains stored. Disabling cancels pending app operations and persists the choice;
 it keeps existing cloud files. Operations already handed to iCloud Drive may finish transferring.
 Foreground synchronization runs after local chat operations and checks periodically; inactivity
-pauses app-managed operations. Failures remain visible in Settings and local storage stays
+pauses app-managed operations. Local checkpoints and unloading continue in the background, but
+neither can restart cloud access until the app becomes active. Provider-reported upload and
+download errors remain errors rather than being reported as indefinitely pending uploads. Failures remain visible in Settings and local storage stays
 independent. A local/provider write reports pending upload; only the provider's uploaded state
 for matching content reports Synced. Missing/revoked permissions and missing previously-synced
 files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 60 package tests pass. These include coordinated temporary-file tests,
+On 2026-11-15, all 65 package tests pass. These include coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
 17 Pro / iOS 27.2 simulator UI tests pass, including opt-in cancellation and local draft
@@ -84,6 +88,11 @@ The production native Files picker was opened on that simulator. Browse exposed 
 On My iPhone; simulator Settings showed Apple Account signed out. Personal-account sign-in
 is handed to the user before live cloud testing. No live cloud upload or restoration is
 claimed. Do not run simulator UI automation while the user is completing sign-in.
+
+The first Copilot review found reset/upload, stale conflict-callback, transfer-error and
+background-resume gaps. Fixes now have deterministic package regressions, including holding a
+real reset archive write's completion while the old visible chat and cloud upload still exist.
+A fresh review of those fixes and hosted checks remain pending.
 
 Remaining gates for #9:
 

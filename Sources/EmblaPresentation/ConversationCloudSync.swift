@@ -54,6 +54,8 @@ public final class ConversationCloudSync {
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var needsSync = false
+    @ObservationIgnored private var foreground = true
+    @ObservationIgnored private var paused = true
     @ObservationIgnored private var conflictRead: CloudConversationRead?
     @ObservationIgnored private var conflictLocal: String?
 
@@ -139,8 +141,14 @@ public final class ConversationCloudSync {
 
     public func refresh() { choices = []; conflictRead = nil; requestSync() }
 
+    func setForeground(_ active: Bool) {
+        foreground = active
+        if active { resume() } else { pause() }
+    }
+
     func resume() {
-        guard enabled, storage != nil else { return }
+        guard foreground, enabled, storage != nil else { return }
+        paused = false
         if timer == nil {
             timer = Task { [weak self] in
                 while !Task.isCancelled {
@@ -154,6 +162,7 @@ public final class ConversationCloudSync {
     }
 
     func pause() {
+        paused = true
         generation = UUID()
         if let task {
             task.cancel()
@@ -171,7 +180,7 @@ public final class ConversationCloudSync {
     }
 
     func requestSync() {
-        guard enabled, let storage, choices.isEmpty else { return }
+        guard foreground, !paused, enabled, let storage, choices.isEmpty else { return }
         guard task == nil else { needsSync = true; return }
         guard let local = current?(), local.canReplace else {
             needsSync = true
@@ -267,8 +276,12 @@ public final class ConversationCloudSync {
                 try Task.checkCancellation()
                 guard generation == epoch, enabled else { finish(epoch: epoch); return }
                 if choice.id != localID { try await applySnapshot(choice.snapshot, expected: localID) }
+                try Task.checkCancellation()
+                guard generation == epoch, enabled else { finish(epoch: epoch); return }
                 baseFingerprint = try choice.snapshot.fingerprint()
                 try await persistSettings()
+                try Task.checkCancellation()
+                guard generation == epoch, enabled else { finish(epoch: epoch); return }
                 choices = []
                 conflictRead = nil
                 conflictLocal = nil

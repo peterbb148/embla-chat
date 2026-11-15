@@ -14,11 +14,19 @@ private actor SyncProviderFixture: CloudConversationStorage {
     private(set) var reads = 0
     private(set) var writes = 0
     private var holdRead: Bool
+    private var holdWrite: Bool
+    private let readFailure: CocoaError?
+    private var writeGate: CheckedContinuation<Void, Never>?
     private var gate: CheckedContinuation<Void, Never>?
 
-    init(_ document: CloudConversationRead = .init(), holdRead: Bool = false) {
+    init(
+        _ document: CloudConversationRead = .init(), holdRead: Bool = false,
+        holdWrite: Bool = false, readFailure: CocoaError? = nil
+    ) {
         self.document = document
         self.holdRead = holdRead
+        self.holdWrite = holdWrite
+        self.readFailure = readFailure
     }
     func read() async throws -> CloudConversationRead {
         reads += 1
@@ -26,18 +34,31 @@ private actor SyncProviderFixture: CloudConversationStorage {
             holdRead = false
             await withCheckedContinuation { gate = $0 }
         }
+        if let readFailure { throw readFailure }
         return document
     }
     func write(
         _ snapshot: ConversationSnapshot, replacing: CloudConversationRead,
         resolvingConflicts: Bool
-    ) throws {
+    ) async throws {
         try Task.checkCancellation()
         guard try document.fingerprints == replacing.fingerprints else {
             throw CloudConversationError.changed
         }
         writes += 1
         document = CloudConversationRead(current: snapshot)
+        if holdWrite {
+            holdWrite = false
+            await withCheckedContinuation { writeGate = $0 }
+        }
+    }
+    func releaseWrite() { writeGate?.resume(); writeGate = nil }
+    func waitForWrite() async throws {
+        for _ in 0..<1_000 {
+            if writes > 0 { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw CloudConversationError.coordination
     }
     func releaseRead() { gate?.resume(); gate = nil }
     func confirmUpload() { document.uploaded = true }
@@ -263,4 +284,169 @@ func disabledPreferenceWithAnOldFolderBookmarkNeverOpensTheProviderOnRestore() a
     #expect(await provider.reads == 0)
     #expect(await provider.writes == 0)
     #expect(!cloud.enabled)
+}
+
+
+private actor SyncCheckpointGate {
+    private var entered = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func blockOnce() async {
+        guard !entered else { return }
+        entered = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+    func waitForEntry() async throws {
+        for _ in 0..<1_000 {
+            if entered { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw CloudConversationError.coordination
+    }
+}
+
+/// Holds a real empty-archive write's completion while the old transcript is still visible.
+private actor ResetCheckpointStore: ConversationStoring {
+    private let store: ConversationStore
+    let resetGate = SyncCheckpointGate()
+    init(root: URL) { store = ConversationStore(root: root) }
+    func load() async throws -> ConversationArchive? { try await store.load() }
+    func save(_ archive: ConversationArchive) async throws {
+        try await store.save(archive)
+        if archive.snapshot.messages.isEmpty { await resetGate.blockOnce() }
+    }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func cloudUploadCannotQueueOldMetadataWhileResetArchiveCompletionIsPending() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let baseline = syncSnapshot("previous shared baseline")
+    let local = syncSnapshot("current local conversation")
+    var archive = ConversationArchive(sequence: 1, snapshot: local)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture permission".utf8)
+    archive.cloudBaseFingerprint = try baseline.fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: baseline), holdWrite: true)
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let store = ResetCheckpointStore(root: root)
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: store, cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    try await provider.waitForWrite()
+    model.newChat()
+    try await store.resetGate.waitForEntry()
+    #expect(!cloud.syncing) // The old upload is invalidated before the durable reset begins.
+    await provider.releaseWrite()
+    if !cloud.syncing { await cloud.waitUntilIdle() }
+    await store.resetGate.release()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    #expect(model.messages.isEmpty)
+    let reopened = try await ConversationStore(root: root).load()
+    #expect(reopened?.snapshot.messages.isEmpty == true)
+    #expect(reopened?.snapshot.conversationID == model.conversationID)
+    cloud.pause()
+    await cloud.waitUntilIdle()
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func disablingDuringConflictSettingsSaveCannotReplaceTheOffStatus() async throws {
+    let provider = SyncProviderFixture(.init(current: syncSnapshot("remote")))
+    let harness = SyncHarness(local: syncSnapshot("local"), provider: provider)
+    harness.start()
+    await harness.cloud.waitUntilIdle()
+    let choice = try #require(harness.cloud.choices.first)
+    let gate = SyncCheckpointGate()
+    let persist = harness.cloud.persist
+    harness.cloud.persist = {
+        await gate.blockOnce()
+        try await persist?()
+    }
+    harness.cloud.resolve(choiceID: choice.id)
+    try await gate.waitForEntry()
+    harness.cloud.disable()
+    await gate.release()
+    await harness.cloud.waitUntilIdle()
+    #expect(!harness.cloud.enabled)
+    #expect(harness.cloud.status == "iCloud is off. Existing cloud files are kept.")
+    #expect(harness.cloud.choices.isEmpty)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func disablingDuringConflictApplicationCannotCommitStaleResolutionState() async throws {
+    let remote = syncSnapshot("remote")
+    let provider = SyncProviderFixture(.init(current: remote))
+    let harness = SyncHarness(local: syncSnapshot("local"), provider: provider)
+    harness.start()
+    await harness.cloud.waitUntilIdle()
+    let choice = try #require(harness.cloud.choices.first(where: { $0.snapshot == remote }))
+    let gate = SyncCheckpointGate()
+    let apply = harness.cloud.apply
+    harness.cloud.apply = { snapshot, expected in
+        try await apply?(snapshot, expected)
+        await gate.blockOnce()
+    }
+    harness.cloud.resolve(choiceID: choice.id)
+    try await gate.waitForEntry()
+    harness.cloud.disable()
+    await gate.release()
+    await harness.cloud.waitUntilIdle()
+    #expect(!harness.cloud.enabled)
+    #expect(harness.cloud.baseFingerprint == nil)
+    #expect(harness.cloud.status == "iCloud is off. Existing cloud files are kept.")
+}
+
+@Test @MainActor
+func backgroundUnloadAndLocalSavesDoNotRestartCloudUntilForeground() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let baseline = syncSnapshot("shared")
+    var archive = ConversationArchive(sequence: 1, snapshot: baseline)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture permission".utf8)
+    archive.cloudBaseFingerprint = try baseline.fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: baseline, uploaded: true))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: ConversationStore(root: root), cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    let reads = await provider.reads
+    model.enteredBackground()
+    await model.waitUntilIdle()
+    model.prompt = "Local draft while inactive"
+    try await model.flushChatStorage()
+    cloud.requestSync()
+    cloud.resume()
+    await cloud.waitUntilIdle()
+    #expect(await provider.reads == reads)
+    model.becameActive()
+    await cloud.waitUntilIdle()
+    #expect(await provider.reads > reads)
+    cloud.pause()
+    await cloud.waitUntilIdle()
+}
+
+@Test @MainActor
+func providerTransferFailureStaysAnErrorRatherThanPendingConfirmation() async throws {
+    let failure = CocoaError(.fileWriteOutOfSpace)
+    let provider = SyncProviderFixture(readFailure: failure)
+    let harness = SyncHarness(local: syncSnapshot("local"), provider: provider)
+    harness.start()
+    await harness.cloud.waitUntilIdle()
+    #expect(harness.cloud.error == failure.localizedDescription)
+    #expect(harness.cloud.status == "iCloud synchronization needs attention.")
+    #expect(await provider.writes == 0)
+    harness.cloud.pause()
+    await harness.cloud.waitUntilIdle()
 }

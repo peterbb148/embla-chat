@@ -143,6 +143,7 @@ enum CoordinatedConversationFile {
                 guard resolvingConflicts || current.conflicts.isEmpty else {
                     throw CloudConversationError.conflict
                 }
+                try Task.checkCancellation()
                 try bytes.write(to: coordinated, options: .atomic)
                 if resolvingConflicts {
                     for version in versions {
@@ -186,7 +187,12 @@ enum CoordinatedConversationFile {
         var fresh = file
         fresh.removeAllCachedResourceValues()
         let values = try fresh.resourceValues(
-            forKeys: [.ubiquitousItemIsUploadedKey, .ubiquitousItemIsUploadingKey])
+            forKeys: [
+                .ubiquitousItemIsUploadedKey, .ubiquitousItemIsUploadingKey,
+                .ubiquitousItemUploadingErrorKey, .ubiquitousItemDownloadingErrorKey,
+            ])
+        if let error = values.ubiquitousItemUploadingError { throw error }
+        if let error = values.ubiquitousItemDownloadingError { throw error }
         return CloudConversationRead(
             current: snapshot, conflicts: conflicts,
             uploaded: values.ubiquitousItemIsUploaded == true

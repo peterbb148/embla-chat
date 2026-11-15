@@ -61,8 +61,14 @@ public struct ConversationArchive: Codable, Sendable, Equatable {
     }
 }
 
+/// An async storage boundary allows deterministic tests of writes that overlap lifecycle changes.
+protocol ConversationStoring: Sendable {
+    func load() async throws -> ConversationArchive?
+    func save(_ archive: ConversationArchive) async throws
+}
+
 /// Serial, atomic local storage. Revision order prevents delayed writes resurrecting old chats.
-public actor ConversationStore {
+public actor ConversationStore: ConversationStoring {
     public let root: URL
     private var lastSequence: UInt64?
     private var file: URL { root.appendingPathComponent("active-chat.json") }

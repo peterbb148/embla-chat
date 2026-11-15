@@ -55,7 +55,7 @@ public final class LocalInferenceModel {
     public private(set) var chatRestored = false
     public private(set) var storageStatus = "Opening saved chat…"
     public private(set) var storageError: String?
-    @ObservationIgnored private var chatStore: ConversationStore?
+    @ObservationIgnored private var chatStore: (any ConversationStoring)?
     @ObservationIgnored private var saveTask: Task<Void, Error>?
     @ObservationIgnored private var checkpointTask: Task<Void, Never>?
     @ObservationIgnored private var persistenceSequence: UInt64 = 0
@@ -97,7 +97,7 @@ public final class LocalInferenceModel {
     /// Test-only construction is internal; the app cannot select a substitute runtime.
     init(
         repository: ModelRepository?, manifest: ModelManifest, session: InferenceSession,
-        chatStore: ConversationStore? = nil, cloud: ConversationCloudSync? = nil
+        chatStore: (any ConversationStoring)? = nil, cloud: ConversationCloudSync? = nil
     ) {
         self.repository = repository
         self.manifest = manifest
@@ -129,6 +129,7 @@ public final class LocalInferenceModel {
     /// Defers clearing until any current generation has drained, preventing stale text.
     public func newChat() {
         guard chatRestored, !cloud.resolving, !busy || running else { return }
+        cloud.pause()
         resetting = true
         pendingClear = true
         if busy { stop() } else { start(.clear) }
@@ -136,16 +137,16 @@ public final class LocalInferenceModel {
 
     /// Called on inactivity; blocking prefill can only stop at the runtime's next callback.
     public func becameInactive() {
-        cloud.pause()
+        cloud.setForeground(false)
         scheduleChatSave(immediately: true)
         if running { stop() }
     }
 
     /// Cancels work and releases the loaded model once all engine activity has drained.
-    public func becameActive() { cloud.resume() }
+    public func becameActive() { cloud.setForeground(true) }
 
     public func enteredBackground() {
-        cloud.pause()
+        cloud.setForeground(false)
         pendingUnload = true
         if busy { stop() } else { start(.unload) }
     }
