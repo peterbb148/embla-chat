@@ -22,7 +22,8 @@ Settings. The composer follows the supplied ChatGPT reference, with its Send con
 inside one rounded card and no separate keyboard Done row. Visual acceptance is tracked
 in [chat UI validation](docs/chat-ui-validation.md). Automatic on-device compaction is
 implemented; see [the policy and validation status](docs/context-compaction.md). Local
-persistence and optional, default-off iCloud synchronization remain Epic 3 work. The current
+persistence and optional, default-off iCloud synchronization remain Epic 3 work; see
+[the persistence design and checkpoint](docs/chat-persistence.md). The current
 transcript is not restored after the process exits.
 
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,

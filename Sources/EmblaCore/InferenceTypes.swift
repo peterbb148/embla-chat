@@ -2,7 +2,7 @@ import Foundation
 
 /// A text turn supplied to Embla's chat template.
 public struct ConversationMessage: Sendable, Equatable {
-    public enum Role: String, Sendable { case system, user, assistant }
+    public enum Role: String, Codable, Sendable { case system, user, assistant }
     public let role: Role
     public let content: String
     public let reasoning: String?

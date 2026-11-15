@@ -5,13 +5,24 @@ import EmblaCore
 import EmblaRuntime
 
 /// A visible turn in the single active conversation.
-public struct ChatMessage: Identifiable, Sendable {
-    public enum State: Sendable { case streaming, complete, interrupted, failed, limited }
-    public let id = UUID()
+public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
+    public enum State: String, Codable, Sendable { case streaming, complete, interrupted, failed, limited }
+    public let id: UUID
     public let role: ConversationMessage.Role
     public var text: String
     public var reasoning = ""
     public var state: State = .complete
+
+    public init(
+        id: UUID = UUID(), role: ConversationMessage.Role, text: String,
+        reasoning: String = "", state: State = .complete
+    ) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.reasoning = reasoning
+        self.state = state
+    }
 }
 
 /// Shared presentation state for model setup and the single active conversation.
