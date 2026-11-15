@@ -127,10 +127,12 @@ private struct PresentationFixture {
     func clean() { try? FileManager.default.removeItem(at: root) }
 
     @MainActor func model(
-        session: InferenceSession, chatStore: ConversationStore? = nil
+        session: InferenceSession, chatStore: ConversationStore? = nil,
+        countTokens: (@Sendable (URL, [ConversationMessage]) async throws -> Int)? = nil
     ) async -> LocalInferenceModel {
         let model = LocalInferenceModel(
-            repository: repository, manifest: manifest, session: session, chatStore: chatStore)
+            repository: repository, manifest: manifest, session: session, chatStore: chatStore,
+            countTokens: countTokens)
         model.check()
         await model.waitUntilIdle()
         return model
@@ -704,4 +706,274 @@ func retryRecreatesChatStoreAfterItsInitialLocationBecomesAvailable() async thro
     #expect(model.chatRestored && model.storageError == nil)
     #expect(model.prompt == "Retain this saved draft")
     #expect(model.conversationID == snapshot.conversationID && model.canRun)
+}
+
+
+/// Clearly labelled saved turns, used to test compaction policy rather than model quality.
+private func manualCompactionArchive() -> ConversationArchive {
+    let messages = (0..<4).flatMap { index in
+        [ChatMessage(role: .user, text: "Fixture requirement \(index)"),
+         ChatMessage(role: .assistant, text: "Fixture answer \(index)")]
+    }
+    return ConversationArchive(sequence: 1, snapshot: ConversationSnapshot(
+        conversationID: UUID(), messages: messages, compaction: CompactionState()),
+        draft: "Current draft")
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func manualCompactionWorksBelowThresholdAndPersistsWithoutAddingVisibleTurns() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    let archive = manualCompactionArchive()
+    try await store.save(archive)
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend }, chatStore: store)
+    #expect(model.manualCompactionUnavailableReason == nil)
+    model.compactNow()
+    await model.waitUntilIdle()
+    #expect(model.error == nil)
+    #expect(backend.calls == 1)
+    #expect(model.messages == archive.snapshot.messages)
+    #expect(model.prompt == archive.draft)
+    #expect(model.compaction.summarizedMessageCount == 4)
+    #expect(!model.compaction.summary.isEmpty)
+    let saved = try #require(await store.load())
+    #expect(saved.snapshot.compaction == model.compaction)
+    #expect(saved.snapshot.messages == archive.snapshot.messages)
+    #expect(saved.draft == archive.draft)
+    #expect(model.manualCompactionUnavailableReason != nil)
+    model.compactNow()
+    await model.waitUntilIdle()
+    #expect(backend.calls == 1)
+    model.run()
+    await model.waitUntilIdle()
+    #expect(backend.encodedMessages.contains {
+        $0.first?.content.hasPrefix("Summary of earlier conversation") == true
+    })
+    model.compactNow()
+    await model.waitUntilIdle()
+    #expect(model.compaction.summarizedMessageCount == 6)
+    #expect(model.messages.count == archive.snapshot.messages.count + 2)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func stoppingManualCompactionKeepsSavedHistorySummaryAndDraft() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    let archive = manualCompactionArchive()
+    try await store.save(archive)
+    let backend = PresentationBackend(pauseSummary: true)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend }, chatStore: store)
+    model.compactNow()
+    try await backend.waitForSummary()
+    #expect(model.compacting)
+    model.stop()
+    await model.waitUntilIdle()
+    #expect(!model.compacting)
+    #expect(model.compaction == archive.snapshot.compaction)
+    #expect(model.messages == archive.snapshot.messages)
+    #expect(model.prompt == archive.draft)
+    #expect(try await store.load()?.snapshot == archive.snapshot)
+}
+
+@Test @MainActor
+func failedManualSummaryPreservesCommittedContextWithoutAddingAFailedTurn() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    let archive = manualCompactionArchive()
+    try await store.save(archive)
+    let backend = PresentationBackend(emptySummary: true)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend }, chatStore: store)
+    model.compactNow()
+    await model.waitUntilIdle()
+    #expect(model.error != nil)
+    #expect(model.compaction == archive.snapshot.compaction)
+    #expect(model.messages == archive.snapshot.messages)
+    #expect(try await store.load()?.snapshot == archive.snapshot)
+}
+
+private actor CapturedContextCount {
+    var messages: [ConversationMessage] = []
+    func count(_ messages: [ConversationMessage]) -> Int { self.messages = messages; return 42 }
+}
+
+@Test @MainActor
+func usageCountsTheRetainedContextAndDraftWithoutLoadingTheEngine() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    var archive = manualCompactionArchive()
+    archive.snapshot.compaction = CompactionState(summary: "Retained fixture fact", summarizedMessageCount: 4)
+    try await store.save(archive)
+    let counter = CapturedContextCount()
+    let backend = PresentationBackend()
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: store,
+        countTokens: { _, messages in await counter.count(messages) })
+    await model.waitForContextUsage()
+    let counted = await counter.messages
+    #expect(counted.first?.role == .system)
+    #expect(counted.first?.content.contains("Retained fixture fact") == true)
+    let retained = archive.snapshot.messages.dropFirst(4).map(\.text)
+    #expect(counted.dropFirst().dropLast().map(\.content) == retained)
+    #expect(counted.last == ConversationMessage(role: .user, content: archive.draft))
+    #expect(!model.loaded)
+    #expect(backend.calls == 0)
+    if case .ready(let usage) = model.contextUsage {
+        #expect(usage.inputTokens == 42)
+        #expect(usage.capacity == 8192)
+        #expect(usage.replyReserve == 512)
+    } else { Issue.record("Expected exact fixture-counter result") }
+    model.prompt = ""
+    await model.waitForContextUsage()
+    #expect(await counter.messages.last == ConversationMessage(role: .user, content: ""))
+    model.newChat()
+    await model.waitUntilIdle()
+    await model.waitForContextUsage()
+    #expect(await counter.messages == [ConversationMessage(role: .user, content: "")])
+}
+
+private actor ManualSummaryStore: ConversationStoring {
+    let wrapped: ConversationStore
+    let failSummary: Bool
+    let holdSummary: Bool
+    var entered = false
+    var history: [ConversationArchive] = []
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(wrapped: ConversationStore, failSummary: Bool = false, holdSummary: Bool = false) {
+        self.wrapped = wrapped
+        self.failSummary = failSummary
+        self.holdSummary = holdSummary
+    }
+    func load() async throws -> ConversationArchive? { try await wrapped.load() }
+    func save(_ archive: ConversationArchive) async throws {
+        history.append(archive)
+        if !archive.snapshot.compaction.summary.isEmpty {
+            if failSummary { throw CocoaError(.fileWriteOutOfSpace) }
+            if holdSummary && !entered {
+                entered = true
+                await withCheckedContinuation { continuation = $0 }
+            }
+        }
+        try await wrapped.save(archive)
+    }
+    func release() { continuation?.resume(); continuation = nil }
+    func waitForEntry() async throws {
+        for _ in 0..<2000 {
+            if entered { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw ModelTestError.timeout
+    }
+}
+
+@Test @MainActor
+func failedManualSummarySaveLeavesThePreviouslyCommittedContextIntact() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let file = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    let archive = manualCompactionArchive()
+    try await file.save(archive)
+    let store = ManualSummaryStore(wrapped: file, failSummary: true)
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = LocalInferenceModel(repository: fixture.repository, manifest: fixture.manifest,
+        session: InferenceSession { _, _ in backend }, chatStore: store)
+    model.check(); await model.waitUntilIdle()
+    model.compactNow(); await model.waitUntilIdle()
+    #expect(model.error != nil)
+    #expect(model.compaction == archive.snapshot.compaction)
+    #expect(model.messages == archive.snapshot.messages)
+    #expect(try await file.load()?.snapshot == archive.snapshot)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func draftCheckpointsCannotQueueOldContextBehindManualSummaryCommit() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let file = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    try await file.save(manualCompactionArchive())
+    let store = ManualSummaryStore(wrapped: file, holdSummary: true)
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = LocalInferenceModel(repository: fixture.repository, manifest: fixture.manifest,
+        session: InferenceSession { _, _ in backend }, chatStore: store)
+    model.check(); await model.waitUntilIdle()
+    model.compactNow()
+    try await store.waitForEntry()
+    model.prompt = "Draft edited during commit"
+    try await Task.sleep(for: .milliseconds(650))
+    await store.release()
+    await model.waitUntilIdle()
+    let history = await store.history
+    let first = try #require(history.firstIndex { !$0.snapshot.compaction.summary.isEmpty })
+    #expect(history.dropFirst(first).allSatisfy { !$0.snapshot.compaction.summary.isEmpty })
+    let saved = try #require(await file.load())
+    #expect(saved.snapshot.compaction == model.compaction)
+    #expect(saved.draft == "Draft edited during commit")
+}
+
+private actor DelayedContextCounter {
+    private var calls = 0
+    private var continuation: CheckedContinuation<Int, Never>?
+    func count() async -> Int {
+        calls += 1
+        if calls == 1 { return await withCheckedContinuation { continuation = $0 } }
+        return 22
+    }
+    func waitForEntry() async throws {
+        for _ in 0..<2000 {
+            if continuation != nil { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw ModelTestError.timeout
+    }
+    func release() { continuation?.resume(returning: 11); continuation = nil }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func staleCountCannotReplaceTheCurrentDraftMeasurement() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let counter = DelayedContextCounter()
+    let backend = PresentationBackend()
+    let model = await fixture.model(session: InferenceSession { _, _ in backend },
+        countTokens: { _, _ in await counter.count() })
+    try await counter.waitForEntry()
+    let firstWait = Task { await model.waitForContextUsage() }
+    await Task.yield()
+    model.prompt = "New draft"
+    await model.waitForContextUsage()
+    await counter.release()
+    await firstWait.value
+    if case .ready(let usage) = model.contextUsage {
+        #expect(usage.inputTokens == 22)
+    } else { Issue.record("Current measurement was lost") }
+    model.enteredBackground()
+    await model.waitUntilIdle()
+    if case .unavailable = model.contextUsage {} else { Issue.record("Background count stayed active") }
+}
+
+private actor FailingContextCount {
+    var calls = 0
+    func count() throws -> Int {
+        calls += 1
+        if calls == 1 { throw ModelTestError.backendFailure }
+        return 17
+    }
+}
+
+@Test @MainActor
+func countingFailureHasNoInventedUsageAndExplicitRetryCanRecover() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let counter = FailingContextCount()
+    let backend = PresentationBackend()
+    let model = await fixture.model(session: InferenceSession { _, _ in backend },
+        countTokens: { _, _ in try await counter.count() })
+    await model.waitForContextUsage()
+    if case .failed(let message) = model.contextUsage {
+        #expect(!message.isEmpty)
+    } else { Issue.record("Counting failure did not remain visible") }
+    model.refreshContextUsage()
+    await model.waitForContextUsage()
+    if case .ready(let usage) = model.contextUsage {
+        #expect(usage.inputTokens == 17)
+    } else { Issue.record("Explicit count retry failed") }
+    #expect(backend.calls == 0)
+    #expect(!model.loaded)
 }

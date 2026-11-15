@@ -31,13 +31,21 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
 @MainActor @Observable
 public final class LocalInferenceModel {
     public private(set) var conversationID = UUID()
-    public private(set) var compaction = CompactionState()
+    public private(set) var compaction = CompactionState() {
+        didSet { refreshContextUsage() }
+    }
     public private(set) var compacting = false
     @ObservationIgnored private let compactionPolicy = ContextCompaction()
-    public var prompt = "" { didSet { scheduleChatSave() } }
-    public private(set) var messages: [ChatMessage] = []
+    public var prompt = "" {
+        didSet { scheduleChatSave(); refreshContextUsage() }
+    }
+    public private(set) var messages: [ChatMessage] = [] {
+        didSet { refreshContextUsage() }
+    }
     public private(set) var manifest: ModelManifest?
-    public private(set) var readyDirectory: URL?
+    public private(set) var readyDirectory: URL? {
+        didSet { refreshContextUsage() }
+    }
     public private(set) var storedBytes: Int64 = 0
     public private(set) var downloadedBytes: Int64 = 0
     public private(set) var status = "Checking model storage…"
@@ -55,6 +63,12 @@ public final class LocalInferenceModel {
     public private(set) var chatRestored = false
     public private(set) var storageStatus = "Opening saved chat…"
     public private(set) var storageError: String?
+    public private(set) var contextUsage: ContextUsageState = .unavailable("Checking model storage…")
+    @ObservationIgnored private var usageTask: Task<Void, Never>?
+    @ObservationIgnored private var usageRequest = UUID()
+    @ObservationIgnored private var usageActive = true
+    @ObservationIgnored private let countTokens:
+        (@Sendable (URL, [ConversationMessage]) async throws -> Int)?
     @ObservationIgnored private var chatStore: (any ConversationStoring)?
     @ObservationIgnored private var chatStoreFactory: (() throws -> any ConversationStoring)?
     @ObservationIgnored private var saveTask: Task<Void, Error>?
@@ -68,6 +82,7 @@ public final class LocalInferenceModel {
     }
     @ObservationIgnored private var persistedCloudSettings = PersistedCloudSettings()
     @ObservationIgnored private var restoringChat = false
+    @ObservationIgnored private var replacingContext = false
     @ObservationIgnored private var repository: ModelRepository?
     @ObservationIgnored private let session: InferenceSession
     @ObservationIgnored private var task: Task<Void, Never>?
@@ -85,6 +100,10 @@ public final class LocalInferenceModel {
     /// Production always uses the pinned Embla runtime and app-managed model storage.
     public init() {
         session = EmblaRuntime.makeSession()
+        let tokenizer = EmblaPromptTokenizer()
+        countTokens = { directory, messages in
+            try await tokenizer.count(messages: messages, in: directory)
+        }
         cloud = ConversationCloudSync()
         configureCloud()
         chatStoreFactory = { ConversationStore(root: try ConversationStore.defaultRoot()) }
@@ -107,11 +126,13 @@ public final class LocalInferenceModel {
     init(
         repository: ModelRepository?, manifest: ModelManifest, session: InferenceSession,
         chatStore: (any ConversationStoring)? = nil, cloud: ConversationCloudSync? = nil,
-        chatStoreFactory: (() throws -> any ConversationStoring)? = nil
+        chatStoreFactory: (() throws -> any ConversationStoring)? = nil,
+        countTokens: (@Sendable (URL, [ConversationMessage]) async throws -> Int)? = nil
     ) {
         self.repository = repository
         self.manifest = manifest
         self.session = session
+        self.countTokens = countTokens
         self.cloud = cloud ?? ConversationCloudSync()
         configureCloud()
         self.chatStore = chatStore
@@ -128,6 +149,72 @@ public final class LocalInferenceModel {
     public func download() { start(.download) }
     public func delete() { start(.delete) }
     public func run() { start(.generate) }
+
+    /// Explicitly summarizes eligible older turns even below the automatic threshold.
+    public func compactNow() {
+        guard manualCompactionUnavailableReason == nil else { return }
+        start(.compact)
+    }
+
+    public var manualCompactionUnavailableReason: String? {
+        if !chatRestored || resetting { return "Wait for the saved chat to open." }
+        if storageError != nil { return "Resolve the chat storage error first." }
+        if busy || cloud.resolving { return "Wait for the current operation or stop it first." }
+        if readyDirectory == nil { return "Download and verify the model in Settings first." }
+        let transcript = conversationMessages() + [ConversationMessage(role: .user, content: prompt)]
+        guard (try? compactionPolicy.plan(transcript: transcript, state: compaction)) != nil else {
+            return "No older turns can be compacted yet. The latest two exchanges are kept verbatim."
+        }
+        return nil
+    }
+
+    /// Debounces draft/stream changes and rejects results from superseded chat snapshots.
+    public func refreshContextUsage() {
+        usageTask?.cancel()
+        let request = UUID()
+        usageRequest = request
+        guard usageActive else {
+            contextUsage = .unavailable("Context usage updates when the app is active.")
+            return
+        }
+        guard chatRestored, !restoringChat, !resetting else {
+            contextUsage = .unavailable("Opening the saved chat…")
+            return
+        }
+        guard let directory = readyDirectory else {
+            contextUsage = .unavailable("Download and verify the model in Settings first.")
+            return
+        }
+        // Internal fixture construction may omit counting; production always supplies it.
+        guard let countTokens else { return }
+        contextUsage = .counting
+        usageTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+                guard let self, self.usageRequest == request else { return }
+                let context = self.compactionPolicy.context(
+                    transcript: self.conversationMessages(), state: self.compaction,
+                    draft: self.prompt.trimmingCharacters(in: .whitespacesAndNewlines))
+                let count = try await countTokens(directory, context)
+                try Task.checkCancellation()
+                guard self.usageRequest == request else { return }
+                self.contextUsage = .ready(ContextUsage(
+                    inputTokens: count, capacity: self.compactionPolicy.contextSize,
+                    replyReserve: self.compactionPolicy.responseTokens,
+                    summaryReserve: self.compactionPolicy.summaryTokens, headroom: 256))
+            } catch {
+                guard let self, self.usageRequest == request, !Task.isCancelled else { return }
+                self.contextUsage = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func conversationMessages() -> [ConversationMessage] {
+        messages.map {
+            ConversationMessage(role: $0.role, content: $0.text,
+                reasoning: $0.reasoning.isEmpty ? nil : $0.reasoning)
+        }
+    }
 
     /// Requests cancellation but leaves controls busy until the worker has actually stopped.
     public func stop() {
@@ -150,14 +237,22 @@ public final class LocalInferenceModel {
     /// Called on inactivity; blocking prefill can only stop at the runtime's next callback.
     public func becameInactive() {
         cloud.setForeground(false)
+        usageActive = false
+        refreshContextUsage()
         scheduleChatSave(immediately: true)
         if running { stop() }
     }
 
     /// Cancels work and releases the loaded model once all engine activity has drained.
-    public func becameActive() { cloud.setForeground(true) }
+    public func becameActive() {
+        cloud.setForeground(true)
+        usageActive = true
+        refreshContextUsage()
+    }
 
     public func enteredBackground() {
+        usageActive = false
+        refreshContextUsage()
         cloud.setForeground(false)
         pendingUnload = true
         if busy { stop() } else { start(.unload) }
@@ -168,14 +263,17 @@ public final class LocalInferenceModel {
         while let current = task { await current.value }
     }
 
-    private enum Operation { case check, download, delete, generate, clear, unload }
+    /// Lets tests await a debounced count without timing assumptions.
+    func waitForContextUsage() async { await usageTask?.value }
+
+    private enum Operation { case check, download, delete, generate, compact, clear, unload }
 
     private func start(_ operation: Operation) {
         guard !busy, !cloud.resolving, !resetting || operation == .clear,
-            operation != .generate || chatRestored else { return }
+            (operation != .generate && operation != .compact) || chatRestored else { return }
         busy = true
         downloading = operation == .download
-        running = operation == .generate
+        running = operation == .generate || operation == .compact
         if operation != .unload && repository != nil { error = nil }
         downloadedBytes = 0
         let id = UUID()
@@ -188,7 +286,7 @@ public final class LocalInferenceModel {
         task = Task {
             do {
                 if operation != .delete { try await restoreChatIfNeeded() }
-                if loaded && operation != .generate && operation != .clear {
+                if loaded && operation != .generate && operation != .compact && operation != .clear {
                     try await session.unload()
                     loaded = false
                 }
@@ -212,6 +310,11 @@ public final class LocalInferenceModel {
                     status = "Model deleted."
                 case .generate:
                     try await generate(input: input, repository: requireRepository())
+                case .compact:
+                    try await loadModelIfNeeded(repository: requireRepository())
+                    _ = try await prepareContext(
+                        transcript: conversationMessages(), draft: input, force: true)
+                    status = "Earlier messages compacted."
                 case .clear:
                     break  // Deferred actions reset the session and clear the visible text.
                 case .unload:
@@ -263,14 +366,7 @@ public final class LocalInferenceModel {
         answer = ""
         metrics = nil
         try await saveChatNow()
-        if !loaded {
-            status = "Verifying and loading model…"
-            loadMilliseconds = nil
-            let start = Date()
-            try await session.load(from: repository)
-            loadMilliseconds = Date().timeIntervalSince(start) * 1_000
-            loaded = true
-        }
+        try await loadModelIfNeeded(repository: repository)
         try Task.checkCancellation()
         let transcript = messages.dropLast().map {
             ConversationMessage(
@@ -313,18 +409,33 @@ public final class LocalInferenceModel {
         status = metrics?.finishReason == "length" ? "Output limit reached." : "Finished."
     }
 
+    private func loadModelIfNeeded(repository: ModelRepository) async throws {
+        if !loaded {
+            status = "Verifying and loading model…"
+            loadMilliseconds = nil
+            let start = Date()
+            try await session.load(from: repository)
+            loadMilliseconds = Date().timeIntervalSince(start) * 1_000
+            loaded = true
+        }
+    }
+
     /// Summarizes through the same serial session and atomically replaces only inference context.
-    private func prepareContext(transcript: [ConversationMessage]) async throws
+    private func prepareContext(
+        transcript: [ConversationMessage], draft: String? = nil, force: Bool = false
+    ) async throws
         -> [ConversationMessage]
     {
-        let context = compactionPolicy.context(transcript: transcript, state: compaction)
-        guard try await session.tokenCount(messages: context) > compactionPolicy.triggerTokens else {
-            return context
+        let context = compactionPolicy.context(transcript: transcript, state: compaction, draft: draft)
+        if !force {
+            let count = try await session.tokenCount(messages: context)
+            if count <= compactionPolicy.triggerTokens { return context }
         }
         compacting = true
         status = "Compacting earlier messages…"
         defer { compacting = false }
-        let plan = try compactionPolicy.plan(transcript: transcript, state: compaction)
+        let planning = transcript + (draft.map { [ConversationMessage(role: .user, content: $0)] } ?? [])
+        let plan = try compactionPolicy.plan(transcript: planning, state: compaction)
         let run = try await session.generate(
             messages: plan.messages,
             options: GenerationOptions(maxTokens: compactionPolicy.summaryTokens))
@@ -353,12 +464,18 @@ public final class LocalInferenceModel {
         try Task.checkCancellation()
         let candidate = try compactionPolicy.candidate(
             text: summary, finishReason: finishReason, plan: plan)
-        let compacted = compactionPolicy.context(transcript: transcript, state: candidate)
+        let compacted = compactionPolicy.context(transcript: transcript, state: candidate, draft: draft)
         let count = try await session.tokenCount(messages: compacted)
         guard count + compactionPolicy.responseTokens < compactionPolicy.contextSize else {
             throw CompactionError.summaryDoesNotFit
         }
         try Task.checkCancellation()
+        if force {
+            replacingContext = true
+            let snapshot = ConversationSnapshot(
+                conversationID: conversationID, messages: messages, compaction: candidate)
+            try await saveChatNow(snapshot: snapshot)
+        }
         compaction = candidate
         return compacted
     }
@@ -414,7 +531,7 @@ public final class LocalInferenceModel {
 
     /// Coalesces streamed updates, while draft changes and background transitions also checkpoint.
     private func scheduleChatSave(immediately: Bool = false) {
-        guard chatRestored, chatStore != nil, !restoringChat, !resetting else { return }
+        guard chatRestored, chatStore != nil, !restoringChat, !resetting, !replacingContext else { return }
         if immediately { checkpointTask?.cancel(); checkpointTask = nil }
         storageStatus = "Saving on this device…"
         guard checkpointTask == nil else { return }
@@ -507,7 +624,7 @@ public final class LocalInferenceModel {
             guard let self else { throw CancellationError() }
             // A replacement publishes its transcript only after the new archive is durable.
             // Preference writes must capture that published state, never the old visible chat.
-            while self.resetting {
+            while self.resetting || self.replacingContext {
                 await withCheckedContinuation { self.replacementWaiters.append($0) }
             }
             let settings = PersistedCloudSettings(
@@ -589,12 +706,14 @@ public final class LocalInferenceModel {
         downloading = false
         running = false
         resetting = false
+        replacingContext = false
         let waiters = replacementWaiters
         replacementWaiters.removeAll()
         for waiter in waiters { waiter.resume() }
         busy = false
         task = nil
         cloud.resume()
+        refreshContextUsage()
     }
 }
 

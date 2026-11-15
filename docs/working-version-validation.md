@@ -49,7 +49,8 @@ Epic 3 delivers a working version, not final release acceptance:
   fixture success is not physical proof. This audit does not authorize account sign-out,
   destructive cloud resets or expanded personal-data access.
 - Epic 4 also contains #33 chat history/sidebar, #34 Projects/memory, #37 configurable
-  quick actions and #39 context usage/manual compaction. They are not implemented here.
+  quick actions. Subsequent #39 work adds [context usage/manual compaction](context-usage.md);
+  it was outside the original Epic 3 acceptance checkpoint.
 - Epic 5 contains #27 portable skills/MCP execution and #35 model upgrades.
 - #10 iPad, #11 Mac, #32 Developer Program capabilities/distribution and #36 additional
   model families are unplanned. The current model is an immutable verified revision;

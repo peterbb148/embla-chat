@@ -14,7 +14,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private enum Sheet: String, Identifiable {
-        case settings
+        case settings, context
         var id: String { rawValue }
     }
 
@@ -147,7 +147,12 @@ struct ContentView: View {
                             || (model.messages.isEmpty && model.prompt.isEmpty))
                 }
             }
-            .sheet(item: $sheet) { _ in ModelSettingsView(model: model) }
+            .sheet(item: $sheet) { destination in
+                switch destination {
+                case .settings: ModelSettingsView(model: model)
+                case .context: ContextUsageView(model: model)
+                }
+            }
             .alert("Start a new chat?", isPresented: $confirmNewChat) {
                 Button("Start new chat", role: .destructive) {
                     composerFocused = false
@@ -220,6 +225,10 @@ struct ContentView: View {
                     .disabled(!composerFocused)
                     .accessibilityHidden(!composerFocused)
                     .accessibilityLabel("Hide keyboard")
+                    ContextUsageButton(state: model.contextUsage) {
+                        composerFocused = false
+                        sheet = .context
+                    }
                     Spacer()
                     Button {
                         if model.running { model.stop() } else { model.run() }
@@ -585,6 +594,104 @@ private struct CopyTextButton: View {
                 try? await Task.sleep(for: .seconds(2))
                 if !Task.isCancelled { copied = false }
             }
+        }
+    }
+}
+
+
+/// The context indicator is a button; opening details never starts compaction implicitly.
+private struct ContextUsageButton: View {
+    let state: ContextUsageState
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle().stroke(.secondary.opacity(0.2), lineWidth: 3)
+                switch state {
+                case .ready(let usage):
+                    Circle().trim(from: 0, to: min(1, max(0, usage.fraction)))
+                        .stroke(usage.fraction >= 1 ? Color.red : Color.secondary,
+                                style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    Text("\(usage.percentage)%").font(.system(size: 9, weight: .medium))
+                case .counting:
+                    ProgressView().controlSize(.mini)
+                case .failed:
+                    Image(systemName: "exclamationmark").font(.caption)
+                case .unavailable:
+                    Image(systemName: "chart.pie").font(.caption)
+                }
+            }
+            .frame(width: 30, height: 30)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Context usage")
+        .accessibilityValue(spokenValue)
+    }
+
+    private var spokenValue: String {
+        switch state {
+        case .ready(let usage): return "\(usage.inputTokens) of \(usage.capacity) tokens"
+        case .counting: return "Counting"
+        case .unavailable(let reason), .failed(let reason): return reason
+        }
+    }
+}
+
+/// Shows exact next-message usage and an explicit action through the real compaction path.
+private struct ContextUsageView: View {
+    @Bindable var model: LocalInferenceModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Next message context") {
+                    switch model.contextUsage {
+                    case .ready(let usage):
+                        LabeledContent("Used", value: "\(usage.inputTokens) tokens")
+                            .accessibilityIdentifier("context-used")
+                        LabeledContent("Capacity", value: "\(usage.capacity) tokens")
+                        LabeledContent("Reply reserve", value: "\(usage.replyReserve) tokens")
+                        LabeledContent("Auto-compaction threshold", value:
+                            "\(usage.automaticThreshold) tokens")
+                        Text("Summary generation reserves \(usage.summaryReserve) tokens, with "
+                             + "\(usage.headroom) tokens of headroom.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    case .counting:
+                        ProgressView("Counting context…")
+                    case .unavailable(let reason):
+                        Text(reason).foregroundStyle(.secondary)
+                    case .failed(let reason):
+                        Text("Could not count context: \(reason)").foregroundStyle(.red)
+                        Button("Retry count") { model.refreshContextUsage() }
+                    }
+                    Text("Includes the saved summary, retained turns, current draft and model template. "
+                         + "Earlier assistant reasoning follows the model’s template rules.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Compaction") {
+                    Button("Compact now") {
+                        model.compactNow()
+                        dismiss()
+                    }
+                    .disabled(model.manualCompactionUnavailableReason != nil)
+                    if let reason = model.manualCompactionUnavailableReason {
+                        Text(reason).font(.callout).foregroundStyle(.secondary)
+                    }
+                    Text("Summarizes older turns on this device, keeping the visible chat and "
+                         + "latest two exchanges. Summaries can lose details. Use Stop during generation "
+                         + "to keep the previous committed summary.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Context")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }
+            } }
         }
     }
 }

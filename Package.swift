@@ -25,6 +25,6 @@ let package = Package(
             ]),
         .target(name: "EmblaPresentation", dependencies: ["EmblaCore", "EmblaRuntime"]),
         .testTarget(
-            name: "EmblaPresentationTests", dependencies: ["EmblaPresentation", "EmblaCore"]),
+            name: "EmblaPresentationTests", dependencies: ["EmblaPresentation", "EmblaCore", "EmblaRuntime"]),
     ]
 )

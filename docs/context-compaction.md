@@ -6,6 +6,9 @@ unsummarized suffix of that transcript. `CompactionState` explicitly records the
 and the number of transcript messages it replaces. The subsequent [persistence work](chat-persistence.md)
 saves these fields locally and optionally synchronizes the snapshot through iCloud.
 
+A [context usage ring and explicit Compact now action](context-usage.md) also use this
+policy below the automatic threshold, preserving the visible transcript and saved context.
+
 ## Policy
 
 The session loads an 8192-token context. Before each reply it counts the complete rendered

@@ -14,7 +14,14 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
         if app.buttons["New Chat"].isEnabled {
             app.buttons["New Chat"].tap()
-            app.buttons["Start new chat"].tap()
+            let confirmation = app.alerts["Start a new chat?"]
+            XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
+            let start = confirmation.buttons["Start new chat"]
+            let ready = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "hittable == true"), object: start)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+            start.tap()
+            XCTAssertTrue(confirmation.waitForNonExistence(timeout: 10))
             let cleared = XCTNSPredicateExpectation(
                 predicate: NSPredicate(
                     format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
@@ -121,6 +128,22 @@ final class LaunchTests: XCTestCase {
         app.alerts.buttons["Cancel"].tap()
         XCTAssertEqual(toggle.value as? String, "0")
         XCTAssertEqual(app.staticTexts["icloud-status"].label, "iCloud is off.")
+    }
+
+    @MainActor
+    func testContextButtonExplainsUnavailableCountingAndCompaction() throws {
+        let app = try launchCleanChat()
+        let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
+        composer.tap()
+        composer.typeText("Draft retained while viewing context")
+        app.buttons["Context usage"].tap()
+        XCTAssertTrue(app.navigationBars["Context"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Compact now"].exists)
+        XCTAssertFalse(app.buttons["Compact now"].isEnabled)
+        XCTAssertFalse(app.staticTexts["context-used"].exists)
+        app.buttons["Done"].tap()
+        XCTAssertEqual(composer.value as? String, "Draft retained while viewing context")
+        XCTAssertFalse(app.staticTexts["answer"].exists)
     }
 
 }

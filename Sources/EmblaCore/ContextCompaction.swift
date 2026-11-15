@@ -32,7 +32,7 @@ public struct ContextCompaction: Sendable {
 
     /// Reconstructs inference context without changing or deleting the transcript.
     public func context(
-        transcript: [ConversationMessage], state: CompactionState
+        transcript: [ConversationMessage], state: CompactionState, draft: String? = nil
     ) -> [ConversationMessage] {
         let prefix: [ConversationMessage] = state.summary.isEmpty ? [] : [
             ConversationMessage(
@@ -42,7 +42,8 @@ public struct ContextCompaction: Sendable {
         let recent = transcript.dropFirst(state.summarizedMessageCount).filter {
             !$0.content.isEmpty || !($0.reasoning ?? "").isEmpty
         }
-        return prefix + recent
+        let next = draft.map { [ConversationMessage(role: .user, content: $0)] } ?? []
+        return prefix + recent + next
     }
 
     /// Keeps two completed exchanges and the current user turn verbatim.
