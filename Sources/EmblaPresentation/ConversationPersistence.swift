@@ -38,7 +38,7 @@ public struct ConversationArchive: Codable, Sendable, Equatable {
     public var draft = ""
     public var cloudEnabled = false
     public var cloudFolderBookmark: Data?
-    public var cloudBaseRevision: UUID?
+    public var cloudBaseFingerprint: String?
 
     public init(sequence: UInt64, snapshot: ConversationSnapshot, draft: String = "") {
         self.sequence = sequence

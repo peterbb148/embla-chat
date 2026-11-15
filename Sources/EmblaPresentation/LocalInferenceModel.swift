@@ -51,6 +51,7 @@ public final class LocalInferenceModel {
     public private(set) var answer = ""
     public private(set) var metrics: GenerationMetrics?
     public private(set) var loadMilliseconds: Double?
+    public let cloud: ConversationCloudSync
     public private(set) var chatRestored = false
     public private(set) var storageStatus = "Opening saved chat…"
     public private(set) var storageError: String?
@@ -60,9 +61,6 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var persistenceSequence: UInt64 = 0
     @ObservationIgnored private var lastSnapshot: ConversationSnapshot?
     @ObservationIgnored private var restoringChat = false
-    @ObservationIgnored private var cloudEnabled = false
-    @ObservationIgnored private var cloudFolderBookmark: Data?
-    @ObservationIgnored private var cloudBaseRevision: UUID?
     @ObservationIgnored private var repository: ModelRepository?
     @ObservationIgnored private let session: InferenceSession
     @ObservationIgnored private var task: Task<Void, Never>?
@@ -72,13 +70,15 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var pendingClear = false
 
     public var canRun: Bool {
-        !busy && chatRestored && storageError == nil && readyDirectory != nil
+        !busy && !resetting && !cloud.resolving && chatRestored && storageError == nil && readyDirectory != nil
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Production always uses the pinned Embla runtime and app-managed model storage.
     public init() {
         session = EmblaRuntime.makeSession()
+        cloud = ConversationCloudSync()
+        configureCloud()
         do { chatStore = ConversationStore(root: try ConversationStore.defaultRoot()) } catch {
             storageError = error.localizedDescription
             storageStatus = "Chat storage is unavailable."
@@ -97,11 +97,13 @@ public final class LocalInferenceModel {
     /// Test-only construction is internal; the app cannot select a substitute runtime.
     init(
         repository: ModelRepository?, manifest: ModelManifest, session: InferenceSession,
-        chatStore: ConversationStore? = nil
+        chatStore: ConversationStore? = nil, cloud: ConversationCloudSync? = nil
     ) {
         self.repository = repository
         self.manifest = manifest
         self.session = session
+        self.cloud = cloud ?? ConversationCloudSync()
+        configureCloud()
         self.chatStore = chatStore
         chatRestored = chatStore == nil
         if chatStore == nil { storageStatus = "Test session without persistence." }
@@ -126,7 +128,7 @@ public final class LocalInferenceModel {
 
     /// Defers clearing until any current generation has drained, preventing stale text.
     public func newChat() {
-        guard chatRestored, !busy || running else { return }
+        guard chatRestored, !cloud.resolving, !busy || running else { return }
         resetting = true
         pendingClear = true
         if busy { stop() } else { start(.clear) }
@@ -134,12 +136,16 @@ public final class LocalInferenceModel {
 
     /// Called on inactivity; blocking prefill can only stop at the runtime's next callback.
     public func becameInactive() {
+        cloud.pause()
         scheduleChatSave(immediately: true)
         if running { stop() }
     }
 
     /// Cancels work and releases the loaded model once all engine activity has drained.
+    public func becameActive() { cloud.resume() }
+
     public func enteredBackground() {
+        cloud.pause()
         pendingUnload = true
         if busy { stop() } else { start(.unload) }
     }
@@ -152,7 +158,8 @@ public final class LocalInferenceModel {
     private enum Operation { case check, download, delete, generate, clear, unload }
 
     private func start(_ operation: Operation) {
-        guard !busy, operation != .generate || chatRestored else { return }
+        guard !busy, !cloud.resolving, !resetting || operation == .clear,
+            operation != .generate || chatRestored else { return }
         busy = true
         downloading = operation == .download
         running = operation == .generate
@@ -374,9 +381,9 @@ public final class LocalInferenceModel {
             prompt = archive.draft
             persistenceSequence = archive.sequence
             lastSnapshot = archive.snapshot
-            cloudEnabled = archive.cloudEnabled
-            cloudFolderBookmark = archive.cloudFolderBookmark
-            cloudBaseRevision = archive.cloudBaseRevision
+            cloud.restore(
+                enabled: archive.cloudEnabled, bookmark: archive.cloudFolderBookmark,
+                base: archive.cloudBaseFingerprint)
             restoringChat = false
             chatRestored = true
             storageError = nil
@@ -407,7 +414,8 @@ public final class LocalInferenceModel {
 
     /// Captures on the main actor and queues writes in order; only the latest write sets status.
     private func saveChatNow(
-        snapshot replacement: ConversationSnapshot? = nil, draft: String? = nil
+        snapshot replacement: ConversationSnapshot? = nil, draft: String? = nil,
+        notifyCloud: Bool = true
     ) async throws {
         guard chatRestored, let chatStore else { return }
         checkpointTask?.cancel()
@@ -425,9 +433,9 @@ public final class LocalInferenceModel {
         let sequence = persistenceSequence
         var archive = ConversationArchive(
             sequence: sequence, snapshot: snapshot, draft: draft ?? prompt)
-        archive.cloudEnabled = cloudEnabled
-        archive.cloudFolderBookmark = cloudFolderBookmark
-        archive.cloudBaseRevision = cloudBaseRevision
+        archive.cloudEnabled = cloud.enabled
+        archive.cloudFolderBookmark = cloud.bookmark
+        archive.cloudBaseFingerprint = cloud.baseFingerprint
         storageStatus = "Saving on this device…"
         let previous = saveTask
         let write = Task {
@@ -437,6 +445,7 @@ public final class LocalInferenceModel {
         saveTask = write
         do {
             try await write.value
+            if notifyCloud && cloud.enabled { cloud.requestSync() }
             if sequence == persistenceSequence && checkpointTask == nil {
                 storageError = nil
                 storageStatus = "Saved on this device."
@@ -448,6 +457,60 @@ public final class LocalInferenceModel {
             }
             throw error
         }
+    }
+
+    private func currentSnapshot() -> ConversationSnapshot {
+        var snapshot = ConversationSnapshot(
+            conversationID: conversationID, messages: messages, compaction: compaction)
+        if let lastSnapshot, lastSnapshot.conversationID == conversationID,
+            lastSnapshot.messages == messages, lastSnapshot.compaction == compaction
+        {
+            snapshot.revision = lastSnapshot.revision
+        }
+        return snapshot
+    }
+
+    private func configureCloud() {
+        cloud.current = { [weak self] in
+            guard let self, self.chatRestored else { return nil }
+            return CloudLocalConversation(
+                snapshot: self.currentSnapshot(), hasDraft: !self.prompt.isEmpty,
+                canReplace: !self.busy && !self.resetting && self.storageError == nil)
+        }
+        cloud.persist = { [weak self] in try await self?.saveChatNow(notifyCloud: false) }
+        cloud.apply = { [weak self] snapshot, expected in
+            guard let self else { throw CancellationError() }
+            try await self.applyCloudSnapshot(snapshot, expected: expected)
+        }
+    }
+
+    private func applyCloudSnapshot(_ snapshot: ConversationSnapshot, expected: String) async throws {
+        guard !busy, !resetting, try currentSnapshot().fingerprint() == expected else {
+            throw CloudConversationError.changed
+        }
+        try Task.checkCancellation()
+        busy = true
+        resetting = true
+        let recovered = ConversationArchive(sequence: 0, snapshot: snapshot)
+            .recoveringInterruptedResponses().snapshot
+        do {
+            if loaded { try await session.reset() }
+            try await saveChatNow(snapshot: recovered, draft: "", notifyCloud: false)
+            restoringChat = true
+            messages = recovered.messages
+            compaction = recovered.compaction
+            conversationID = recovered.conversationID
+            prompt = ""
+            reasoning = ""
+            answer = ""
+            metrics = nil
+            restoringChat = false
+            status = "Restored the iCloud chat."
+        } catch {
+            await finishDeferredActions()
+            throw error
+        }
+        await finishDeferredActions()
     }
 
     private func finishDeferredActions() async {
@@ -491,6 +554,7 @@ public final class LocalInferenceModel {
         resetting = false
         busy = false
         task = nil
+        cloud.resume()
     }
 }
 

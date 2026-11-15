@@ -23,13 +23,23 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<4 {
+            if element.exists && element.isHittable { return }
+            app.swipeUp()
+        }
+    }
+
+    @MainActor
     func testModelControlsAreInSettings() throws {
         let app = try launchCleanChat()
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Download model"].exists)
         app.buttons["Settings"].tap()
-        XCTAssertTrue(app.buttons["Download model"].waitForExistence(timeout: 10))
+        reveal(app.buttons["Download model"], in: app)
+        XCTAssertTrue(app.buttons["Download model"].exists)
         XCTAssertTrue(app.buttons["Download model"].isEnabled)
+        reveal(app.staticTexts["model-status"], in: app)
         XCTAssertTrue(app.staticTexts["model-status"].exists)
         app.buttons["Done"].tap()
         XCTAssertTrue(app.buttons["Send"].exists)
@@ -92,6 +102,21 @@ final class LaunchTests: XCTestCase {
         let restored = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "value == %@", "Local draft survives restart"), object: composer)
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
+    }
+
+
+    @MainActor
+    func testICloudStartsOffAndCancellingConsentKeepsItOff() throws {
+        let app = try launchCleanChat()
+        app.buttons["Settings"].tap()
+        let toggle = app.switches["icloud-toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        XCTAssertEqual(toggle.value as? String, "0")
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertTrue(app.alerts["Enable iCloud Drive?"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertEqual(toggle.value as? String, "0")
+        XCTAssertEqual(app.staticTexts["icloud-status"].label, "iCloud is off.")
     }
 
 }

@@ -2,7 +2,8 @@
 
 ## Implementation checkpoint
 
-Local persistence is integrated on the issue branch; optional iCloud access is still pending.
+Local persistence and the optional iCloud Drive flow are integrated on the issue branch.
+Actual personal-iCloud transfer/restoration remains unverified.
 `ConversationSnapshot` preserves stable message IDs, response states, the rolling summary,
 and its transcript boundary in a versioned document. `ConversationArchive` is the separate
 device-local envelope for the draft, global default-off cloud preference, folder permission
@@ -40,19 +41,60 @@ On 2026-11-15, all 47 package tests passed and all four iPhone 17 Pro / iOS 27.2
 UI tests passed. The latter include terminating/relaunching the production app and restoring
 a draft. This does not claim simulator inference, cloud account access or cloud transfer.
 
-## Remaining implementation
+## Optional iCloud Drive flow
 
-- Provide one app-wide opt-in setting in Settings. Local-only remains the default.
-- Use the native Files picker to select/create `iCloud Drive/EmblaChat` in the user's
-  personal account. Store the security-scoped bookmark locally and coordinate file access.
-- Make actual iCloud upload/download status explicit; a successful file write alone is not
-  remote persistence evidence. Stop future writes and pending app operations when disabled.
-- Detect changed revisions and unresolved document versions. Present conflicting copies for
-  an explicit choice; never silently overwrite a newer chat or restore stale pre-reset data.
-- Verify app relaunch/restoration and opt-in/out on the iPhone 17 Pro simulator. Verify real
-  personal-iCloud transfer/restoration separately; fixtures do not prove cloud behavior.
-- Later per-chat storage choices and iPad/Mac clients remain future work. The current scope
-  is one active chat, without an archive or chat list.
+Settings has one global default-off switch, explicit consent, and the native Files folder
+picker. The user selects/creates `iCloud Drive/EmblaChat`; the app validates that the chosen
+folder is an iCloud folder named EmblaChat and retains its security-scoped bookmark locally.
+The portable `ActiveChat.json` contains the transcript, summary and reconstruction metadata;
+model weights, local folder permissions and unsent drafts are excluded.
+
+`ICloudConversationStore` resolves the granted bookmark for each operation, coordinates file
+access with `NSFileCoordinator`, validates documents, and checks content fingerprints before
+replacing data. Unresolved `NSFileVersion` copies are surfaced as conflicts. A confirmed choice
+marks only the versions observed during that coordinated operation resolved. There is no
+unconditional overwrite or corrupt-file-to-empty recovery.
+
+On first connecting to an existing document, the user chooses which chat to keep. Later,
+a shared content fingerprint distinguishes unchanged state from local/remote edits. A remote
+change can replace the local chat only when local content is unchanged and no unsent draft
+would be discarded. Concurrent edits or unresolved versions require an explicit choice.
+Choosing an iCloud copy confirms replacing this device's chat and unsent draft. If a chat
+changes while a cloud read is pending, that old result cannot restore the previous conversation.
+New Chat saves locally first and queues synchronization of the reset.
+
+No provider is opened or called while the preference is disabled, including when an old
+bookmark remains stored. Disabling cancels pending app operations and persists the choice;
+it keeps existing cloud files. Operations already handed to iCloud Drive may finish transferring.
+Foreground synchronization runs after local chat operations and checks periodically; inactivity
+pauses app-managed operations. Failures remain visible in Settings and local storage stays
+independent. A local/provider write reports pending upload; only the provider's uploaded state
+for matching content reports Synced. Missing/revoked permissions and missing previously-synced
+files remain explicit errors rather than silently selecting another location.
+
+## Validation checkpoint and remaining work
+
+On 2026-11-15, all 60 package tests pass. These include coordinated temporary-file tests,
+explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
+controller tests combining real local files with simulated remote changes. All five iPhone
+17 Pro / iOS 27.2 simulator UI tests pass, including opt-in cancellation and local draft
+restoration. These tests do not prove iCloud authentication, transfer or cross-device conflicts.
+
+The production native Files picker was opened on that simulator. Browse exposed only
+On My iPhone; simulator Settings showed Apple Account signed out. Personal-account sign-in
+is handed to the user before live cloud testing. No live cloud upload or restoration is
+claimed. Do not run simulator UI automation while the user is completing sign-in.
+
+Remaining gates for #9:
+
+- Verify persistent folder permission and actual personal-iCloud upload/download/restoration,
+  including the transcript and summary, after the simulator is signed in.
+- Record provider account/network errors and real conflict behavior separately from fixtures.
+- Complete final-head Copilot review, fixes/re-review, and hosted checks before merge.
+
+Developer Program-dependent capabilities/distribution are deferred to #32. The current
+Files-based storage design does not use CloudKit or an app-owned iCloud container. Later
+per-chat storage choices and iPad/Mac clients remain future work; there is one active chat.
 
 Apple's supported APIs: [directory access and bookmarks](https://developer.apple.com/documentation/uikit/providing-access-to-directories),
 [document-based iCloud access](https://developer.apple.com/documentation/uikit/uidocumentbrowserviewcontroller),
