@@ -309,13 +309,80 @@ private actor SyncCheckpointGate {
 /// Holds a real empty-archive write's completion while the old transcript is still visible.
 private actor ResetCheckpointStore: ConversationStoring {
     private let store: ConversationStore
+    private let heldConversationID: UUID?
     let resetGate = SyncCheckpointGate()
-    init(root: URL) { store = ConversationStore(root: root) }
+    init(root: URL, heldConversationID: UUID? = nil) {
+        store = ConversationStore(root: root)
+        self.heldConversationID = heldConversationID
+    }
     func load() async throws -> ConversationArchive? { try await store.load() }
     func save(_ archive: ConversationArchive) async throws {
         try await store.save(archive)
-        if archive.snapshot.messages.isEmpty { await resetGate.blockOnce() }
+        let hold = heldConversationID.map { archive.snapshot.conversationID == $0 }
+            ?? archive.snapshot.messages.isEmpty
+        if hold { await resetGate.blockOnce() }
     }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func disablingDuringCloudReplacementPreservesTheDurableRestoredChat() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let baseline = syncSnapshot("old shared chat")
+    let remote = syncSnapshot("restored shared chat")
+    var archive = ConversationArchive(sequence: 1, snapshot: baseline)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture permission".utf8)
+    archive.cloudBaseFingerprint = try baseline.fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: remote, uploaded: true))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let store = ResetCheckpointStore(root: root, heldConversationID: remote.conversationID)
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: store, cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    try await store.resetGate.waitForEntry()
+    #expect(model.messages == baseline.messages && model.resetting)
+    cloud.disable()
+    for _ in 0..<20 { await Task.yield() }
+    await store.resetGate.release()
+    await cloud.waitUntilIdle()
+    let reopened = try #require(try await ConversationStore(root: root).load())
+    #expect(model.messages == remote.messages && reopened.snapshot == remote)
+    #expect(!reopened.cloudEnabled)
+}
+
+@Test @MainActor
+func unchangedCloudPollDoesNotRewriteTheLocalArchive() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let snapshot = syncSnapshot("unchanged shared chat")
+    var archive = ConversationArchive(sequence: 1, snapshot: snapshot)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture permission".utf8)
+    archive.cloudBaseFingerprint = try snapshot.fingerprint()
+    let store = ConversationStore(root: root)
+    try await store.save(archive)
+    let provider = SyncProviderFixture(.init(current: snapshot, uploaded: true))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: store, cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    let before = try await store.load()
+    cloud.refresh()
+    await cloud.waitUntilIdle()
+    #expect(try await store.load() == before)
+    #expect(await provider.reads >= 2)
+    #expect(await provider.writes == 0)
+    #expect(cloud.status == "Synced with iCloud Drive.")
+    cloud.pause()
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor

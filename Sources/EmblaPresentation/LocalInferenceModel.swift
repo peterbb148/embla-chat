@@ -69,6 +69,7 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var operationID: UUID?
     @ObservationIgnored private var pendingUnload = false
     @ObservationIgnored private var pendingClear = false
+    @ObservationIgnored private var replacementWaiters: [CheckedContinuation<Void, Never>] = []
 
     public var canRun: Bool {
         !busy && !resetting && !cloud.resolving && chatRestored && storageError == nil && readyDirectory != nil
@@ -486,9 +487,11 @@ public final class LocalInferenceModel {
         }
         cloud.persist = { [weak self] in
             guard let self else { throw CancellationError() }
-            // A reset publishes its new transcript only after the empty archive is durable.
+            // A replacement publishes its transcript only after the new archive is durable.
             // Preference writes must capture that published state, never the old visible chat.
-            while self.resetting, let operation = self.task { await operation.value }
+            while self.resetting {
+                await withCheckedContinuation { self.replacementWaiters.append($0) }
+            }
             try await self.saveChatNow(notifyCloud: false)
         }
         cloud.apply = { [weak self] snapshot, expected in
@@ -565,6 +568,9 @@ public final class LocalInferenceModel {
         downloading = false
         running = false
         resetting = false
+        let waiters = replacementWaiters
+        replacementWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
         busy = false
         task = nil
         cloud.resume()

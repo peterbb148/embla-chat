@@ -217,6 +217,7 @@ public final class ConversationCloudSync {
             try latest.snapshot.fingerprint() == local.snapshot.fingerprint(),
             latest.hasDraft == local.hasDraft
         else { needsSync = true; return }
+        let previousBase = baseFingerprint
         switch try CloudSyncPolicy.action(local: latest, remote: remote, base: baseFingerprint) {
         case .identical:
             baseFingerprint = try latest.snapshot.fingerprint()
@@ -235,7 +236,7 @@ public final class ConversationCloudSync {
             return
         case .removed: throw CloudConversationError.removed
         }
-        try await persistSettings()
+        if baseFingerprint != previousBase { try await persistSettings() }
         guard generation == epoch, enabled else { return }
         error = nil
         let same = try current?()?.snapshot.fingerprint() == remote.current?.fingerprint()
