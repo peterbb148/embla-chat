@@ -46,8 +46,11 @@ Simulator UI checks do not claim real model inference or actual cloud transfer.
 Settings has one global default-off switch, explicit consent, and the native Files folder
 picker. The user selects/creates `iCloud Drive/EmblaChat`; the app validates that the chosen
 folder is an iCloud folder named EmblaChat and retains its security-scoped bookmark locally.
-The portable `ActiveChat.json` contains the transcript, summary and reconstruction metadata;
+Within that root, `Chats/ActiveChat.json` contains the transcript, summary and reconstruction metadata;
 model weights, local folder permissions and unsent drafts are excluded.
+The separate `Skills` directory is reserved for portable skill folders in #27. Chat operations
+leave its contents untouched; skill discovery/execution is not implemented yet. See the
+[storage layout](storage-layout.md).
 
 `ICloudConversationStore` resolves the granted bookmark for each operation, coordinates file
 access with `NSFileCoordinator`, validates documents, and checks content fingerprints before
@@ -78,7 +81,7 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 72 package tests pass (one has two parameterized cases). These include
+On 2026-11-15, all 77 package tests pass (one has two parameterized cases). These include
 coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
@@ -95,6 +98,10 @@ preference saves cannot resurrect the old conversation after either New Chat or 
 An explicit completion barrier covers both replacement paths. Unchanged polls do not rewrite
 the archive. Retry recreates a missing local store. The UI reset helper waits for an enabled,
 empty composer rather than a disabled New Chat button, which also describes an active reset.
+Explicit provider fixtures now supply multiple unresolved copies: automatic writes stay
+blocked, every distinct copy is offered, explicit selection resolves the copies, and a newly
+arrived copy invalidates the old choice until refreshed. A coordinated temporary-file test
+also rejects a mismatched expected conflict fingerprint set without overwriting the document.
 
 ## Physical iCloud Drive evidence (2026-11-15)
 
@@ -127,12 +134,15 @@ The following used the real Files provider and a Mac, with no substitute cloud p
 
 This proves real transfer, content divergence/choice, persistence and missing-file recovery.
 It does not claim forced account/network failures or an OS-generated `NSFileVersion` duplicate
-conflict. Those error/version branches have explicit provider/file fixtures. Personal account
+conflict. Transfer failures and unresolved-copy policies use explicit provider fixtures;
+the operating system's creation/enumeration of conflict versions has not been forced in a test.
+Personal account
 identifiers, authentication state and system Drive settings are excluded from public evidence.
 Do not run UI automation during a user handoff.
 
-Remaining gate for #9: complete final-head Copilot review, fixes/re-review, and hosted checks
-for the added tests and evidence documentation before merge.
+The requested `Chats`/`Skills` separation was added after this original-root validation.
+The new chat path still needs a real transfer/restoration follow-up. Final-head Copilot
+review, fixes/re-review and hosted checks are also required before merge.
 
 Developer Program-dependent capabilities/distribution are deferred to #32. The current
 Files-based storage design does not use CloudKit or an app-owned iCloud container. Later

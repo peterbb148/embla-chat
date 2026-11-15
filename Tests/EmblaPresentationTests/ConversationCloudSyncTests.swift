@@ -13,6 +13,7 @@ private actor SyncProviderFixture: CloudConversationStorage {
     var document: CloudConversationRead
     private(set) var reads = 0
     private(set) var writes = 0
+    private(set) var resolutions = 0
     private var holdRead: Bool
     private var holdWrite: Bool
     private let readFailure: CocoaError?
@@ -45,6 +46,10 @@ private actor SyncProviderFixture: CloudConversationStorage {
         guard try document.fingerprints == replacing.fingerprints else {
             throw CloudConversationError.changed
         }
+        guard resolvingConflicts || document.conflicts.isEmpty else {
+            throw CloudConversationError.conflict
+        }
+        if resolvingConflicts { resolutions += 1 }
         writes += 1
         document = CloudConversationRead(current: snapshot)
         if holdWrite {
@@ -62,6 +67,7 @@ private actor SyncProviderFixture: CloudConversationStorage {
     }
     func releaseRead() { gate?.resume(); gate = nil }
     func confirmUpload() { document.uploaded = true }
+    func addConflict(_ snapshot: ConversationSnapshot) { document.conflicts.append(snapshot) }
     func waitForRead() async throws {
         for _ in 0..<1_000 {
             if reads > 0 { return }
@@ -115,6 +121,77 @@ func disabledCloudPerformsNoProviderReadsOrWrites() async throws {
     #expect(await provider.reads == 0)
     #expect(await provider.writes == 0)
     #expect(!harness.cloud.enabled)
+}
+
+@Test @MainActor
+func unresolvedCopiesBlockAutomaticWritesEvenWhenCurrentMatchesLocal() async throws {
+    let local = syncSnapshot("shared current chat")
+    let first = syncSnapshot("first unresolved copy")
+    let second = syncSnapshot("second unresolved copy")
+    let provider = SyncProviderFixture(.init(
+        current: local, conflicts: [first, second, first], uploaded: true))
+    let harness = SyncHarness(local: local, provider: provider)
+    harness.start(base: try local.fingerprint())
+    await harness.cloud.waitUntilIdle()
+    #expect(await provider.writes == 0)
+    #expect(harness.applications == 0)
+    #expect(Set(harness.cloud.choices.map(\.id)) == Set(try [local, first, second].map {
+        try $0.fingerprint()
+    }))
+    #expect(harness.cloud.choices.count == 3)
+    harness.cloud.pause()
+}
+
+@Test @MainActor
+func everyDistinctUnresolvedCopyIsOfferedAndOnlyExplicitChoiceResolvesIt() async throws {
+    let local = syncSnapshot("local chat")
+    let current = syncSnapshot("current cloud chat")
+    let first = syncSnapshot("first unresolved copy")
+    let second = syncSnapshot("second unresolved copy")
+    let provider = SyncProviderFixture(.init(current: current, conflicts: [first, second, first]))
+    let harness = SyncHarness(local: local, provider: provider)
+    harness.start()
+    await harness.cloud.waitUntilIdle()
+    #expect(harness.cloud.choices.count == 4)
+    #expect(await provider.writes == 0)
+    let choice = try #require(harness.cloud.choices.first { $0.snapshot == second })
+    harness.cloud.resolve(choiceID: choice.id)
+    await harness.cloud.waitUntilIdle()
+    #expect(harness.local == second)
+    #expect(harness.cloud.choices.isEmpty)
+    #expect(await provider.document.current == second)
+    #expect(await provider.document.conflicts.isEmpty == true)
+    #expect(await provider.resolutions == 1)
+    harness.cloud.pause()
+}
+
+@Test @MainActor
+func newUnresolvedCopyInvalidatesThePendingResolutionUntilRefreshed() async throws {
+    let local = syncSnapshot("local chat")
+    let current = syncSnapshot("current cloud chat")
+    let first = syncSnapshot("existing unresolved copy")
+    let newlyArrived = syncSnapshot("new unresolved copy")
+    let provider = SyncProviderFixture(.init(current: current, conflicts: [first]))
+    let harness = SyncHarness(local: local, provider: provider)
+    harness.start()
+    await harness.cloud.waitUntilIdle()
+    let choice = try #require(harness.cloud.choices.first { $0.snapshot == first })
+    await provider.addConflict(newlyArrived)
+    harness.cloud.resolve(choiceID: choice.id)
+    await harness.cloud.waitUntilIdle()
+    #expect(harness.cloud.error == CloudConversationError.changed.localizedDescription)
+    #expect(harness.local == local)
+    #expect(await provider.writes == 0)
+    #expect(await provider.document.conflicts == [first, newlyArrived])
+    harness.cloud.refresh()
+    await harness.cloud.waitUntilIdle()
+    #expect(harness.cloud.choices.count == 4)
+    let refreshed = try #require(harness.cloud.choices.first { $0.snapshot == newlyArrived })
+    harness.cloud.resolve(choiceID: refreshed.id)
+    await harness.cloud.waitUntilIdle()
+    #expect(harness.local == newlyArrived)
+    #expect(await provider.resolutions == 1)
+    harness.cloud.pause()
 }
 
 @Test @MainActor

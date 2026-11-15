@@ -8,6 +8,40 @@ private func cloudFileSnapshot(_ text: String) -> ConversationSnapshot {
         conversationID: UUID(), messages: [ChatMessage(role: .user, text: text)], compaction: .init())
 }
 
+@Test func sharedCloudRootSeparatesChatsAndPreservesPortableSkills() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let skill = root.appendingPathComponent("Skills/test-skill", isDirectory: true)
+    try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+    let instructions = Data("---\nname: test-skill\ndescription: Storage fixture\n---\n".utf8)
+    try instructions.write(to: skill.appendingPathComponent("SKILL.md"))
+    let file = try CloudStorageLayout.prepare(in: root)
+    #expect(file == root.appendingPathComponent("Chats/ActiveChat.json"))
+    let snapshot = cloudFileSnapshot("chat stored separately from skills")
+    try CoordinatedConversationFile.write(
+        snapshot, at: file, replacing: CoordinatedConversationFile.read(at: file))
+    #expect(try CloudStorageLayout.prepare(in: root) == file)
+    #expect(try CoordinatedConversationFile.read(at: file).current == snapshot)
+    #expect(try Data(contentsOf: skill.appendingPathComponent("SKILL.md")) == instructions)
+    #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("ActiveChat.json").path))
+}
+
+@Test func unexpectedConflictFingerprintSetCannotOverwriteCoordinatedFile() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = try CloudStorageLayout.prepare(in: root)
+    let original = cloudFileSnapshot("current document")
+    try CoordinatedConversationFile.write(original, at: file, replacing: .init())
+    let expected = CloudConversationRead(
+        current: original, conflicts: [cloudFileSnapshot("no longer current conflict set")])
+    #expect(throws: CloudConversationError.self) {
+        try CoordinatedConversationFile.write(
+            cloudFileSnapshot("unsafe choice"), at: file, replacing: expected,
+            resolvingConflicts: true)
+    }
+    #expect(try CoordinatedConversationFile.read(at: file).current == original)
+}
+
 /// These exercise coordinated local files, not authentication or iCloud transfer.
 @Test func coordinatedDocumentRoundTripDoesNotClaimCloudUpload() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

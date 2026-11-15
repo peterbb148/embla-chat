@@ -104,7 +104,18 @@ public actor ICloudConversationStore: CloudConversationStorage {
         }
         defer { folder.stopAccessingSecurityScopedResource() }
         try Self.validateFolder(folder)
-        return try action(folder.appendingPathComponent("ActiveChat.json"))
+        return try action(CloudStorageLayout.prepare(in: folder))
+    }
+}
+
+/// The selected root separates chat documents from portable, user-managed skill folders.
+enum CloudStorageLayout {
+    static func prepare(in root: URL) throws -> URL {
+        let chats = root.appendingPathComponent("Chats", isDirectory: true)
+        let skills = root.appendingPathComponent("Skills", isDirectory: true)
+        try FileManager.default.createDirectory(at: chats, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: skills, withIntermediateDirectories: true)
+        return chats.appendingPathComponent("ActiveChat.json")
     }
 }
 

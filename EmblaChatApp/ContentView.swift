@@ -380,8 +380,9 @@ private struct ModelSettingsView: View {
             case .deleteModel:
                 return "You will need to download the model again. This does not clear your conversation."
             case .cloudConsent:
-                return "Your chat and summary will be stored in iCloud Drive/EmblaChat. "
-                    + "Your draft and model stay on this device. Choose or create that folder in Files."
+                return "Your chat and summary will be stored in iCloud Drive/EmblaChat/Chats. "
+                    + "Select the EmblaChat folder; Skills is reserved for portable skills. "
+                    + "Your draft and model stay on this device. Choose or create EmblaChat in Files."
             case .cloudChoice:
                 return "This replaces the active chat in the chosen location. Using an iCloud copy "
                     + "also replaces this device’s chat and unsent draft. Other conflicting copies "
