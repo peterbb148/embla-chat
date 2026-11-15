@@ -1,12 +1,14 @@
 # Shared storage layout
 
 When the user enables chat synchronization, the native Files picker grants access to the
-`EmblaChat` root in iCloud Drive. The app prepares two separate subdirectories:
+`EmblaChat` root in iCloud Drive. Chat storage prepares Chats and Skills; quick actions uses a separate Actions configuration:
 
 ```text
 EmblaChat/
 ├── Chats/
 │   └── ActiveChat.json
+├── Actions/
+│   └── actions.json
 └── Skills/
     └── skill-name/
         ├── SKILL.md
@@ -46,3 +48,8 @@ behavior requires explicit controls and must not be represented as offline infer
 The earlier unmerged storage implementation used `EmblaChat/ActiveChat.json`. Its disposable
 validation document is moved intact to `Chats/ActiveChat.json` for the new layout. The app
 uses the new path directly; it does not silently choose between two chat locations.
+
+[Quick actions](quick-actions.md) reads Actions/actions.json from the selected cloud root
+only when the global preference is durably On. Off uses an on-device Actions directory
+visible in Files, excluded from automatic backup. Missing/invalid On configuration never
+selects a local substitute. Skills remain reserved; skill cards cannot execute yet.

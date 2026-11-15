@@ -32,6 +32,8 @@ The left sidebar reopens [saved chats](docs/chat-history.md), each with its own 
 [Projects](docs/projects.md) group chats and share only notes you explicitly save,
 with editable text and source-chat links. The global iCloud switch covers all saved
 chats and project memory after consent.
+[Quick-action cards](docs/quick-actions.md) fill editable drafts from `Actions/actions.json`,
+with explicit confirmation before replacing a draft.
 The selected cloud root separates the `Chats/ActiveChat.json` library from portable `Skills` folders;
 see [the storage layout](docs/storage-layout.md). Skill loading and MCP execution remain #27.
 

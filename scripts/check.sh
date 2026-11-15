@@ -20,6 +20,16 @@ xcodebuild build "${project[@]}" "${locked[@]}" \
   -derivedDataPath build/DeviceDerivedData \
   CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/device-build.log
 
+# Verify the built product; arbitrary generated Info.plist settings can be ignored by Xcode.
+device_products=build/DeviceDerivedData/Build/Products/Release-iphoneos
+app_info="$device_products/EmblaChatApp.app/Info.plist"
+for sharing_key in UIFileSharingEnabled LSSupportsOpeningDocumentsInPlace; do
+  if [[ "$(/usr/libexec/PlistBuddy -c "Print:$sharing_key" "$app_info")" != true ]]; then
+    echo "Required Files declaration is missing from the built app: $sharing_key" >&2
+    exit 1
+  fi
+done
+
 # Create an isolated simulator and always remove it when this process exits.
 device=$(xcrun simctl create EmblaChecks \
   com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro \

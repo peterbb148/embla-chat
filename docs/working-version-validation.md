@@ -77,3 +77,10 @@ The user explicitly deferred new real multi-chat iCloud provider/failure checks 
 a project. It is separate from rolling summaries and included in exact context counting.
 The single global iCloud scope now names chats and project memory; older On installations
 pause until new consent. Actual new-format provider transfer remains deferred to #45.
+
+## Quick actions extension (#37)
+
+[Configured cards](quick-actions.md) fill the composer and confirm replacing a draft, with
+local Files configuration in Off mode and the selected Actions/actions.json in On mode.
+Cloud access waits for durable consent; errors do not switch configuration sources.
+Skill invocation remains outside this epic. Actual provider validation stays deferred to #45.

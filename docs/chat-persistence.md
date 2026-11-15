@@ -217,3 +217,10 @@ per-chat storage choices and iPad/Mac clients remain future work; there is one a
 Apple's supported APIs: [directory access and bookmarks](https://developer.apple.com/documentation/uikit/providing-access-to-directories),
 [document-based iCloud access](https://developer.apple.com/documentation/uikit/uidocumentbrowserviewcontroller),
 and [document conflict handling](https://developer.apple.com/documentation/uikit/uidocument).
+
+## Configuration consumers (#37)
+
+Quick actions shares the granted EmblaChat root only after the preference save succeeds.
+An observable folder-readiness state keeps configuration reads behind the same durable
+consent gate; restored legacy scope remains paused. Off reads only the on-device action
+configuration. Actions is separate from chat documents and never serializes a draft.

@@ -242,4 +242,48 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
     }
 
+    @MainActor
+    func testQuickActionsFillOnlyAndProtectExistingDrafts() throws {
+        let app = try launchCleanChat()
+        let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
+        let email = app.buttons["action-draft-email"]
+        let translate = app.buttons["action-translate"]
+        XCTAssertTrue(email.waitForExistence(timeout: 10))
+        email.tap()
+        let emailText = "Help me draft an email. Ask who it is for and what I want to say."
+        let filled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", emailText), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [filled], timeout: 10), .completed)
+        XCTAssertFalse(app.staticTexts["user-message"].exists)
+        XCTAssertFalse(app.buttons["Send"].isEnabled)
+        let cards = XCTAttachment(screenshot: app.screenshot())
+        cards.name = "Quick-action cards and filled composer"
+        cards.lifetime = .keepAlways
+        add(cards)
+        translate.tap()
+        let replacement = app.alerts["Replace draft?"]
+        XCTAssertTrue(replacement.waitForExistence(timeout: 5))
+        let consent = XCTAttachment(screenshot: app.screenshot())
+        consent.name = "Quick-action draft replacement confirmation"
+        consent.lifetime = .keepAlways
+        add(consent)
+        replacement.buttons["Cancel"].tap()
+        XCTAssertEqual(composer.value as? String, emailText)
+        translate.tap()
+        XCTAssertTrue(replacement.waitForExistence(timeout: 5))
+        replacement.buttons["Replace draft"].tap()
+        let translation = "Help me translate some text. Ask for the text and target language."
+        let replaced = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", translation), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [replaced], timeout: 10), .completed)
+        XCTAssertFalse(app.staticTexts["user-message"].exists)
+        app.buttons["Chat history"].tap()
+        app.buttons["Settings"].tap()
+        app.buttons["Manage quick actions"].tap()
+        XCTAssertTrue(app.staticTexts["actions-source"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["actions-source"].label.contains("On My iPhone"))
+        XCTAssertTrue(app.buttons["Reload actions"].isEnabled)
+        XCTAssertFalse(app.staticTexts["actions-error"].exists)
+    }
+
 }

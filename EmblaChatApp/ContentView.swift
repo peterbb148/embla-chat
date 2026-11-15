@@ -8,7 +8,9 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var model = LocalInferenceModel()
     @State private var sheet: Sheet?
-    @State private var confirmNewChat = false
+    @State private var confirmation: ChatConfirmation?
+    @State private var quickActions = QuickActionsModel()
+    @State private var actionError: String?
     @State private var showHistory = false
     @State private var transcriptScroll = TranscriptScrollState()
     @FocusState private var composerFocused: Bool
@@ -25,6 +27,26 @@ struct ContentView: View {
             case .project(let id): return "project-" + id.uuidString
             case .moveChat(let id): return "move-" + id.uuidString
             case .memory(_, _, let message): return "memory-" + message.id.uuidString
+            }
+        }
+    }
+
+    private enum ChatConfirmation {
+        case newChat, replaceDraft(QuickAction)
+        var title: String {
+            switch self {
+            case .newChat: return "Start a new chat?"
+            case .replaceDraft: return "Replace draft?"
+            }
+        }
+        var message: String {
+            switch self {
+            case .newChat:
+                return "Your current chat and draft will be saved in history. "
+                    + "Any active response stops first."
+            case .replaceDraft:
+                return "Replace the current draft with this action's prompt? "
+                    + "You can edit it before sending."
             }
         }
     }
@@ -155,7 +177,7 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        confirmNewChat = true
+                        confirmation = .newChat
                     } label: {
                         Label("New Chat", systemImage: "square.and.pencil")
                     }
@@ -166,7 +188,7 @@ struct ContentView: View {
             }
             .sheet(item: $sheet) { destination in
                 switch destination {
-                case .settings: ModelSettingsView(model: model)
+                case .settings: ModelSettingsView(model: model, actions: quickActions)
                 case .context: ContextUsageView(model: model)
                 case .newProject: ProjectNameEditor(model: model, projectID: nil, name: "")
                 case .project(let id): ProjectDetailView(model: model, projectID: id)
@@ -176,16 +198,25 @@ struct ContentView: View {
                         sourceChatID: chatID, message: message)
                 }
             }
-            .alert("Start a new chat?", isPresented: $confirmNewChat) {
-                Button("Start new chat") {
-                    composerFocused = false
-                    model.newChat()
+            .alert(confirmation?.title ?? "Chat", isPresented: Binding(
+                get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }
+            )) {
+                switch confirmation {
+                case .newChat:
+                    Button("Start new chat") {
+                        composerFocused = false
+                        model.newChat()
+                    }
+                case .replaceDraft(let action):
+                    Button("Replace draft") { selectAction(action, replacing: true) }
+                case nil: EmptyView()
                 }
                 Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Your current chat and draft will be saved in history. Any active response stops first.")
-            }
+            } message: { Text(confirmation?.message ?? "") }
             .task { model.check() }
+            .task(id: QuickActionsModel.sourceKey(for: model.cloud)) {
+                quickActions.reload(using: model.cloud)
+            }
             .onChange(of: model.resetting) { _, resetting in
                 composerFocused = !resetting
             }
@@ -194,9 +225,18 @@ struct ContentView: View {
             }
             .onChange(of: model.busy) { _, _ in updateIdleTimer() }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { model.becameActive() }
-                if phase == .inactive { model.becameInactive() }
-                if phase == .background { model.enteredBackground() }
+                if phase == .active {
+                    model.becameActive()
+                    quickActions.resume(using: model.cloud)
+                }
+                if phase == .inactive {
+                    model.becameInactive()
+                    quickActions.pause()
+                }
+                if phase == .background {
+                    model.enteredBackground()
+                    quickActions.pause()
+                }
                 updateIdleTimer()
             }
         }
@@ -223,7 +263,7 @@ struct ContentView: View {
                         Spacer()
                         Button {
                             showHistory = false
-                            confirmNewChat = true
+                            confirmation = .newChat
                         } label: { Label("New Chat", systemImage: "square.and.pencil") }
                         .labelStyle(.iconOnly)
                         .accessibilityIdentifier("sidebar-new-chat")
@@ -305,8 +345,32 @@ struct ContentView: View {
         }
     }
 
+    private func selectAction(_ action: QuickAction, replacing: Bool = false) {
+        actionError = nil
+        do {
+            let prompt = try quickActions.prompt(for: action, using: model.cloud)
+            if !replacing && !model.prompt.isEmpty && model.prompt != prompt {
+                confirmation = .replaceDraft(action)
+                return
+            }
+            model.prompt = prompt
+            composerFocused = true
+        } catch { actionError = error.localizedDescription }
+    }
+
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if model.messages.isEmpty {
+                if quickActions.loadedSourceKey == QuickActionsModel.sourceKey(for: model.cloud) {
+                    QuickActionCards(actions: quickActions.actions,
+                        enabled: model.chatRestored && !model.resetting && !model.cloud.resolving,
+                        select: { selectAction($0) })
+                }
+                if let error = actionError ?? quickActions.error {
+                    Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                        .accessibilityIdentifier("quick-action-error")
+                }
+            }
             if model.readyDirectory == nil {
                 Button {
                     composerFocused = false
@@ -481,6 +545,7 @@ private struct ProjectMemoryAction: View {
 /// Model administration and measurements stay out of the conversation screen.
 private struct ModelSettingsView: View {
     @Bindable var model: LocalInferenceModel
+    let actions: QuickActionsModel
     @State private var activeAlert: SettingsAlert?
     @State private var chooseCloudFolder = false
     @Environment(\.dismiss) private var dismiss
@@ -500,6 +565,11 @@ private struct ModelSettingsView: View {
                     }
                 }
                 cloudSection
+                Section("Actions") {
+                    NavigationLink("Manage quick actions") {
+                        QuickActionSettingsView(actions: actions, cloud: model.cloud)
+                    }
+                }
                 Section("Model") {
                     Text("Embla 1").font(.headline)
                     if let manifest = model.manifest {
@@ -599,6 +669,7 @@ private struct ModelSettingsView: View {
                 return "All saved chats, their summaries and project memory will be stored in "
                     + "iCloud Drive/EmblaChat/Chats. "
                     + "Select the EmblaChat folder; Skills is reserved for portable skills. "
+                    + "Quick actions uses Actions/actions.json in the same folder. "
                     + "Your drafts and model stay on this device. Choose or create EmblaChat in Files."
             case .cloudChoice:
                 return "This replaces all chats and project memory in the chosen location. "

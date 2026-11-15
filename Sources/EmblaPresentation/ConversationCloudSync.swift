@@ -38,6 +38,8 @@ public final class ConversationCloudSync {
     public private(set) var enabled = false
     public private(set) var requiresScopeConsent = false
     public private(set) var consentVersion = 1
+    public private(set) var folderAccessReady = false
+    public private(set) var configurationRevision = UUID()
     public private(set) var status = "iCloud is off."
     public private(set) var error: String?
     public private(set) var syncing = false
@@ -56,7 +58,6 @@ public final class ConversationCloudSync {
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
     // Lifecycle pauses invalidate transfers, while only a setting change supersedes consent saving.
-    @ObservationIgnored private var configurationID = UUID()
     @ObservationIgnored private var needsSync = false
     @ObservationIgnored private var baseNeedsSave = false
     @ObservationIgnored private var storedEnabled = false
@@ -65,6 +66,9 @@ public final class ConversationCloudSync {
     @ObservationIgnored private var paused = true
     @ObservationIgnored private var conflictRead: CloudConversationRead?
     @ObservationIgnored private var conflictLocal: String?
+
+    /// Internal consumers share the existing grant only after consent is actually durable.
+    var authorizedFolderBookmark: Data? { folderAccessReady && enabled ? bookmark : nil }
 
     public init() { factory = { ICloudConversationStore(bookmark: $0) } }
 
@@ -75,7 +79,7 @@ public final class ConversationCloudSync {
 
     func restore(enabled: Bool, bookmark: Data?, base: String?, consentVersion: Int = 1) {
         pause()
-        configurationID = UUID()
+        configurationRevision = UUID()
         self.enabled = enabled
         self.consentVersion = consentVersion
         requiresScopeConsent = enabled && consentVersion != 1
@@ -85,6 +89,7 @@ public final class ConversationCloudSync {
         baseFingerprint = base
         baseNeedsSave = false
         storage = enabled && !requiresScopeConsent ? bookmark.map(factory) : nil
+        folderAccessReady = storage != nil
         error = enabled && bookmark == nil ? CloudConversationError.permission.localizedDescription : nil
         status = enabled ? "Waiting to synchronize…" : "iCloud is off."
         if error != nil { status = "iCloud folder access is unavailable." }
@@ -114,7 +119,7 @@ public final class ConversationCloudSync {
     func enable(bookmark: Data) async throws {
         pause()
         let configuration = UUID()
-        configurationID = configuration
+        configurationRevision = configuration
         offPreferencePending = false
         enabled = true
         requiresScopeConsent = false
@@ -126,10 +131,11 @@ public final class ConversationCloudSync {
         conflictRead = nil
         conflictLocal = nil
         storage = nil
+        folderAccessReady = false
         error = nil
         status = "Saving the iCloud preference…"
         do { try await persistSettings() } catch {
-            if configurationID == configuration {
+            if configurationRevision == configuration {
                 enabled = storedEnabled
                 storage = nil
                 self.error = error.localizedDescription
@@ -140,34 +146,36 @@ public final class ConversationCloudSync {
             }
             throw error
         }
-        guard configurationID == configuration, enabled else { return }
+        guard configurationRevision == configuration, enabled else { return }
         storedEnabled = true
         storage = factory(bookmark)
+        folderAccessReady = true
         resume()
     }
 
     /// Stops new app operations. Data already handed to iCloud Drive may still finish uploading.
     public func disable() {
         pause()
-        configurationID = UUID()
-        let configuration = configurationID
+        configurationRevision = UUID()
+        let configuration = configurationRevision
         enabled = false
         requiresScopeConsent = false
         offPreferencePending = true
         storage = nil
+        folderAccessReady = false
         choices = []
         conflictRead = nil
         conflictLocal = nil
         error = nil
         status = "iCloud stopped; saving the off setting…"
         preferenceTask = Task {
-            guard configurationID == configuration, !enabled else { return }
+            guard configurationRevision == configuration, !enabled else { return }
             do {
                 try await persistSettings()
-                guard configurationID == configuration, !enabled else { return }
+                guard configurationRevision == configuration, !enabled else { return }
                 settingsSaved(enabled: false)
             } catch {
-                guard configurationID == configuration, !enabled, offPreferencePending else { return }
+                guard configurationRevision == configuration, !enabled, offPreferencePending else { return }
                 self.error = error.localizedDescription
                 status = storedEnabled
                     ? "iCloud stopped; the saved setting is still on and may resume after reopening. "
