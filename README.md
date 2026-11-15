@@ -19,7 +19,7 @@ The chat screen retains one in-memory transcript and supplies prior turns to fol
 requests. A bottom composer provides Send/Stop; model controls and measurements live in
 Settings. The composer follows the supplied ChatGPT reference, with its Send control
 inside one rounded card and no separate keyboard Done row. Visual acceptance is tracked
-in [chat UI validation](docs/chat-ui-validation.md). Automatic compaction is in development; see [the policy and validation status](docs/context-compaction.md). Local persistence and optional, default-off iCloud synchronization remain Epic 3 work. The current
+in [chat UI validation](docs/chat-ui-validation.md). Automatic on-device compaction is implemented; see [the policy and validation status](docs/context-compaction.md). Local persistence and optional, default-off iCloud synchronization remain Epic 3 work. The current
 transcript is not restored after the process exits.
 
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,

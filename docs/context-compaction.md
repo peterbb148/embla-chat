@@ -37,6 +37,34 @@ visible transcript, incomplete summaries, failure after a previous successful su
 and New Chat while summarization is running. Fixture tokenizers/generation are confined
 to tests; these do not prove real model summary quality or physical-device behavior.
 
-Real-device compaction and continuation, final app build/UI checks, and final-head Copilot
-review are pending. Actual device results will be recorded before issue #8 is closed.
+## Physical-device observation: 2026-11-15
+
+The signed Release build from implementation commit `987b067` was installed in place on
+an iPhone 17 Pro running iOS 27.2.1. The downloaded model was retained. Tests used synthetic
+messages through Device Hub; no mock model or app launch mode was used.
+
+- First message set the project codename BLUE PENGUIN and release color amber.
+- Seven padding batches each contained 650 space-separated digits plus a short instruction
+  to acknowledge receipt. Batches were entered in small chunks to avoid flooding remote input.
+- Batch 5 visibly triggered “Compacting earlier messages…”, then a normal Received response.
+  A follow-up correctly recalled both original facts, now outside the recent-turn suffix.
+- Batch 7 triggered compaction again. Stop was requested after observing that status; a
+  Stopped row appeared. Subsequent follow-up again recalled both facts. Timing alone does
+  not prove whether summary completion or cancellation won that race; deterministic tests
+  separately prove cancellation cannot commit a partial summary.
+- Settings showed 2752 prompt tokens and 191 generated tokens for the post-cycle recall,
+  with the model still stored locally (5.62 GB). These observations are not a broad quality
+  benchmark for summaries.
+- Cancelled New Chat retained the transcript. Confirmed New Chat cleared it. A fresh
+  “What is 2 plus 2? Reply briefly.” produced 4 and reported 22 prompt tokens, demonstrating
+  a fresh context rather than the earlier summary. Keyboard capture was returned to off.
+
+An earlier attempt to enter a large prose batch through remote keyboard injection ended
+with the app no longer running. No new app-specific crash or Jetsam report was available
+from the device when checked, so the cause is unresolved. The subsequent chunked numeric
+sequence completed the compaction tests without another exit. Long-input stability remains
+tracked under #18; this result does not establish that arbitrary large drafts are safe.
+
+Signed Xcode 27.2 Release device builds and package tests pass. Hosted build/UI checks and
+final-head Copilot review remain PR gates.
 Local and optional iCloud persistence remain in #9, with iCloud off by default.
