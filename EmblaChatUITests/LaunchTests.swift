@@ -16,8 +16,11 @@ final class LaunchTests: XCTestCase {
             app.buttons["New Chat"].tap()
             app.buttons["Start new chat"].tap()
             let cleared = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "enabled == false"), object: app.buttons["New Chat"])
+                predicate: NSPredicate(
+                    format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
+                object: composer)
             XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 10), .completed)
+            XCTAssertFalse(app.buttons["New Chat"].isEnabled)
         }
         return app
     }
@@ -77,7 +80,8 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(composer.value as? String, "Draft message")
         app.buttons["New Chat"].tap()
         app.buttons["Start new chat"].tap()
-        let cleared = NSPredicate(format: "value == %@ OR value == %@", "", "Message")
+        let cleared = NSPredicate(
+            format: "enabled == true AND (value == %@ OR value == %@)", "", "Message")
         expectation(for: cleared, evaluatedWith: composer)
         waitForExpectations(timeout: 10)
         XCTAssertFalse(app.buttons["New Chat"].isEnabled)

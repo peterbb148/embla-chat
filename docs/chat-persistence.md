@@ -102,8 +102,9 @@ missing local store after initialization failure, preserving any existing archiv
 saves await an explicit replacement-completion barrier for both New Chat and cloud restoration;
 a cloud restore can be active without a model-operation task. Unchanged cloud polls no longer
 rewrite the local archive: cloud metadata is saved when the shared base changes. Both additional
-regressions reproduce their respective failures with these fixes removed. Fresh review and
-hosted checks remain pending.
+regressions reproduce their respective failures with these fixes removed. The launch-test reset
+helper now waits for an enabled, empty composer; a disabled New Chat button alone also describes
+an in-progress reset. Fresh review and hosted checks remain pending.
 
 Remaining gates for #9:
 
