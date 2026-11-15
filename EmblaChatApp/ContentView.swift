@@ -2,6 +2,7 @@ import EmblaCore
 import EmblaPresentation
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Single conversational screen backed by the real local Embla runtime.
 struct ContentView: View {
@@ -89,7 +90,7 @@ struct ContentView: View {
                         Label("New Chat", systemImage: "square.and.pencil")
                     }
                     .disabled(
-                        model.resetting || (model.busy && !model.running)
+                        model.resetting || model.cloud.resolving || (model.busy && !model.running)
                             || (model.messages.isEmpty && model.prompt.isEmpty))
                 }
             }
@@ -112,6 +113,7 @@ struct ContentView: View {
             }
             .onChange(of: model.busy) { _, _ in updateIdleTimer() }
             .onChange(of: scenePhase) { _, phase in
+                if phase == .active { model.becameActive() }
                 if phase == .inactive { model.becameInactive() }
                 if phase == .background { model.enteredBackground() }
                 updateIdleTimer()
@@ -136,6 +138,10 @@ struct ContentView: View {
                 }
                 .accessibilityIdentifier("model-status")
             }
+            if let error = model.storageError {
+                Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                    .accessibilityIdentifier("chat-storage-error")
+            }
             if let error = model.error {
                 Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
                     .accessibilityIdentifier("chat-error")
@@ -144,7 +150,7 @@ struct ContentView: View {
                 TextField("Message", text: $model.prompt, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($composerFocused)
-                    .disabled(model.resetting)
+                    .disabled(model.resetting || !model.chatRestored || model.cloud.resolving)
                     .frame(minHeight: 24, alignment: .topLeading)
                     .accessibilityIdentifier("prompt")
                     .accessibilityLabel("Message")
@@ -259,18 +265,25 @@ private struct ChatMessageRow: View {
 /// Model administration and measurements stay out of the conversation screen.
 private struct ModelSettingsView: View {
     @Bindable var model: LocalInferenceModel
-    @State private var confirmDelete = false
+    @State private var activeAlert: SettingsAlert?
+    @State private var chooseCloudFolder = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Conversation") {
-                    Text(
-                        "Chat history is kept while the app is open. iCloud saving is not available yet."
-                    )
-                    .font(.callout).foregroundStyle(.secondary)
+                    Text(model.storageStatus)
+                        .accessibilityIdentifier("chat-storage-status")
+                    Text("Chats and drafts are saved on this device. iCloud is optional.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if let error = model.storageError {
+                        Text(error).foregroundStyle(.red).textSelection(.enabled)
+                        Button("Retry chat storage") { model.retryChatStorage() }
+                            .disabled(model.busy || model.cloud.resolving)
+                    }
                 }
+                cloudSection
                 Section("Model") {
                     Text("Embla 1").font(.headline)
                     if let manifest = model.manifest {
@@ -286,13 +299,13 @@ private struct ModelSettingsView: View {
                     }
                     if model.readyDirectory == nil {
                         Button("Download model") { model.download() }
-                            .disabled(model.busy || model.manifest == nil)
+                            .disabled(model.busy || model.cloud.resolving || model.manifest == nil)
                     }
                     Button("Check model files") { model.check() }
-                        .disabled(model.busy || model.manifest == nil)
+                        .disabled(model.busy || model.cloud.resolving || model.manifest == nil)
                     if model.storedBytes > 0 {
-                        Button("Delete model", role: .destructive) { confirmDelete = true }
-                            .disabled(model.busy)
+                        Button("Delete model", role: .destructive) { activeAlert = .deleteModel }
+                            .disabled(model.busy || model.cloud.resolving)
                     }
                     Text(model.status).accessibilityIdentifier("model-status")
                     if let error = model.error {
@@ -328,13 +341,93 @@ private struct ModelSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
-            .alert("Delete downloaded model files?", isPresented: $confirmDelete) {
-                Button("Delete model", role: .destructive) { model.delete() }
+            .fileImporter(isPresented: $chooseCloudFolder, allowedContentTypes: [.folder]) { result in
+                switch result {
+                case let .success(folder): Task { await model.cloud.enable(folder: folder) }
+                case let .failure(error): model.cloud.folderSelectionFailed(error)
+                }
+            }
+            .alert(activeAlert?.title ?? "Settings", isPresented: Binding(
+                get: { activeAlert != nil }, set: { if !$0 { activeAlert = nil } }
+            ), presenting: activeAlert) { selection in
+                switch selection {
+                case .cloudConsent:
+                    Button("Choose folder") { chooseCloudFolder = true }
+                case .deleteModel:
+                    Button("Delete model", role: .destructive) { model.delete() }
+                case let .cloudChoice(choice):
+                    Button(choice.label, role: .destructive) { model.cloud.resolve(choiceID: choice.id) }
+                }
                 Button("Cancel", role: .cancel) {}
-            } message: {
+            } message: { selection in Text(selection.message) }
+
+        }
+    }
+
+    private enum SettingsAlert {
+        case deleteModel, cloudConsent
+        case cloudChoice(CloudChatChoice)
+
+        var title: String {
+            switch self {
+            case .deleteModel: return "Delete downloaded model files?"
+            case .cloudConsent: return "Enable iCloud Drive?"
+            case .cloudChoice: return "Use selected chat?"
+            }
+        }
+        var message: String {
+            switch self {
+            case .deleteModel:
+                return "You will need to download the model again. This does not clear your conversation."
+            case .cloudConsent:
+                return "Your chat and summary will be stored in iCloud Drive/EmblaChat/Chats. "
+                    + "Select the EmblaChat folder; Skills is reserved for portable skills. "
+                    + "Your draft and model stay on this device. Choose or create EmblaChat in Files."
+            case .cloudChoice:
+                return "This replaces the active chat in the chosen location. Using an iCloud copy "
+                    + "also replaces this device’s chat and unsent draft. Other conflicting copies "
+                    + "will be marked resolved."
+            }
+        }
+    }
+
+    private var cloudSection: some View {
+        Section("iCloud") {
+            Toggle("Store chats in iCloud Drive", isOn: Binding(
+                get: { model.cloud.enabled },
+                set: { enabled in
+                    if enabled { activeAlert = .cloudConsent } else { model.cloud.disable() }
+                }))
+                .disabled(!model.chatRestored || model.busy || model.cloud.resolving)
+                .accessibilityIdentifier("icloud-toggle")
+            Text("Off by default. This setting applies to all chats.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(model.cloud.status).accessibilityIdentifier("icloud-status")
+            if let error = model.cloud.error {
+                Text(error).foregroundStyle(.red).textSelection(.enabled)
+                    .accessibilityIdentifier("icloud-error")
+            }
+            if model.cloud.enabled {
+                Button("Sync now") { model.cloud.refresh() }
+                    .disabled(model.cloud.syncing || model.busy)
+                Button("Choose iCloud folder…") { activeAlert = .cloudConsent }
+                    .disabled(model.cloud.syncing || model.busy)
                 Text(
-                    "You will need to download the model again. This does not clear your conversation."
-                )
+                    "Turning this off stops new app writes and keeps existing cloud files. "
+                        + "iCloud Drive may finish transfers already queued."
+                ).font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(model.cloud.choices) { choice in
+                Button {
+                    activeAlert = .cloudChoice(choice)
+                } label: {
+                    VStack(alignment: .leading) {
+                        Text(choice.label)
+                        Text("\(choice.snapshot.messages.count) messages")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(model.cloud.syncing || model.busy)
             }
         }
     }

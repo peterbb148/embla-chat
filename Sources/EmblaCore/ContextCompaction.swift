@@ -1,7 +1,7 @@
 import Foundation
 
 /// The model context's replacement for a prefix of the visible transcript.
-public struct CompactionState: Sendable, Equatable {
+public struct CompactionState: Codable, Sendable, Equatable {
     public var summary: String
     public var summarizedMessageCount: Int
 

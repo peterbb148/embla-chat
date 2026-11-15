@@ -17,8 +17,8 @@ expanded reasoning follows output under the same near-bottom guard as answer tex
 No context is silently dropped when the budget is exceeded. This transcript is in memory;
 compaction (#8) and persistence (#9) were unimplemented at that milestone. Subsequent
 [compaction work](context-compaction.md) supplies a rolling summary plus recent turns
-without deleting the visible transcript. Local persistence and optional iCloud sync
-remain in #9.
+without deleting the visible transcript. The subsequent [local persistence work](chat-persistence.md) adds save/restore; optional
+iCloud sync remains in #9.
 
 ## Local validation (2026-11-14)
 

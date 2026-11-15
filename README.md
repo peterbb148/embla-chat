@@ -16,14 +16,17 @@ answers, Stop followed by another request, New Chat, background unloading and
 offline model loading/generation. See [device validation](docs/device-validation.md)
 for measured results and their limits, and [development](docs/development.md) for build steps.
 
-The chat screen retains one in-memory transcript and supplies prior turns to follow-up
+The chat screen retains one active transcript and supplies prior turns to follow-up
 requests. A bottom composer provides Send/Stop; model controls and measurements live in
 Settings. The composer follows the supplied ChatGPT reference, with its Send control
 inside one rounded card and no separate keyboard Done row. Visual acceptance is tracked
 in [chat UI validation](docs/chat-ui-validation.md). Automatic on-device compaction is
 implemented; see [the policy and validation status](docs/context-compaction.md). Local
-persistence and optional, default-off iCloud synchronization remain Epic 3 work. The current
-transcript is not restored after the process exits.
+chat and draft persistence are integrated, including restoration after process exit. Optional,
+default-off iCloud Drive synchronization has real iPhone/Mac transfer and restoration evidence; see
+[the persistence design and validation status](docs/chat-persistence.md).
+The selected cloud root separates `Chats/ActiveChat.json` from portable `Skills` folders;
+see [the storage layout](docs/storage-layout.md). Skill loading and MCP execution remain #27.
 
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,
 licensing, build requirements, limitations, and remaining validation.
