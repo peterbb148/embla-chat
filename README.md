@@ -2,7 +2,7 @@
 
 An iPhone app project for running Embla 1 locally, with one active chat, automatic
 context compaction, local chat persistence, and optional iCloud synchronization.
-iPad and Mac support are planned later.
+iPad and Mac support are unplanned future work (#10 and #11).
 
 ## Current status
 
@@ -31,6 +31,9 @@ see [the storage layout](docs/storage-layout.md). Skill loading and MCP executio
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,
 licensing, build requirements, limitations, and remaining validation.
 
+The [working-version acceptance record](docs/working-version-validation.md) maps Epic 3
+requirements to automated and physical evidence, with the remaining release limits.
+
 ## App identity
 
 The elm-inspired leaf icon and its generation prompt are preserved in
@@ -42,7 +45,8 @@ the name Embla.
 - [Epic 1: Scaffold and get ready](https://github.com/peterbb148/embla-chat/issues/12)
 - [Epic 2: Local inference and minimal UI](https://github.com/peterbb148/embla-chat/issues/13)
 - [Epic 3: Working single-chat app](https://github.com/peterbb148/embla-chat/issues/14)
-- [Epic 4: Polish and platform expansion](https://github.com/peterbb148/embla-chat/issues/15)
+- [Epic 4: Finish the iPhone chat experience](https://github.com/peterbb148/embla-chat/issues/15)
+- [Epic 5: Skills, MCP tools, and model upgrades](https://github.com/peterbb148/embla-chat/issues/38)
 
 Tasks are tracked in GitHub Issues. Work is delivered one issue and PR at a time,
 with Copilot review of the final commit and passing checks before merge.

@@ -97,7 +97,7 @@ The upstream runtime has no dedicated summary or auto-compaction API. The applic
 now generates summaries with the same local model and re-renders a rolling summary plus
 recent verbatim turns. See [context compaction](context-compaction.md) for exact budgets,
 transactional failure behavior, tests and real-device observations. Summary/context
-boundaries will be persisted locally and optionally synchronized through #9.
+boundaries are persisted locally and optionally synchronized by [chat persistence](chat-persistence.md).
 
 ## Download integration
 
@@ -125,19 +125,23 @@ Preserve the applicable copyright and permission notices in app distribution and
 alongside any redistributed model assets. These upstream licenses do not select a
 license for Embla Chat's own source. No model weights are committed to this repository.
 
-## Validation and remaining evidence
+## Initial inspection evidence and subsequent validation
 
 - Inspected the pinned source, model metadata and license files; no upstream changes
   were made. Model checksums are source metadata, not locally verified weight hashes.
-- Local toolchain reports Swift 6.2.3; `xcode-select -p` selects CommandLineTools and
-  `xcodebuild -version` fails. No Xcode app was found directly under `/Applications`.
+- Initial inspection had only Command Line Tools selected and no full Xcode installation.
+  Full Xcode 27.2 was subsequently installed for local builds and physical validation;
+  hosted checks use Xcode 26.2. See [development](development.md).
 - #2 proved iOS simulator compilation and scaffold launch in hosted run
   [43582094191](https://github.com/peterbb148/embla-chat/actions/runs/43582094191).
-  #16 adds an unsigned device Release build and reproducible clean-checkout checks.
-- #17 must prove actual iPhone 17 Pro loading, output, cancellation, offline operation,
-  memory viability and performance. No iPhone 17 Pro performance is claimed here.
+  #16 added an unsigned device Release build and reproducible clean-checkout checks.
+- #17 subsequently recorded actual iPhone 17 Pro loading, output, cancellation, offline
+  operation and sampled memory/performance in [device validation](device-validation.md).
+  Those measurements apply to their recorded device, source and workload.
 - Upstream README measurements are for M5 Pro and iPhone 18 Pro, not the target phone.
-- #9 must verify iCloud provisioning, account behavior and actual persistence.
+- #9 subsequently delivered local persistence and optional Files-based iCloud synchronization;
+  [persistence evidence](chat-persistence.md) distinguishes physical observations, fixture
+  tests and unforced release scenarios. Developer Program capabilities remain #32.
 
 ## Scaffold build finding (2026-11-14)
 
@@ -154,4 +158,5 @@ code and preserves the existing cache suffix.
 
 The corrected pin passed hosted simulator compilation and launch validation on
 app commit `43bf527`. Copilot reviewed that final head with no open issues, and
-PR #20 was merged to complete #2. Physical-device inference remains unverified.
+PR #20 was merged to complete #2. Physical inference was unverified at that scaffold
+milestone; subsequent [device validation](device-validation.md) records real inference.
