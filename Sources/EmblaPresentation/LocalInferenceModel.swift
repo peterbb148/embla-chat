@@ -730,6 +730,7 @@ public final class LocalInferenceModel {
         busy = true
         resetting = true
         cloud.pause()
+        cloud.refresh() // Drop choices tied to the library being edited; resume re-reads it.
         do {
             if loaded { try await session.reset() }
             try Task.checkCancellation()

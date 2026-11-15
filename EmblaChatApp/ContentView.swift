@@ -628,9 +628,9 @@ private struct ModelSettingsView: View {
             }
             if model.cloud.enabled {
                 Button("Sync now") { model.cloud.refresh() }
-                    .disabled(model.cloud.syncing || model.busy)
-                Button("Choose iCloud folder…") { activeAlert = .cloudConsent }
                     .disabled(model.cloud.syncing || model.busy || model.cloud.requiresScopeConsent)
+                Button("Choose iCloud folder…") { activeAlert = .cloudConsent }
+                    .disabled(model.cloud.syncing || model.busy)
                 Text(
                     "Turning this off stops new app writes and keeps existing cloud files. "
                         + "iCloud Drive may finish transfers already queued."

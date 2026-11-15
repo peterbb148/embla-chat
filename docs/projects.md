@@ -86,5 +86,11 @@ source chat/message UUIDs. From another project chat, Open source selected the o
 fixture conversation. Clear showed an explicit source-chats-kept confirmation; Cancel kept
 the note. Actual clearing is separately covered by package and real-model tests. Keyboard
 capture was restored to Off, and app iCloud remained Off throughout. No extra simulator or
-cloud provider access was used. The final local package run reports 123 cases and the final
+cloud provider access was used. The final local package run reports 124 tests and the final
 simulator build passes; real-model checks are opt-in and reported separately above.
+
+Review regressions: while expanded consent is paused, Choose iCloud folder stays enabled
+and Sync now is disabled. Project edits invalidate cached library-conflict choices while
+paused, so resuming recomputes choices using the new content. Parameterized edit/clear/move
+cases failed against the original implementation and pass with this correction; choosing
+the refreshed local version then resolves successfully without manual Sync now.

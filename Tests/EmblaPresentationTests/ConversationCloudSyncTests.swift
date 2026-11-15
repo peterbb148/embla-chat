@@ -1153,3 +1153,47 @@ func olderOnConsentPausesBeforeProviderAccessUntilMemoryScopeIsConfirmed() async
     #expect(try await ConversationStore(root: root).load()?.cloudConsentVersion == 1)
     cloud.disable(); await cloud.waitUntilIdle()
 }
+
+@Test(arguments: ["edit", "clear", "move"]) @MainActor
+func projectEditsRecomputePendingConflictChoicesWithoutManualRefresh(operation: String) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let source = ChatMessage(role: .user, text: "Synthetic conflict source")
+    let chatID = UUID()
+    let project = ChatProject(name: "A", memory: [ProjectMemoryEntry(text: "Original note",
+        sourceConversationID: chatID, sourceMessageID: source.id)])
+    let other = ChatProject(name: "B")
+    var archive = ConversationArchive(sequence: 1, snapshot: ConversationSnapshot(
+        conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
+    archive.projects = [project, other]
+    archive.cloudEnabled = true
+    archive.cloudConsentVersion = 1
+    archive.cloudFolderBookmark = Data("fixture consent".utf8)
+    archive.cloudBaseFingerprint = try syncSnapshot("Previous base").fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: syncSnapshot("Other device edit")))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    defer { cloud.pause() }
+    let model = LocalInferenceModel(repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: ConversationStore(root: root), cloud: cloud)
+    model.check(); await model.waitUntilIdle(); await cloud.waitUntilIdle()
+    #expect(cloud.choices.contains(where: { $0.snapshot == archive.library }))
+    let reads = await provider.reads
+    switch operation {
+    case "edit":
+        try await model.editProjectMemory(projectID: project.id,
+            entryID: project.memory[0].id, text: "Explicitly edited note")
+    case "clear": try await model.removeProjectMemory(projectID: project.id)
+    default: try await model.moveChat(chatID, to: other.id)
+    }
+    await cloud.waitUntilIdle()
+    let edited = try #require(model.cloud.current?()?.snapshot)
+    #expect(await provider.reads > reads)
+    #expect(!cloud.choices.contains(where: { $0.snapshot == archive.library }))
+    let choice = try #require(cloud.choices.first(where: { $0.snapshot == edited }))
+    cloud.resolve(choiceID: choice.id)
+    await cloud.waitUntilIdle()
+    #expect(cloud.choices.isEmpty && cloud.error == nil)
+    #expect(await provider.document.current == edited)
+}
