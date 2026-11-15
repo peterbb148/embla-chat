@@ -56,7 +56,38 @@ The PR and main checks must pass independently; CI never downloads model weights
 An additional provider check downloads only the pinned 5 KB config file; see
 [model storage](model-storage.md) for details.
 Feature tests accompany the implemented features. The [working-version audit](working-version-validation.md)
-maps the current coverage and physical evidence to #6 acceptance criteria.
+preserves the #6 checkpoint; [Epic 4 delivery](epic4-validation.md) maps current coverage
+and the limits of earlier physical evidence.
+
+## Reuse an existing local simulator
+
+On this development Mac, use the existing **iPhone 17 Pro**. Do not run the CI entry
+point locally merely to test the UI: it creates an isolated simulator and requires the
+hosted Xcode version. List existing devices and select its ID; never create a replacement
+just because a result bundle or build directory is new.
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+xcrun simctl list devices available
+# Copy the existing iPhone 17 Pro ID from the list above.
+embla_simulator_id='EXISTING-IPHONE-17-PRO-UUID'
+swift test --force-resolved-versions
+xcodebuild test -project EmblaChat.xcodeproj -scheme EmblaChat \
+  -configuration Debug \
+  -destination "platform=iOS Simulator,id=$embla_simulator_id" \
+  -derivedDataPath build/Epic4Simulator -parallel-testing-enabled NO \
+  -onlyUsePackageVersionsFromResolvedFile -disableAutomaticPackageResolution \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+Production UI tests use actual app storage and create/retain test chats and drafts.
+Before local UI tests, verify Embla's global iCloud switch is **Off**: a production launch
+with an existing On preference and folder grant can synchronize. The tests do not sign
+into accounts, grant new folder access or generate model replies. Real-provider checks
+remain deferred to #45; use a dedicated explicitly authorized test folder for those checks.
+UI tests and unsigned device builds require no Developer Program membership. No simulator
+reset, new device or personal-account change is needed. Reuse the derived-data directory;
+add a unique `-resultBundlePath` only when an additional evidence bundle is needed.
 
 ## Verified scaffold evidence
 
@@ -90,7 +121,8 @@ a bottom-anchored multiline composer, Send/Stop and confirmed New Chat. Model do
 verification, storage deletion and last-response measurements are in Settings. Opening
 Settings does not reset the conversation or start another readiness check.
 
-Every Send reconstructs inference context from the rolling summary and recent transcript.
+Every Send reconstructs inference context from explicit project memory, the rolling summary
+and recent transcript. The full visible transcript remains saved.
 The real tokenizer triggers local compaction before the context fills; the visible transcript
 is retained. Interrupted, failed and length-limited responses remain explicitly marked.
 See [compaction](context-compaction.md) for budgets, cancellation and device evidence.
