@@ -61,6 +61,12 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var checkpointTask: Task<Void, Never>?
     @ObservationIgnored private var persistenceSequence: UInt64 = 0
     @ObservationIgnored private var lastSnapshot: ConversationSnapshot?
+    private struct PersistedCloudSettings: Sendable {
+        var enabled = false
+        var bookmark: Data?
+        var base: String?
+    }
+    @ObservationIgnored private var persistedCloudSettings = PersistedCloudSettings()
     @ObservationIgnored private var restoringChat = false
     @ObservationIgnored private var repository: ModelRepository?
     @ObservationIgnored private let session: InferenceSession
@@ -389,6 +395,9 @@ public final class LocalInferenceModel {
             prompt = archive.draft
             persistenceSequence = archive.sequence
             lastSnapshot = archive.snapshot
+            persistedCloudSettings = PersistedCloudSettings(
+                enabled: archive.cloudEnabled, bookmark: archive.cloudFolderBookmark,
+                base: archive.cloudBaseFingerprint)
             cloud.restore(
                 enabled: archive.cloudEnabled, bookmark: archive.cloudFolderBookmark,
                 base: archive.cloudBaseFingerprint)
@@ -423,7 +432,7 @@ public final class LocalInferenceModel {
     /// Captures on the main actor and queues writes in order; only the latest write sets status.
     private func saveChatNow(
         snapshot replacement: ConversationSnapshot? = nil, draft: String? = nil,
-        notifyCloud: Bool = true
+        notifyCloud: Bool = true, cloudSettings requestedSettings: PersistedCloudSettings? = nil
     ) async throws {
         guard chatRestored, let chatStore else { return }
         checkpointTask?.cancel()
@@ -439,16 +448,22 @@ public final class LocalInferenceModel {
         lastSnapshot = snapshot
         persistenceSequence += 1
         let sequence = persistenceSequence
-        var archive = ConversationArchive(
+        let pendingArchive = ConversationArchive(
             sequence: sequence, snapshot: snapshot, draft: draft ?? prompt)
-        archive.cloudEnabled = cloud.enabled
-        archive.cloudFolderBookmark = cloud.bookmark
-        archive.cloudBaseFingerprint = cloud.baseFingerprint
         storageStatus = "Saving on this device…"
         let previous = saveTask
         let write = Task {
             if let previous { _ = await previous.result }
+            // Ordinary checkpoints inherit settings from the preceding successful write,
+            // never from an opt-in whose own save is still pending or has failed.
+            var settings = requestedSettings ?? self.persistedCloudSettings
+            if requestedSettings == nil && !self.cloud.enabled { settings.enabled = false }
+            var archive = pendingArchive
+            archive.cloudEnabled = settings.enabled
+            archive.cloudFolderBookmark = settings.bookmark
+            archive.cloudBaseFingerprint = settings.base
             try await chatStore.save(archive)
+            self.persistedCloudSettings = settings
         }
         saveTask = write
         do {
@@ -492,7 +507,10 @@ public final class LocalInferenceModel {
             while self.resetting {
                 await withCheckedContinuation { self.replacementWaiters.append($0) }
             }
-            try await self.saveChatNow(notifyCloud: false)
+            let settings = PersistedCloudSettings(
+                enabled: self.cloud.enabled, bookmark: self.cloud.bookmark,
+                base: self.cloud.baseFingerprint)
+            try await self.saveChatNow(notifyCloud: false, cloudSettings: settings)
         }
         cloud.apply = { [weak self] snapshot, expected in
             guard let self else { throw CancellationError() }

@@ -397,11 +397,57 @@ private actor PreferenceCheckpointStore: ConversationStoring {
     func save(_ archive: ConversationArchive) async throws {
         if archive.cloudEnabled {
             await gate.blockOnce()
-            if failEnabled { throw CocoaError(.fileWriteOutOfSpace) }
+            if failEnabled {
+                failEnabled = false
+                throw CocoaError(.fileWriteOutOfSpace)
+            }
         }
         try await store.save(archive)
     }
     func allowEnabledSaves() { failEnabled = false }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func checkpointQueuedDuringFailedConsentCannotEnableCloudAfterReopening() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let snapshot = syncSnapshot("local conversation before consent")
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot))
+    let provider = SyncProviderFixture()
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let store = PreferenceCheckpointStore(root: root, failEnabled: true)
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: store, cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    let enabling = Task { try await cloud.enable(bookmark: Data("fixture permission".utf8)) }
+    try await store.gate.waitForEntry()
+    model.prompt = "Draft checkpoint during pending consent"
+    let checkpoint = Task { try await model.flushChatStorage() }
+    for _ in 0..<20 { await Task.yield() }
+    await store.gate.release()
+    do {
+        try await enabling.value
+        Issue.record("Consent save must fail.")
+    } catch { #expect((error as? CocoaError)?.code == .fileWriteOutOfSpace) }
+    try await checkpoint.value
+    let saved = try #require(try await ConversationStore(root: root).load())
+    #expect(!cloud.enabled && !saved.cloudEnabled)
+    #expect(saved.draft == model.prompt && saved.snapshot == snapshot)
+    let reopenedCloud = ConversationCloudSync(factory: { _ in provider })
+    let reopened = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: ConversationStore(root: root), cloud: reopenedCloud)
+    reopened.check()
+    await reopened.waitUntilIdle()
+    await reopenedCloud.waitUntilIdle()
+    #expect(!reopenedCloud.enabled)
+    #expect(reopened.prompt == model.prompt)
+    #expect(await provider.reads == 0)
+    #expect(await provider.writes == 0)
 }
 
 @Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor

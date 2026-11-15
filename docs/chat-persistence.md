@@ -81,7 +81,7 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 78 package tests pass (one has two parameterized cases). These include
+On 2026-11-15, all 79 package tests pass (one has two parameterized cases). These include
 coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
@@ -97,6 +97,12 @@ consent becomes durable. They also verify that lifecycle resume/foreground callb
 bypass the pending consent save. The provider
 is constructed only after that save succeeds; a separate configuration identity lets ordinary
 lifecycle pauses preserve the pending opt-in while disabling/changing settings supersedes it.
+Ordinary checkpoints inherit cloud settings from the preceding successful archive write,
+rather than capturing an in-flight opt-in. Only an explicit preference write can commit an
+enable request; a failed consent save cannot be resurrected by a later draft checkpoint.
+The committed settings advance inside the serial writer only after saving succeeds. A gated
+regression fails the preference save once, lets the queued checkpoint succeed, then reopens
+the saved archive and verifies iCloud stays off with no provider reads/writes.
 Other regressions hold actual local replacement writes open to verify
 preference saves cannot resurrect the old conversation after either New Chat or cloud restore.
 An explicit completion barrier covers both replacement paths. Unchanged polls do not rewrite
