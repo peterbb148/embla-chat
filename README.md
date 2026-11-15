@@ -58,7 +58,7 @@ Embla Metal runtime. There is no remote inference service in the application pat
 - [Inference API](docs/inference-api.md) and [runtime integration](docs/runtime-integration.md)
 - [Context management](docs/context-compaction.md) and [context usage](docs/context-usage.md)
 - [Chat history](docs/chat-history.md) and [Projects](docs/projects.md)
-- [Validation records](docs/working-version-validation.md)
+- [Validation records](docs/validation.md)
 - [Branding and the name Embla](docs/branding/README.md)
 
 Tested revisions, platform limitations and measurements belong in the validation records.

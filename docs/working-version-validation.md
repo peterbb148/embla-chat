@@ -38,9 +38,10 @@ Local package tests and Xcode 27.2 simulator/device builds also passed. That hea
 Copilot review with no open findings and no unresolved threads before PR #31 merged.
 The documentation audit receives its own final-head CI and review before merging.
 
-## Remaining work
+## Work remaining at the Epic 3 checkpoint
 
-Epic 3 delivers a working version, not final release acceptance:
+The following list describes the original Epic 3 checkpoint, rather than current pending
+work. See [Epic 4 delivery acceptance](epic4-validation.md) for the current status:
 
 - #18: Markdown/code rendering, Copy/selection, scrolling and storage-control
   polish and investigation of the earlier large remotely injected input exit.
@@ -59,7 +60,8 @@ Epic 3 delivers a working version, not final release acceptance:
 The initial cloud toggle applies to all chats and defaults off. Future per-chat privacy
 must also cover derived project memory. The current app has one active chat, creates
 `EmblaChat/Chats` and `EmblaChat/Skills` in the selected cloud root, and does not load
-skills or execute tools. `EmblaChat/Actions` remains a future configuration path in #37.
+skills or execute tools. `EmblaChat/Actions` was reserved at this checkpoint; #37 now
+implements prompt actions, as recorded below.
 
 ## History extension (#33)
 

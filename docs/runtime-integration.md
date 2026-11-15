@@ -3,6 +3,9 @@
 Status: source and metadata investigation completed on 2026-11-14 for #1. No model
 weights were downloaded and no iOS build or physical-device inference was performed.
 
+This is the initial investigation checkpoint. See [validation records](validation.md) for
+subsequent builds, real inference, device observations and current delivery limits.
+
 ## Selected inputs
 
 The investigated upstream revision below is the baseline. The app now pins runtime

@@ -65,9 +65,12 @@ marks a failed backend reusable.
 
 ## Conversation and context contract
 
-The shared controller keeps a chronological `messages` transcript and supplies all
-user turns and nonempty actual assistant text/reasoning on every Send. Cancelled and
-limited responses keep their explicit UI state and their real partial content. New Chat
+The shared controller retains a complete chronological `messages` transcript. Each Send
+builds inference input from explicitly saved project notes (when assigned), the rolling
+summary and recent user/assistant turns. Notes and summary share one leading system prefix;
+the exact tokenizer counts this same input before generation. Compaction preserves the
+visible transcript and the latest exchanges; it does not automatically create project notes.
+Cancelled and limited responses keep their explicit UI state and real partial content. New Chat
 waits for active work to drain, saves the previous transcript/summary/draft in history,
 and resets inference state. Selecting an earlier chat restores its own context without
 starting generation.
@@ -106,4 +109,5 @@ streaming, cancellation, serialization, budgets, reset, unload, and reload after
 thrown failure. These tests do not run the model. Hosted checks build the adapter
 for iOS. Actual output, measured memory and offline operation were observed in #17;
 see [device validation](device-validation.md) for the tested implementation and limits.
-The conversational UI work in #25 requires its own context/keyboard observations.
+The [Epic 4 delivery record](epic4-validation.md) separates subsequent context/UI checks,
+real-host inference and earlier physical observations.

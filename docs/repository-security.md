@@ -93,8 +93,11 @@ internal: an internal owner-authored PR uses final-head Copilot review, fixes/re
 passing checks and a SHA-pinned merge. A separate owner-review rule can permit the owner
 through its PR-only bypass to avoid self-approval deadlock. That exception must apply only
 to the review rule, never build/security rules. Before merging an external PR, verify
-Peter's approval of the final commit rather than using the internal exception. GitHub
-cannot restrict an owner-only review bypass by PR author, and repository owners can alter
+Peter's approval of the final commit rather than using the internal exception.
+Approval may be given explicitly in the maintainer chat; record that authorized decision
+as an exact-head GitHub review before running the gate. The agent must never generate an
+external-PR approval without Peter's explicit authorization. New commits need new approval.
+GitHub cannot restrict an owner-only review bypass by PR author, and repository owners can alter
 settings; the documented owner workflow remains part of this trust boundary.
 
 ## Validation record
@@ -170,3 +173,20 @@ Gitleaks accepts each case; the required policy refuses each. The pinned tool al
 source/.gitleaksignore even with an explicit alternative ignore path, so the policy rejects
 that source file rather than silently accepting its fingerprints. No ignore entries or
 real credentials are added to the project.
+
+## Final delivery audit
+
+#49 merged as `f01fadd7e6c9241fc5ffa47bb867bc2acd4b585d` after all eight required contexts
+passed at reviewed `b47ae1b`, including the actual owner-login native-alert status.
+The inventory check verified complete published full-query results for Swift, Actions and
+Python; a fresh native alert inventory returned zero. Final-main checks and inventories
+are linked from [#48](https://github.com/peterbb148/embla-chat/issues/48) and the
+[delivery record](epic4-validation.md). GitHub recognizes the MIT license, CODEOWNERS reports
+no errors, and Actions defaults are read-only with automated review approval disabled.
+
+The scan-history API is unavailable here (HTTP 404: Advanced Security disabled), despite the
+public-repository scanning/push-protection features being enabled. The attestation is not
+proof that all native scanning completed, and a later alert does not automatically revoke
+it. This is the selected maintainer-run trust boundary: run it fresh immediately before
+merge, retain independent synchronous scans, and recheck after merge. Do not substitute a
+sleep, timestamp guess or empty unavailable response for scan-completion evidence.
