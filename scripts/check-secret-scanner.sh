@@ -14,7 +14,7 @@ git -C "$fixture" commit -qm clean
 "$scanner" git --redact=100 --no-banner --exit-code=1 "$fixture"
 
 # Construct a recognizably shaped but deliberately fake token only in temporary data.
-synthetic="gh"'p_'"0123456789abcdefghijklmnopqrstuvwxyz"
+synthetic="gh"'p_'"$(python3 -c 'import random, string; chars=list(string.ascii_lowercase + string.digits); random.Random(48).shuffle(chars); print("".join(chars))')"
 printf 'token = "%s"\n' "$synthetic" > "$fixture/fixture.txt"
 git -C "$fixture" add fixture.txt
 git -C "$fixture" commit -qm 'synthetic detector fixture'

@@ -64,3 +64,18 @@ review/build evidence are recorded here when verified. Temporary deliberately vu
 manifest fixtures are never executed and must be removed before merge. A failed, skipped
 or unavailable required check is not a passing result. Post-merge main scans and alert
 inventories must be checked again after asynchronous GitHub analysis completes.
+
+The deliberate dependency fixture on draft PR #49 was rejected by required `Dependency
+audit` in [run 43761897906](https://github.com/peterbb148/embla-chat/actions/runs/43761897906).
+It reported two high and two moderate advisories for the non-executed lodash 4.17.20
+manifest. That manifest was then removed. The initial secret smoke fixture was ignored by
+the scanner's built-in alphabet stopword; a shuffled synthetic value now exercises the
+actual detector. Local smoke checks pass, including redaction and historical detection;
+the full local history scan reports zero findings across 78 commits at this checkpoint.
+
+Verified API settings: main integrity/security ruleset **27331567** has no bypass actors,
+requires `ios`, `Dependency audit` and `Secret scan` from GitHub Actions (app 15368), requires
+the branch to be up to date, blocks deletion/force-push and requires resolved conversations.
+Its CodeQL thresholds are both `all`, including low-severity security findings. Separate
+owner-review ruleset **27331553** requires one code-owner approval with stale approvals
+dismissed; its sole admin-role bypass is PR-only and does not bypass integrity/security.
