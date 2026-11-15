@@ -140,9 +140,17 @@ Personal account
 identifiers, authentication state and system Drive settings are excluded from public evidence.
 Do not run UI automation during a user handoff.
 
-The requested `Chats`/`Skills` separation was added after this original-root validation.
-The new chat path still needs a real transfer/restoration follow-up. Final-head Copilot
-review, fixes/re-review and hosted checks are also required before merge.
+The requested `Chats`/`Skills` separation was verified in a signed Release follow-up at
+`0a8287f` on the same physical iPhone. The original test document was moved intact to
+`Chats/ActiveChat.json`; Files showed both sibling folders. A new coordinated Mac edit of
+the labelled three-message fixture and boundary-2 summary restored exactly on the phone,
+as verified against its copied local archive. Confirmed New Chat then uploaded an empty
+snapshot with matching IDs and cleared summary to the new path. The old root-level file
+remained absent, Settings reported Synced, and app sync was disabled afterward. The model
+remained stored locally. This follow-up proves the changed path; the earlier recall,
+divergent-copy and missing-file tests above were not repeated for this path-only change.
+
+Final-head Copilot review, fixes/re-review and hosted checks are required before merge.
 
 Developer Program-dependent capabilities/distribution are deferred to #32. The current
 Files-based storage design does not use CloudKit or an app-owned iCloud container. Later
