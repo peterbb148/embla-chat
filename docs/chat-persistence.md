@@ -81,7 +81,7 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 77 package tests pass (one has two parameterized cases). These include
+On 2026-11-15, all 78 package tests pass (one has two parameterized cases). These include
 coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
@@ -93,7 +93,11 @@ These automated tests do not prove real cloud transfer.
 
 Gated regressions cover preference persistence before the first provider operation, disabling
 while opt-in saving is pending, and failed opt-in save/retry without provider access before
-consent becomes durable. Other regressions hold actual local replacement writes open to verify
+consent becomes durable. They also verify that lifecycle resume/foreground callbacks cannot
+bypass the pending consent save. The provider
+is constructed only after that save succeeds; a separate configuration identity lets ordinary
+lifecycle pauses preserve the pending opt-in while disabling/changing settings supersedes it.
+Other regressions hold actual local replacement writes open to verify
 preference saves cannot resurrect the old conversation after either New Chat or cloud restore.
 An explicit completion barrier covers both replacement paths. Unchanged polls do not rewrite
 the archive. Retry recreates a missing local store. The UI reset helper waits for an enabled,
@@ -102,6 +106,10 @@ Explicit provider fixtures now supply multiple unresolved copies: automatic writ
 blocked, every distinct copy is offered, explicit selection resolves the copies, and a newly
 arrived copy invalidates the old choice until refreshed. A coordinated temporary-file test
 also rejects a mismatched expected conflict fingerprint set without overwriting the document.
+Model deletion remains available when a corrupt or inaccessible chat prevents restoration,
+allowing storage to be reclaimed without altering the chat archive. A real-file regression
+verifies model bytes are deleted while the corrupt conversation remains intact. The lifecycle
+consent and deletion regressions reproduce the original failures with their fixes removed.
 
 ## Physical iCloud Drive evidence (2026-11-15)
 
@@ -149,6 +157,8 @@ snapshot with matching IDs and cleared summary to the new path. The old root-lev
 remained absent, Settings reported Synced, and app sync was disabled afterward. The model
 remained stored locally. This follow-up proves the changed path; the earlier recall,
 divergent-copy and missing-file tests above were not repeated for this path-only change.
+The subsequent consent-lifecycle and deletion recovery fixes have focused package regressions;
+the physical cloud sequence was not repeated for those control-flow changes.
 
 Final-head Copilot review, fixes/re-review and hosted checks are required before merge.
 

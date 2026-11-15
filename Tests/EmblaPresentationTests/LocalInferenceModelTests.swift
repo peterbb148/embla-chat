@@ -622,6 +622,30 @@ func corruptChatBlocksGenerationAndNewChatWithoutDestroyingSavedBytes() async th
 }
 
 @Test @MainActor
+func corruptChatDoesNotPreventDeletingTheModelToReclaimStorage() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    // Chat and model directories are separate in production; do not nest this archive in model storage.
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let file = root.appendingPathComponent("active-chat.json")
+    let corrupt = Data("saved conversation requiring recovery".utf8)
+    try corrupt.write(to: file)
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    #expect(!model.chatRestored && model.storageError != nil)
+    #expect(try await fixture.repository.storedBytes() > 0)
+    model.delete()
+    await model.waitUntilIdle()
+    #expect(try await fixture.repository.storedBytes() == 0)
+    #expect(model.status == "Model deleted.")
+    #expect(!model.chatRestored && model.storageError != nil)
+    #expect(try Data(contentsOf: file) == corrupt)
+    #expect(backend.calls == 0)
+}
+
+@Test @MainActor
 func failedResetSaveKeepsTheVisibleChatUntilAnActualDurableResetSucceeds() async throws {
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let root = fixture.root.appendingPathComponent("Conversation")

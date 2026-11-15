@@ -181,7 +181,7 @@ public final class LocalInferenceModel {
         }
         task = Task {
             do {
-                try await restoreChatIfNeeded()
+                if operation != .delete { try await restoreChatIfNeeded() }
                 if loaded && operation != .generate && operation != .clear {
                     try await session.unload()
                     loaded = false

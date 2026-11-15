@@ -53,6 +53,8 @@ public final class ConversationCloudSync {
     @ObservationIgnored private var drainTask: Task<Void, Never>?
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
+    // Lifecycle pauses invalidate transfers, while only a setting change supersedes consent saving.
+    @ObservationIgnored private var configurationID = UUID()
     @ObservationIgnored private var needsSync = false
     @ObservationIgnored private var foreground = true
     @ObservationIgnored private var paused = true
@@ -68,6 +70,7 @@ public final class ConversationCloudSync {
 
     func restore(enabled: Bool, bookmark: Data?, base: String?) {
         pause()
+        configurationID = UUID()
         self.enabled = enabled
         self.bookmark = bookmark
         baseFingerprint = base
@@ -97,17 +100,19 @@ public final class ConversationCloudSync {
 
     func enable(bookmark: Data) async throws {
         pause()
-        let epoch = generation
+        let configuration = UUID()
+        configurationID = configuration
         enabled = true
         self.bookmark = bookmark
         baseFingerprint = nil
         choices = []
         conflictRead = nil
         conflictLocal = nil
-        storage = factory(bookmark)
+        storage = nil
         error = nil
+        status = "Saving the iCloud preference…"
         do { try await persistSettings() } catch {
-            if generation == epoch {
+            if configurationID == configuration {
                 enabled = false
                 storage = nil
                 self.error = error.localizedDescription
@@ -115,13 +120,15 @@ public final class ConversationCloudSync {
             }
             throw error
         }
-        guard generation == epoch, enabled else { return }
+        guard configurationID == configuration, enabled else { return }
+        storage = factory(bookmark)
         resume()
     }
 
     /// Stops new app operations. Data already handed to iCloud Drive may still finish uploading.
     public func disable() {
         pause()
+        configurationID = UUID()
         enabled = false
         storage = nil
         choices = []

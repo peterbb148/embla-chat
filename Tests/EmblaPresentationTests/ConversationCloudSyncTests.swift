@@ -423,6 +423,11 @@ func optInWaitsForDurableConsentAndPendingDisablePreventsProviderAccess(
     await model.waitUntilIdle()
     let enabling = Task { try await cloud.enable(bookmark: Data("fixture permission".utf8)) }
     try await store.gate.waitForEntry()
+    // Lifecycle callbacks and manual refresh must not bypass the pending consent save.
+    cloud.resume()
+    cloud.setForeground(false)
+    cloud.setForeground(true)
+    cloud.refresh()
     #expect(await provider.reads == 0)
     #expect(await provider.writes == 0)
     #expect(try await ConversationStore(root: root).load()?.cloudEnabled == false)
