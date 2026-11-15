@@ -14,8 +14,10 @@ Open a pull request linking its issue and describing behavior and validation. Re
 build/security checks and resolved review conversations are merge prerequisites. Findings
 must be fixed and the final commit re-reviewed; do not suppress vulnerabilities to make a
 check pass. External contributions require approval from the code owner, **@peterbb148**.
-Internal work by Peter and the coding agent follows the same checks and final-head Copilot
-review process, without an impossible self-approval requirement.
+Maintainer-authored changes follow the same checks and final-head Copilot review process,
+without an impossible self-approval requirement. Immediately before merging, the maintainer
+also runs trusted main’s native secret-alert attestation against the reviewed final SHA;
+see [the required gate](docs/repository-security.md#required-native-secret-alert-attestation).
 
 Contributions to original project code are under the [MIT License](LICENSE). Keep upstream
 license notices and attribution intact. See [SECURITY.md](SECURITY.md) for private reporting

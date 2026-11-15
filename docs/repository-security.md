@@ -48,6 +48,37 @@ An advisory inventory is therefore not a complete audit of every line of an upst
 commit. Both lockfiles retain the exact reviewed runtime pin. Scanners report detectable
 findings; zero reported findings is not a guarantee against unknown vulnerabilities.
 
+## Required native secret-alert attestation
+
+The owner selected the existing maintainer `gh` login. `GitHub secret alerts` is a required
+commit status, separate from CI's Gitleaks scan. GitHub's ordinary workflow token cannot
+read this native inventory, so no personal token is copied into CI. The maintainer tool
+requires Peter's authenticated account, checks all pages of open native alerts, rejects
+unavailable/malformed data and checks the exact PR head again before publishing success.
+Only counts leave `gh`; actual secret values are never printed or stored by the tool.
+External PRs additionally require Peter's latest approval of that exact head. The tool never
+merges. Run it immediately before every guarded merge and recheck native alerts after merge;
+the status is a point-in-time attestation, not continuous monitoring.
+
+Run **trusted main's tool**, never a PR-controlled script using the maintainer login:
+
+```sh
+# Run from the trusted maintainer checkout. Do not check out an external PR to run this.
+git fetch origin main
+embla_gate_dir=$(mktemp -d)
+git show origin/main:scripts/check_secret_alerts.py > "$embla_gate_dir/check_secret_alerts.py"
+python3 -I "$embla_gate_dir/check_secret_alerts.py" --pr PR_NUMBER --sha FINAL_HEAD_SHA
+rm -r "$embla_gate_dir"
+```
+
+The first installation uses the internally authored, reviewed final commit of PR #49
+because the tool does not yet exist on main. Subsequent runs must take it from trusted main.
+The required status is published by the maintainer's existing OAuth login, so its ruleset
+context has no GitHub-App binding. GitHub write access can publish legacy commit statuses;
+maintainer identity and fresh execution remain an explicit trust boundary, alongside the
+owner's ability to alter repository settings. External fork tokens cannot attest the check.
+The ordinary CI contexts remain bound to GitHub Actions and have no bypass actors.
+
 ## Protection and approvals
 
 Main requires a PR, resolved conversations, current required build/security checks and
@@ -87,7 +118,8 @@ the full local history scan reports zero findings across 78 commits at this chec
 
 Verified API settings: main integrity/security ruleset **27331567** has no bypass actors,
 requires `ios`, `Dependency audit`, `Secret scan`, `CodeQL (swift)`, `CodeQL (actions)`, `CodeQL (python)` and
-`Security inventory` from GitHub Actions (app 15368), requires
+`Security inventory` from GitHub Actions (app 15368), plus the maintainer-published
+`GitHub secret alerts` status, requires
 the branch to be up to date, blocks deletion/force-push and requires resolved conversations.
 Its CodeQL thresholds are both `all`, including low-severity security findings. Separate
 owner-review ruleset **27331553** requires one code-owner approval with stale approvals
@@ -121,3 +153,10 @@ not proof of whole-codebase cleanliness. Acceptance requires the explicit full-q
 head and post-merge main scans; the initial result is not relabelled as that proof. The one-time bootstrap workflow was then removed.
 Python is additionally required on the final head because this change introduces Python
 security helpers; the earlier main had no Python source to analyze.
+
+The native-alert attestation is tested with explicit fixture counts rather than credentials:
+zero across all pages passes; an alert on a later page, unavailable/malformed inventory,
+changed head, missing external approval or non-owner authentication cannot publish success.
+Its actual live attestation is recorded on the final commit immediately before merge.
+Repository Actions defaults were also verified read-only, with automated PR-review approval
+disabled. First-time external contributors require workflow-run approval.
