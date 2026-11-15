@@ -31,7 +31,7 @@ func realHostModelManuallyCompactsBelowThresholdAndRecallsTheRetainedFact() asyn
     let padding = String(repeating:
         "This is synthetic background text for a local compaction test. ", count: 24)
     let prompts = [
-        "Remember this fact: the project codename is EMBER-42. " + padding + "Reply only Noted.",
+        "Remember this fact: the project codename is BLUE PENGUIN. " + padding + "Reply only Noted.",
         "This is an explicit real-model test conversation. Reply only Noted.",
         "We are testing manual compaction below its automatic threshold. Reply only Noted.",
         "Keep earlier facts available for a later question. Reply only Noted.",
@@ -48,11 +48,25 @@ func realHostModelManuallyCompactsBelowThresholdAndRecallsTheRetainedFact() asyn
     }
     #expect(before.inputTokens < 5888)
     let visible = model.messages
-    #expect(!visible.suffix(4).contains { $0.text.uppercased().contains("EMBER-42") })
+    let question = "What is the project codename? Reply with only the codename."
+    let baselineContext = ContextCompaction().context(
+        transcript: visible.map { ConversationMessage(role: $0.role, content: $0.text,
+            reasoning: $0.reasoning.isEmpty ? nil : $0.reasoning) },
+        state: CompactionState(), draft: question)
+    let baseline = try await session.generate(messages: baselineContext)
+    var baselineAnswer = ""
+    for try await event in baseline.events {
+        if case .answer(let text) = event { baselineAnswer += text }
+    }
+    await baseline.waitUntilFinished()
+    print("Uncompacted baseline recall: \(baselineAnswer)")
+    #expect(baselineAnswer.uppercased().contains("BLUE PENGUIN"))
+    #expect(!visible.suffix(4).contains { $0.text.uppercased().contains("BLUE PENGUIN") })
     model.compactNow(); await model.waitUntilIdle()
     try #require(model.error == nil)
     #expect(model.messages == visible)
-    #expect(model.compaction.summary.uppercased().contains("EMBER-42"))
+    print("Generated summary: \(model.compaction.summary)")
+    #expect(model.compaction.summary.uppercased().contains("BLUE PENGUIN"))
     #expect(model.compaction.summarizedMessageCount > 0)
     #expect(try await store.load()?.snapshot.compaction == model.compaction)
     await model.waitForContextUsage()
@@ -65,9 +79,10 @@ func realHostModelManuallyCompactsBelowThresholdAndRecallsTheRetainedFact() asyn
         #expect(try await session.tokenCount(messages: projected) == after.inputTokens)
         print("Real host compaction: input \(before.inputTokens) -> \(after.inputTokens) tokens.")
     } else { Issue.record("Post-compaction count unavailable") }
-    model.prompt = "What is the project codename? Reply with only the codename."
+    model.prompt = question
     model.run(); await model.waitUntilIdle()
     try #require(model.error == nil)
-    #expect(model.messages.last?.text.uppercased().contains("EMBER-42") == true)
+    print("Compacted recall reply: \(model.messages.last?.text ?? "")")
+    #expect(model.messages.last?.text.uppercased().contains("BLUE PENGUIN") == true)
     model.enteredBackground(); await model.waitUntilIdle()
 }

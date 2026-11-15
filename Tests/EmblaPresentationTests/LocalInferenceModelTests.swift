@@ -836,21 +836,28 @@ private actor ManualSummaryStore: ConversationStoring {
     let wrapped: ConversationStore
     let failSummary: Bool
     let holdSummary: Bool
+    let holdSummarySave: Int
+    private var summarySaves = 0
     var entered = false
     var history: [ConversationArchive] = []
     private var continuation: CheckedContinuation<Void, Never>?
 
-    init(wrapped: ConversationStore, failSummary: Bool = false, holdSummary: Bool = false) {
+    init(
+        wrapped: ConversationStore, failSummary: Bool = false,
+        holdSummary: Bool = false, holdSummarySave: Int = 1
+    ) {
         self.wrapped = wrapped
         self.failSummary = failSummary
         self.holdSummary = holdSummary
+        self.holdSummarySave = holdSummarySave
     }
     func load() async throws -> ConversationArchive? { try await wrapped.load() }
     func save(_ archive: ConversationArchive) async throws {
         history.append(archive)
         if !archive.snapshot.compaction.summary.isEmpty {
             if failSummary { throw CocoaError(.fileWriteOutOfSpace) }
-            if holdSummary && !entered {
+            summarySaves += 1
+            if holdSummary && summarySaves == holdSummarySave {
                 entered = true
                 await withCheckedContinuation { continuation = $0 }
             }
@@ -1003,4 +1010,27 @@ func completedManualSummarySaveIsExplicitlyNonCancellableAndKeepsDiskAndMemoryCo
     #expect(!model.compaction.summary.isEmpty)
     #expect(model.messages == archive.snapshot.messages)
     #expect(try await file.load()?.snapshot.compaction == model.compaction)
+}
+
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func draftEditedDuringTheFinalManualSaveIsCheckpointedAfterTheBarrierClears() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let file = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    try await file.save(manualCompactionArchive())
+    let store = ManualSummaryStore(wrapped: file, holdSummary: true, holdSummarySave: 2)
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = LocalInferenceModel(repository: fixture.repository, manifest: fixture.manifest,
+        session: InferenceSession { _, _ in backend }, chatStore: store)
+    model.check(); await model.waitUntilIdle()
+    model.compactNow()
+    try await store.waitForEntry()
+    #expect(!model.compaction.summary.isEmpty)
+    model.prompt = "Newest draft while final save is pending"
+    await store.release()
+    await model.waitUntilIdle()
+    await model.waitForScheduledPersistence()
+    let saved = try #require(await file.load())
+    #expect(saved.draft == "Newest draft while final save is pending")
+    #expect(saved.snapshot.compaction == model.compaction)
 }

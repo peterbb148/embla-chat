@@ -29,7 +29,10 @@ continues to show the measured usage.
 ## Compact now
 
 Manual compaction uses the existing local model, serial session, summary prompt and
-validation rules. It bypasses only the automatic trigger threshold. The latest two
+validation rules. It bypasses only the automatic trigger threshold. Both automatic and
+manual summary requests quote the historical turns and prior summary as JSON data, separate
+from the live task instructions, and use temperature 0 / top-p 1 for summary generation.
+Normal conversational sampling is unchanged. The latest two
 exchanges and current draft stay verbatim; older eligible turns become the rolling summary.
 With no eligible prefix, the disabled action explains why. The full visible transcript
 and draft remain intact, and no artificial assistant turn is appended.
@@ -65,12 +68,19 @@ those model files. It uses synthetic user prompts with real model-generated repl
 summary, writing only its own temporary local chat. The test is disabled by default in CI
 and must not be represented as a live pass when skipped.
 
-On 2026-11-15, this test passed on Apple M1 / macOS 26.7.3: manual compaction below the
-automatic threshold reduced the exact next-message count from 415 to 105, preserved all
-visible turns, persisted the summary and recalled EMBER-42 afterward. The standalone
-counter matched the loaded session's tokenizer count. This is real-model host evidence,
-not an iPhone performance or simulator-inference claim. Exact reviewed revisions and
-hosted results are recorded in the issue/PR before merge.
+The real-host test runs on Apple M1 / macOS 26.7.3. It compares an uncompacted
+baseline, requires the fact to be absent from the retained verbatim suffix, requires it in
+the generated summary, checks reduced exact usage and durable state, and asks for the fact
+again. The standalone counter must match the loaded session's tokenizer. Successful
+samples and exact reviewed revisions are recorded in the issue/PR before merge. This is
+real-model host evidence, not an iPhone performance or simulator-inference claim.
+
+A stricter probe exposed an acknowledgement-only summary when historical instructions
+were replayed as live turns; quoted transcript data and deterministic summary sampling
+address that failure. A nonce-code probe also produced EMMBER-42 for EMBER-42 in both the
+uncompacted and compacted replies even though the summary preserved the exact identifier.
+That remains a model-quality limitation. Responses are not rewritten or fuzzy-matched.
+The acceptance probe uses the familiar BLUE PENGUIN fact and strict literal checks.
 
 The isolated iPhone 17 Pro / iOS 27.2 simulator downloaded and verified the real 5.62 GB
 model, but model load failed with a Metal compiler XPC connection-interrupted error.

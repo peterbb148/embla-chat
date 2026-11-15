@@ -81,6 +81,7 @@ public final class LocalInferenceModel {
         var base: String?
     }
     @ObservationIgnored private var persistedCloudSettings = PersistedCloudSettings()
+    @ObservationIgnored private var persistedDraft = ""
     @ObservationIgnored private var restoringChat = false
     @ObservationIgnored private var replacingContext = false
     @ObservationIgnored private var repository: ModelRepository?
@@ -267,6 +268,12 @@ public final class LocalInferenceModel {
     /// Lets tests await a debounced count without timing assumptions.
     func waitForContextUsage() async { await usageTask?.value }
 
+    /// Awaits only existing persistence work; it does not create a write for tests.
+    func waitForScheduledPersistence() async {
+        if let checkpointTask { await checkpointTask.value }
+        if let saveTask { _ = await saveTask.result }
+    }
+
     private enum Operation { case check, download, delete, generate, compact, clear, unload }
 
     private func start(_ operation: Operation) {
@@ -439,7 +446,8 @@ public final class LocalInferenceModel {
         let plan = try compactionPolicy.plan(transcript: planning, state: compaction)
         let run = try await session.generate(
             messages: plan.messages,
-            options: GenerationOptions(maxTokens: compactionPolicy.summaryTokens))
+            options: GenerationOptions(
+                maxTokens: compactionPolicy.summaryTokens, temperature: 0, topP: 1))
         activeRun = run
         if Task.isCancelled { run.cancel() }
         var summary = ""
@@ -516,6 +524,7 @@ public final class LocalInferenceModel {
             prompt = archive.draft
             persistenceSequence = archive.sequence
             lastSnapshot = archive.snapshot
+            persistedDraft = archive.draft
             persistedCloudSettings = PersistedCloudSettings(
                 enabled: archive.cloudEnabled, bookmark: archive.cloudFolderBookmark,
                 base: archive.cloudBaseFingerprint)
@@ -585,6 +594,7 @@ public final class LocalInferenceModel {
             archive.cloudFolderBookmark = settings.bookmark
             archive.cloudBaseFingerprint = settings.base
             try await chatStore.save(archive)
+            self.persistedDraft = archive.draft
             self.persistedCloudSettings = settings
             self.cloud.settingsSaved(enabled: settings.enabled)
         }
@@ -706,6 +716,7 @@ public final class LocalInferenceModel {
                 status = "Cleanup failed."
             }
         }
+        let heldContextBarrier = replacingContext
         operationID = nil
         downloading = false
         running = false
@@ -718,6 +729,9 @@ public final class LocalInferenceModel {
         task = nil
         cloud.resume()
         refreshContextUsage()
+        if heldContextBarrier && persistedDraft != prompt {
+            scheduleChatSave(immediately: true)
+        }
     }
 }
 

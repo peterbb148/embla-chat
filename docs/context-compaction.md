@@ -18,7 +18,9 @@ The summarization prompt itself is separately checked by the session against the
 context limit. No character-count approximation or hidden truncation is used in production.
 
 The same local Embla model incorporates the previous summary and older turns into a new
-summary. The latest two exchanges and the current user message remain verbatim in inference
+summary. Historical visible content and the prior summary are supplied as quoted JSON data,
+not replayed as active participant instructions. Summary sampling uses temperature 0 / top-p 1;
+normal replies keep their existing settings. The latest two exchanges and the current user message remain verbatim in inference
 context. Earlier requirements, facts, preferences, decisions and unresolved questions are
 requested in the summary. Summaries can lose details; retaining the visible transcript does
 not mean every original detail remains available to the model after compaction.
