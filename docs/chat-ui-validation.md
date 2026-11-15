@@ -69,14 +69,32 @@ keyboard and that the separate Done button is absent. The settled keyboard/card 
 was also visually inspected in Device Hub with a typed draft. Final-head hosted checks
 and Copilot review must pass before merge.
 
-## Remaining physical checks for the revised design
+## Revised design installed and accepted (2026-11-15)
 
-1. Install the reviewed visual revision, preserving the existing verified model. The
-   current transcript is in memory; updating/restarting the app clears it.
-2. Verify the rounded composer sits directly above the software keyboard, Send is inside
-   it, and the separate Done row is absent. Check text and response visibility while
-   showing/hiding the keyboard and scrolling.
-3. Check Settings and draft preservation, Send/Stop followed by another request, and
-   New Chat Cancel/confirm. Interrupted output must stay marked, with no stale stream.
-4. Check background/reopen behavior and record any layout or runtime defects before #25
-   closes. Prior inference/offline evidence does not by itself approve the new design.
+After the user explicitly approved the app restart and clearing the unsaved chat,
+source 07adec64c261ce84ffb46edce307e292959d7c9e was signed, installed and launched on
+the physical iPhone 17 Pro / iOS 27.2.1. The existing verified model was reused without
+another download.
+
+The following were directly observed on the physical phone:
+
+- The compact header, single rounded input card and neutral user bubble appeared.
+- The full Danish software keyboard appeared while entering Hej med dig. Send was
+  inside the card above the keyboard, with no separate Done accessory row.
+- Sending Hej med dig produced the real response Hej! Hvordan kan jeg hjælpe dig i dag?
+  The response appeared in the simplified assistant row while the composer remained
+  separate from the transcript.
+- The user continued testing and reported Looks perfect, accepting the revised design.
+  Further manual conversation content was not recorded in repository evidence.
+
+Implementation head 07adec6 passed hosted validation in run
+[43690449574](https://github.com/peterbb148/embla-chat/actions/runs/43690449574), and
+Copilot reviewed that exact head with no open code findings or unresolved threads.
+The final evidence-only commit also requires review/checks before merge.
+
+Stop/reset/error/limited-response sequencing remains covered by the controller
+regressions; the earlier inference milestone also has recorded physical lifecycle
+observations. Every lifecycle interleaving was not repeated for this cosmetic revision.
+Working-app integration and broader release/accessibility checks continue in #6 and
+#18; compaction and iCloud remain #8 and #9. This acceptance does not claim those
+remaining features or the final release are complete.
