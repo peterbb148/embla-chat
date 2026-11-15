@@ -1,8 +1,7 @@
-import SwiftUI
-import UIKit
-
 import EmblaCore
 import EmblaPresentation
+import SwiftUI
+import UIKit
 
 /// Single conversational screen backed by the real local Embla runtime.
 struct ContentView: View {
@@ -18,64 +17,80 @@ struct ContentView: View {
         var id: String { rawValue }
     }
 
+    private struct Viewport: Equatable {
+        let height: CGFloat
+        let nearBottom: Bool
+    }
+
     var body: some View {
         NavigationStack {
             ScrollViewReader { reader in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 24) {
-                        if model.messages.isEmpty {
-                            ContentUnavailableView(
-                                "Start a conversation", systemImage: "bubble.left.and.bubble.right",
-                                description: Text(
-                                    "Your messages stay in this chat while the app is open."))
-                                .padding(.top, 60)
+                VStack(spacing: 0) {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 24) {
+                            ForEach(model.messages) { message in
+                                ChatMessageRow(message: message)
+                            }
+                            Color.clear.frame(height: 1).id("latest-message")
                         }
-                        ForEach(model.messages) { message in
-                            ChatMessageRow(message: message)
-                        }
-                        Color.clear.frame(height: 1).id("latest-message")
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
                     }
-                    .padding()
+                    .frame(maxHeight: .infinity)
+                    .clipped()
+                    .scrollDismissesKeyboard(.interactively)
+                    .onScrollGeometryChange(for: Viewport.self) { geometry in
+                        Viewport(
+                            height: geometry.containerSize.height,
+                            nearBottom: geometry.contentOffset.y + geometry.containerSize.height
+                                >= geometry.contentSize.height - 100)
+                    } action: { old, new in
+                        if old.height != new.height && followingOutput {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        } else {
+                            followingOutput = new.nearBottom
+                        }
+                    }
+                    .onChange(of: model.messages.last?.text) { _, _ in
+                        if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                    }
+                    .onChange(of: model.messages.last?.reasoning) { _, _ in
+                        if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                    }
+                    .onChange(of: model.messages.count) { _, _ in
+                        followingOutput = true
+                        reader.scrollTo("latest-message", anchor: .bottom)
+                    }
+                    composer
                 }
-                .scrollDismissesKeyboard(.interactively)
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.contentOffset.y + geometry.containerSize.height
-                        >= geometry.contentSize.height - 100
-                } action: { _, nearBottom in
-                    followingOutput = nearBottom
-                }
-                .onChange(of: model.messages.last?.text) { _, _ in
-                    if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
-                }
-                .onChange(of: model.messages.last?.reasoning) { _, _ in
-                    if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
-                }
-                .onChange(of: model.messages.count) { _, _ in
-                    followingOutput = true
-                    reader.scrollTo("latest-message", anchor: .bottom)
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) { composer }
             }
             .navigationTitle("Embla Chat")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("Embla")
+                        .font(.headline)
+                        .padding(.horizontal, 22)
+                        .padding(.vertical, 9)
+                        .background(Color(uiColor: .secondarySystemBackground), in: Capsule())
+                }
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         composerFocused = false
                         sheet = .settings
-                    } label: { Label("Settings", systemImage: "gearshape") }
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         confirmNewChat = true
-                    } label: { Label("New Chat", systemImage: "square.and.pencil") }
+                    } label: {
+                        Label("New Chat", systemImage: "square.and.pencil")
+                    }
                     .disabled(
                         model.resetting || (model.busy && !model.running)
                             || (model.messages.isEmpty && model.prompt.isEmpty))
-                }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { composerFocused = false }
                 }
             }
             .sheet(item: $sheet) { _ in ModelSettingsView(model: model) }
@@ -125,38 +140,61 @@ struct ContentView: View {
                 Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
                     .accessibilityIdentifier("chat-error")
             }
-            HStack(alignment: .bottom, spacing: 10) {
+            VStack(alignment: .leading, spacing: 6) {
                 TextField("Message", text: $model.prompt, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($composerFocused)
                     .disabled(model.resetting)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(
-                        Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 22))
+                    .frame(minHeight: 24, alignment: .topLeading)
                     .accessibilityIdentifier("prompt")
                     .accessibilityLabel("Message")
-                if model.running {
-                    Button { model.stop() } label: {
-                        Image(systemName: "stop.fill")
+                HStack {
+                    Button {
+                        composerFocused = false
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                            .font(.title3)
+                            .frame(width: 44, height: 44)
                     }
-                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-                    .controlSize(.large).frame(minWidth: 44, minHeight: 44)
-                    .accessibilityLabel("Stop")
-                } else {
-                    Button { model.run() } label: {
-                        Image(systemName: "arrow.up")
+                    .foregroundStyle(.secondary)
+                    .opacity(composerFocused ? 1 : 0)
+                    .disabled(!composerFocused)
+                    .accessibilityHidden(!composerFocused)
+                    .accessibilityLabel("Hide keyboard")
+                    Spacer()
+                    Button {
+                        if model.running { model.stop() } else { model.run() }
+                    } label: {
+                        Image(systemName: model.running ? "stop.fill" : "arrow.up")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                model.running || model.canRun
+                                    ? Color(red: 0.20, green: 0.40, blue: 0.92)
+                                    : Color(uiColor: .tertiaryLabel), in: Circle())
                     }
-                    .buttonStyle(.borderedProminent).buttonBorderShape(.circle)
-                    .controlSize(.large).frame(minWidth: 44, minHeight: 44)
-                    .disabled(!model.canRun)
-                    .accessibilityLabel("Send")
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+                    .disabled(!model.running && !model.canRun)
+                    .accessibilityLabel(model.running ? "Stop" : "Send")
                 }
+                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
+            .background(
+                Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 28)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 28).strokeBorder(.primary.opacity(0.12))
+            }
+            .shadow(color: .black.opacity(0.04), radius: 10, y: 2)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(uiColor: .systemBackground))
     }
 
     private func updateIdleTimer() {
@@ -173,22 +211,26 @@ private struct ChatMessageRow: View {
             if message.role == .user { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 10) {
                 if message.role == .assistant {
-                    Label("Embla", systemImage: "sparkle")
-                        .font(.caption).foregroundStyle(.secondary)
                     if !message.reasoning.isEmpty {
-                        DisclosureGroup("Thinking") {
+                        DisclosureGroup("Thoughts") {
                             Text(message.reasoning).font(.callout).foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
                         .font(.caption)
+                        .tint(.secondary)
+                        .foregroundStyle(.secondary)
                     }
                 }
                 if !message.text.isEmpty {
                     Group {
-                        if message.role == .user { Text(message.text) }
-                        else { Text(.init(message.text)) }
+                        if message.role == .user {
+                            Text(message.text)
+                        } else {
+                            Text(.init(message.text))
+                        }
                     }
                     .textSelection(.enabled)
+                    .lineSpacing(3)
                     .accessibilityIdentifier(message.role == .user ? "user-message" : "answer")
                 }
                 switch message.state {
@@ -204,7 +246,8 @@ private struct ChatMessageRow: View {
             .padding(message.role == .user ? 14 : 0)
             .background {
                 if message.role == .user {
-                    RoundedRectangle(cornerRadius: 20).fill(Color.accentColor.opacity(0.15))
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color(uiColor: .secondarySystemBackground))
                 }
             }
             if message.role == .assistant { Spacer(minLength: 12) }
@@ -222,6 +265,12 @@ private struct ModelSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Conversation") {
+                    Text(
+                        "Chat history is kept while the app is open. iCloud saving is not available yet."
+                    )
+                    .font(.callout).foregroundStyle(.secondary)
+                }
                 Section("Model") {
                     Text("Embla 1").font(.headline)
                     if let manifest = model.manifest {
@@ -263,10 +312,12 @@ private struct ModelSettingsView: View {
                             LabeledContent(
                                 "Decode time", value: milliseconds(metrics.decodeMilliseconds))
                             if metrics.decodeMilliseconds > 0 {
-                                LabeledContent("Decode tokens/s", value: String(
-                                    format: "%.1f",
-                                    Double(max(0, metrics.completionTokens - 1)) * 1_000
-                                        / metrics.decodeMilliseconds))
+                                LabeledContent(
+                                    "Decode tokens/s",
+                                    value: String(
+                                        format: "%.1f",
+                                        Double(max(0, metrics.completionTokens - 1)) * 1_000
+                                            / metrics.decodeMilliseconds))
                             }
                         }
                     }
@@ -282,7 +333,8 @@ private struct ModelSettingsView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text(
-                    "You will need to download the model again. This does not clear your conversation.")
+                    "You will need to download the model again. This does not clear your conversation."
+                )
             }
         }
     }

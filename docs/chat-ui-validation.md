@@ -34,24 +34,49 @@ compaction (#8) and iCloud persistence/restoration (#9) remain unimplemented.
 - Local logs/results are under ignored `build/ChatUI-first.xcresult` and temporary logs.
   Hosted checks and review must be recorded against the final PR head before merge.
 
-## Required physical checks
+## Physical observations before the visual revision
 
-These remain pending. The Mac was locked and the phone disconnected when visual/device
-validation was attempted; simulator success is not physical-phone evidence.
+On 2026-11-14, source c8d9577 was signed and installed on iPhone 17 Pro / iOS 27.2.1,
+preserving the existing 5.62 GB verified model. The following were directly observed:
 
-1. Install the reviewed build on the unlocked iPhone without deleting its verified model.
-2. Turn Device Hub Capture Keyboard off. Tap the composer directly on the phone and
-   verify the software keyboard appears, text is visible, and Send remains above it.
-   Capture Keyboard can behave like an attached hardware keyboard; do not force the
-   software keyboard when a hardware keyboard is deliberately in use.
-3. Verify that the opening screen has the transcript/composer and model administration
-   is reachable only through Settings. Close Settings and confirm the draft survives.
-4. Send a fresh factual instruction such as Remember my secret phrase blue penguin,
-   then ask What secret phrase did I give you. Record the real second answer and
-   confirm both turns remain visible, establishing actual multi-turn context use.
-5. Start a longer response, stop it, and send another message. Check interrupted output
-   remains marked and no stale stream enters the next assistant turn.
-6. Check New Chat Cancel preserves messages/draft, while confirmation clears them.
-   Background/reopen must stop/unload without silently restarting a response.
-7. Inspect readable scrolling, keyboard dismissal and Settings on the actual device;
-   report any visual or runtime defects before closing #25.
+- Model controls and verified storage appeared in Settings. Opening and closing Settings
+  preserved the draft.
+- Device Hub Capture Keyboard off alone still showed only a small input toolbar.
+  Device > Keyboard > Toggle Software Keyboard displayed the full keyboard. Done
+  dismissed it, and tapping Message showed it again. Mac-injected text could hide the
+  on-screen keyboard while leaving its accessory toolbar visible.
+- First message: Remember my secret phrase blue penguin. The actual response acknowledged
+  blue penguin. Follow-up: What secret phrase did I give you. Actual answer:
+  The secret phrase you gave me is "blue penguin". Both user and assistant turns stayed
+  visible in the transcript.
+- On 2026-11-15 the user reported that offline use works well and supplied physical
+  screenshots with the software keyboard displayed. The user requested a further
+  visual revision to match the ChatGPT reference; those screenshots show the prior UI.
+
+## ChatGPT-reference visual revision (2026-11-15)
+
+The composer is now one taller rounded card, with its Send/Stop button inside the lower
+row and text above. A keyboard-hide icon replaces the separate Done accessory row.
+User messages use neutral bubbles; assistant answers have no repeated Embla/sparkle
+label; thoughts are muted and expandable. The header uses a compact Embla capsule,
+Settings and New Chat. No attachment, voice or Work controls are shown because those
+features are outside scope. The transcript has a separate clipped viewport above the
+composer so text cannot appear below the input while the keyboard changes height.
+
+The final proportions passed all three simulator UI tests under Xcode 27.2 / iOS 27.2.
+The composer test explicitly checks that both the input and Send control are above the
+keyboard and that the separate Done button is absent. The settled keyboard/card layout
+was also visually inspected in Device Hub with a typed draft. Final-head hosted checks
+and Copilot review must pass before merge.
+
+## Remaining physical checks for the revised design
+
+1. Install the reviewed visual revision, preserving the existing verified model. The
+   current transcript is in memory; updating/restarting the app clears it.
+2. Verify the rounded composer sits directly above the software keyboard, Send is inside
+   it, and the separate Done row is absent. Check text and response visibility while
+   showing/hiding the keyboard and scrolling.
+3. Check Settings and draft preservation, Send/Stop followed by another request, and
+   New Chat Cancel/confirm. Interrupted output must stay marked, with no stale stream.
+4. Check background/reopen behavior and record any layout or runtime defects before #25
+   closes. Prior inference/offline evidence does not by itself approve the new design.

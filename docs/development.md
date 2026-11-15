@@ -95,11 +95,18 @@ content. No turn is silently trimmed to fit the context limit; the API reports t
 error. Automatic compaction (#8) and iCloud restoration (#9) are still pending. The active
 transcript and draft are lost when the process exits in this milestone.
 
-The composer uses native SwiftUI focus and a bottom safe-area inset so the software
-keyboard has space. Device Hub's Capture Keyboard behaves as an attached hardware
-keyboard and can suppress the on-phone keyboard. Turn capture off when checking the
-software keyboard, and also verify by tapping directly on the physical phone. Do not
-force a software keyboard over a deliberately attached hardware keyboard.
+The composer uses native SwiftUI focus and a vertical layout: the transcript has its
+own clipped scrolling region above a single rounded input card. Send/Stop and a keyboard
+hide control are inside that card. There is no separate keyboard Done accessory row.
+Container resizing follows the latest message when the reader was already at the bottom;
+scrolling up still pauses output-follow. Neutral user bubbles and muted expandable
+thoughts follow the user's ChatGPT visual reference without adding unsupported controls.
+
+Device Hub can hide the software keyboard even with Capture Keyboard off. During the
+physical test, Device > Keyboard > Toggle Software Keyboard showed the full keyboard;
+dismissing and tapping Message brought it back. Mac-injected typing can switch back to
+hardware-keyboard behavior. Check the keyboard on the physical phone as well as the
+mirrored view rather than adding an app-level forced-keyboard workaround.
 
 Idle sleep is disabled only during foreground work. Inactivity requests cancellation;
 backgrounding cancels and unloads once the worker drains. New Chat uses the same stop/wait
