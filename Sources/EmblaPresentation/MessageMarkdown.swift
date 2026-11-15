@@ -13,6 +13,7 @@ public struct MessageMarkdown {
 
         public let id: Int
         public let style: Style
+        public let listDepth: Int
         public var text: AttributedString
         public var plainText: String { String(text.characters) }
     }
@@ -26,25 +27,35 @@ public struct MessageMarkdown {
         for run in parsed.runs {
             let components = run.presentationIntent?.components ?? []
             let identity = components.first?.identity ?? 0
+            let listDepth = components.filter {
+                $0.kind == .orderedList || $0.kind == .unorderedList
+            }.count
             var style = Block.Style.prose
-            for component in components {
-                switch component.kind {
+            if let first = components.first {
+                switch first.kind {
                 case .header(level: let level): style = .heading(level)
                 case .codeBlock(languageHint: let language): style = .code(language)
-                case .listItem(ordinal: let ordinal):
-                    let ordered = components.contains { $0.kind == .orderedList }
-                    style = .listItem(ordered ? "\(ordinal)." : "•")
-                case .blockQuote:
-                    if style == .prose { style = .quote }
                 default: break
                 }
+            }
+            if style == .prose,
+               let itemIndex = components.firstIndex(where: {
+                   if case .listItem = $0.kind { return true }
+                   return false
+               }), case .listItem(ordinal: let ordinal) = components[itemIndex].kind {
+                let container = components.dropFirst(itemIndex + 1).first {
+                    $0.kind == .orderedList || $0.kind == .unorderedList
+                }
+                style = .listItem(container?.kind == .orderedList ? "\(ordinal)." : "•")
+            } else if style == .prose && components.contains(where: { $0.kind == .blockQuote }) {
+                style = .quote
             }
             var text = AttributedString(parsed[run.range])
             text.presentationIntent = nil
             if result.last?.id == identity {
                 result[result.count - 1].text.append(text)
             } else {
-                result.append(Block(id: identity, style: style, text: text))
+                result.append(Block(id: identity, style: style, listDepth: listDepth, text: text))
             }
         }
         blocks = result

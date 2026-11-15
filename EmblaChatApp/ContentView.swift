@@ -21,6 +21,7 @@ struct ContentView: View {
 
     private struct Viewport: Equatable {
         let height: CGFloat
+        let contentHeight: CGFloat
         let nearBottom: Bool
     }
 
@@ -44,17 +45,21 @@ struct ContentView: View {
                     .onScrollGeometryChange(for: Viewport.self) { geometry in
                         Viewport(
                             height: geometry.containerSize.height,
+                            contentHeight: geometry.contentSize.height,
                             nearBottom: geometry.contentOffset.y + geometry.containerSize.height
                                 >= geometry.contentSize.height - 100)
-                    } action: { _, new in
+                    } action: { old, new in
                         if readerScrolling {
                             followingOutput = new.nearBottom
-                        } else if followingOutput {
+                        } else if followingOutput && (
+                            old.height != new.height || old.contentHeight != new.contentHeight
+                        ) {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
                     }
                     .onScrollPhaseChange { _, phase in
-                        readerScrolling = phase == .interacting || phase == .decelerating
+                        readerScrolling = phase == .tracking || phase == .interacting
+                            || phase == .decelerating
                     }
                     .overlay(alignment: .bottomTrailing) {
                         if !followingOutput {
@@ -76,8 +81,10 @@ struct ContentView: View {
                     .onChange(of: model.messages.last?.reasoning) { _, _ in
                         if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
                     }
-                    .onChange(of: model.messages.count) { _, _ in
-                        if model.messages.isEmpty || model.messages.last?.role == .user {
+                    .onChange(of: model.messages.count) { oldCount, _ in
+                        if model.messages.isEmpty || model.messages.dropFirst(oldCount).contains(
+                            where: { $0.role == .user }
+                        ) {
                             followingOutput = true
                         }
                         if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
@@ -477,41 +484,44 @@ private struct MessageMarkdownView: View {
         case .success(let document):
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(document.blocks) { block in
-                    switch block.style {
-                    case .code(let language):
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(language ?? "Code").font(.caption).foregroundStyle(.secondary)
-                                Spacer()
-                                CopyTextButton(text: block.plainText, label: "Copy code")
+                    Group {
+                        switch block.style {
+                        case .code(let language):
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(language ?? "Code").font(.caption).foregroundStyle(.secondary)
+                                    Spacer()
+                                    CopyTextButton(text: block.plainText, label: "Copy code")
+                                }
+                                ScrollView(.horizontal) {
+                                    Text(block.plainText)
+                                        .font(.system(.body, design: .monospaced))
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: true, vertical: false)
+                                }
                             }
-                            ScrollView(.horizontal) {
-                                Text(block.plainText)
-                                    .font(.system(.body, design: .monospaced))
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: true, vertical: false)
+                            .padding(12)
+                            .background(Color(uiColor: .secondarySystemBackground),
+                                        in: .rect(cornerRadius: 14))
+                        case .heading(let level):
+                            Text(block.text)
+                                .font(level == 1 ? .title2.bold() : .headline)
+                                .accessibilityAddTraits(.isHeader)
+                        case .listItem(let marker):
+                            HStack(alignment: .top, spacing: 10) {
+                                Text(marker).foregroundStyle(.secondary)
+                                Text(block.text)
                             }
-                        }
-                        .padding(12)
-                        .background(Color(uiColor: .secondarySystemBackground),
-                                    in: .rect(cornerRadius: 14))
-                    case .heading(let level):
-                        Text(block.text)
-                            .font(level == 1 ? .title2.bold() : .headline)
-                            .accessibilityAddTraits(.isHeader)
-                    case .listItem(let marker):
-                        HStack(alignment: .top, spacing: 10) {
-                            Text(marker).foregroundStyle(.secondary)
+                        case .quote:
+                            HStack(alignment: .top, spacing: 10) {
+                                Rectangle().fill(.secondary.opacity(0.4)).frame(width: 3)
+                                Text(block.text).foregroundStyle(.secondary)
+                            }.fixedSize(horizontal: false, vertical: true)
+                        case .prose:
                             Text(block.text)
                         }
-                    case .quote:
-                        HStack(alignment: .top, spacing: 10) {
-                            Rectangle().fill(.secondary.opacity(0.4)).frame(width: 3)
-                            Text(block.text).foregroundStyle(.secondary)
-                        }.fixedSize(horizontal: false, vertical: true)
-                    case .prose:
-                        Text(block.text)
                     }
+                    .padding(.leading, CGFloat(max(0, block.listDepth - 1)) * 12)
                 }
             }
             .textSelection(.enabled)

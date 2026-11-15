@@ -33,3 +33,12 @@ import Testing
     let ordered = try MessageMarkdown("3. third\n4. fourth").blocks
     #expect(ordered.map(\.style) == [.listItem("3."), .listItem("4.")])
 }
+
+@Test func nestedListsKeepNearestMarkersAndSpecificCodeAndHeadingStyles() throws {
+    let source = "3. Outer\n   - Inner\n     ```swift\n     let x = 1\n     ```\n\n   ## Nested heading\n"
+    let blocks = try MessageMarkdown(source).blocks
+    #expect(blocks.map(\.style) == [
+        .listItem("3."), .listItem("•"), .code("swift"), .heading(2),
+    ])
+    #expect(blocks[2].plainText == "let x = 1\n")
+}
