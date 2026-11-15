@@ -1,0 +1,6 @@
+{
+  "name": "embla-dependency-gate-validation",
+  "private": true,
+  "description": "Temporary non-executed fixture: must fail security CI and be removed before merge",
+  "dependencies": { "lodash": "4.17.20" }
+}

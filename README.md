@@ -1,61 +1,76 @@
+<p align="center">
+  <img src="docs/branding/embla-leaf-source.png" alt="Embla Chat leaf icon" width="96">
+</p>
+
 # Embla Chat
 
-An iPhone app project for running Embla 1 locally, with one active chat, automatic
-context compaction, local chat persistence, and optional iCloud synchronization.
-iPad and Mac support are unplanned future work (#10 and #11).
+Local-first AI chat for iPhone, powered by [Embla](https://github.com/sevren-ai/embla-metal)
+and Apple's Metal framework.
 
-## Current status
+Run conversations on your device, organize them into Projects, and choose whether to sync
+saved chats through iCloud Drive. Model inference runs locally after the model is downloaded.
 
-Runtime integration and the native SwiftUI scaffold are implemented. Model setup
-now includes pinned downloads, SHA-256 verification, progress, cancellation, retry,
-and storage deletion. See [model storage](docs/model-storage.md) for behavior and
-validation limits. The [inference API](docs/inference-api.md) and conversational screen use
-the real pinned Embla adapter. The signed app is installed and launches on iPhone
-17 Pro with iOS 27.2.1. Physical testing verified the full model download, real
-answers, Stop followed by another request, New Chat, background unloading and
-offline model loading/generation. See [device validation](docs/device-validation.md)
-for measured results and their limits, and [development](docs/development.md) for build steps.
+## Features
 
-The chat screen retains one active transcript and supplies prior turns to follow-up
-requests. A bottom composer provides Send/Stop; model controls and measurements live in
-Settings. The composer follows the supplied ChatGPT reference, with its Send control
-inside one rounded card and no separate keyboard Done row. Visual acceptance is tracked
-in [chat UI validation](docs/chat-ui-validation.md). Basic Markdown/code rendering, selection,
-Copy and output-follow behavior are described in [chat polish](docs/chat-polish.md).
-Automatic on-device compaction is
-implemented; see [the policy and validation status](docs/context-compaction.md). The composer’s
-[context ring](docs/context-usage.md) shows exact next-message usage and offers manual compaction. Local
-chat and draft persistence are integrated, including restoration after process exit. Optional,
-default-off iCloud Drive synchronization has real iPhone/Mac transfer and restoration evidence; see
-[the persistence design and validation status](docs/chat-persistence.md).
-The left sidebar reopens [saved chats](docs/chat-history.md), each with its own summary and local draft.
-[Projects](docs/projects.md) group chats and share only notes you explicitly save,
-with editable text and source-chat links. The global iCloud switch covers all saved
-chats and project memory after consent.
-[Quick-action cards](docs/quick-actions.md) fill editable drafts from `Actions/actions.json`,
-with explicit confirmation before replacing a draft.
-The selected cloud root separates the `Chats/ActiveChat.json` library from portable `Skills` folders;
-see [the storage layout](docs/storage-layout.md). Skill loading and MCP execution remain #27.
+- A conversational interface with streaming responses, Markdown, code blocks and copying.
+- Saved chat history, a sidebar and separate drafts for each conversation.
+- Projects with editable memory that you explicitly save from a chat.
+- Automatic context compaction, a usage indicator and manual compaction controls.
+- Configurable quick actions that fill editable prompts.
+- Model download, integrity verification and storage management.
+- Optional iCloud Drive synchronization, off by default.
 
-See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,
-licensing, build requirements, limitations, and remaining validation.
+## Getting started
 
-The [working-version acceptance record](docs/working-version-validation.md) maps Epic 3
-requirements to automated and physical evidence, with the remaining release limits.
+You need a Mac with full Xcode to build the app. See the [development guide](docs/development.md)
+for supported toolchains, locked dependencies and simulator testing, and the
+[device guide](docs/device-validation.md#install) for signing and installation.
 
-## App identity
+```sh
+git clone https://github.com/peterbb148/embla-chat.git
+cd embla-chat
+open EmblaChat.xcodeproj
+```
 
-The elm-inspired leaf icon and its generation prompt are preserved in
-[branding](docs/branding/README.md), including the sources and uncertainty behind
-the name Embla.
+Select the **EmblaChat** scheme and your destination in Xcode. For local inference, build
+for a supported physical iPhone and download the model from the app's Settings. The
+[model storage guide](docs/model-storage.md) explains download size, verification and retry.
+Simulator UI checks do not establish model-inference support; see the linked validation
+records before relying on a particular device or configuration.
 
-## Delivery plan
+## Privacy and storage
 
-- [Epic 1: Scaffold and get ready](https://github.com/peterbb148/embla-chat/issues/12)
-- [Epic 2: Local inference and minimal UI](https://github.com/peterbb148/embla-chat/issues/13)
-- [Epic 3: Working single-chat app](https://github.com/peterbb148/embla-chat/issues/14)
-- [Epic 4: Finish the iPhone chat experience](https://github.com/peterbb148/embla-chat/issues/15)
-- [Epic 5: Skills, MCP tools, and model upgrades](https://github.com/peterbb148/embla-chat/issues/38)
+Conversations and drafts are saved locally. Enabling iCloud is an explicit choice and
+applies to saved chats and project memory; drafts and model files stay on the device.
+Turning synchronization off keeps existing cloud files. Project memory is saved explicitly
+rather than extracted automatically from your chats.
 
-Tasks are tracked in GitHub Issues. Work is delivered one issue and PR at a time,
-with Copilot review of the final commit and passing checks before merge.
+See [persistence](docs/chat-persistence.md) and [storage layout](docs/storage-layout.md) for
+consent, file formats, conflicts and configuration folders. Quick actions are documented
+[here](docs/quick-actions.md).
+
+## Architecture and documentation
+
+The app uses SwiftUI, shared Swift packages for inference and presentation, and a pinned
+Embla Metal runtime. There is no remote inference service in the application path.
+
+- [Development and testing](docs/development.md)
+- [Inference API](docs/inference-api.md) and [runtime integration](docs/runtime-integration.md)
+- [Context management](docs/context-compaction.md) and [context usage](docs/context-usage.md)
+- [Chat history](docs/chat-history.md) and [Projects](docs/projects.md)
+- [Validation records](docs/working-version-validation.md)
+- [Branding and the name Embla](docs/branding/README.md)
+
+Tested revisions, platform limitations and measurements belong in the validation records.
+Planned work and bug reports are tracked in [GitHub Issues](https://github.com/peterbb148/embla-chat/issues).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development and pull-request workflow.
+Report vulnerabilities using the guidance in [SECURITY.md](SECURITY.md).
+
+## License
+
+Embla Chat's original code is licensed under the [MIT License](LICENSE). Upstream runtime
+and model licenses remain separate; notices are retained in [third-party](third-party).
+Model weights are downloaded separately and are not bundled in this repository.
