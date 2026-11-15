@@ -465,6 +465,7 @@ public final class LocalInferenceModel {
             archive.cloudBaseFingerprint = settings.base
             try await chatStore.save(archive)
             self.persistedCloudSettings = settings
+            self.cloud.settingsSaved(enabled: settings.enabled)
         }
         saveTask = write
         do {

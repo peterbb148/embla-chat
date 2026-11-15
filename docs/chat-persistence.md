@@ -71,6 +71,13 @@ explicit conflict choice; it cannot queue the old conversation after the reset a
 No provider is opened or called while the preference is disabled, including when an old
 bookmark remains stored. Disabling cancels pending app operations and persists the choice;
 it keeps existing cloud files. Operations already handed to iCloud Drive may finish transferring.
+An off request stops transfers immediately and reports that the off setting is being saved.
+Until that succeeds it does not claim the saved preference is off. If saving fails, Settings
+warns when the saved setting is still on and can resume after reopening; lifecycle pauses
+cannot hide this error. A successful local Retry confirms Off and clears that warning.
+If changing an already-enabled folder preference fails, the toggle reflects the saved On
+setting with a stopped/error status. No old or new provider resumes implicitly; choose a folder
+again or turn off before closing. Real-file and lifecycle regressions cover these states.
 Foreground synchronization runs after local chat operations and checks periodically; inactivity
 pauses app-managed operations. Local checkpoints and unloading continue in the background, but
 neither can restart cloud access until the app becomes active. Provider-reported upload and
@@ -81,7 +88,7 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 82 package tests pass, including parameterized consent and sync-base cases.
+On 2026-11-15, all 84 package tests pass, including parameterized consent and sync-base cases.
 These include
 coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and

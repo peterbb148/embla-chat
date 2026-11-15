@@ -57,6 +57,8 @@ public final class ConversationCloudSync {
     @ObservationIgnored private var configurationID = UUID()
     @ObservationIgnored private var needsSync = false
     @ObservationIgnored private var baseNeedsSave = false
+    @ObservationIgnored private var storedEnabled = false
+    @ObservationIgnored private var offPreferencePending = false
     @ObservationIgnored private var foreground = true
     @ObservationIgnored private var paused = true
     @ObservationIgnored private var conflictRead: CloudConversationRead?
@@ -73,6 +75,8 @@ public final class ConversationCloudSync {
         pause()
         configurationID = UUID()
         self.enabled = enabled
+        storedEnabled = enabled
+        offPreferencePending = false
         self.bookmark = bookmark
         baseFingerprint = base
         baseNeedsSave = false
@@ -104,6 +108,7 @@ public final class ConversationCloudSync {
         pause()
         let configuration = UUID()
         configurationID = configuration
+        offPreferencePending = false
         enabled = true
         self.bookmark = bookmark
         baseFingerprint = nil
@@ -116,14 +121,18 @@ public final class ConversationCloudSync {
         status = "Saving the iCloud preference…"
         do { try await persistSettings() } catch {
             if configurationID == configuration {
-                enabled = false
+                enabled = storedEnabled
                 storage = nil
                 self.error = error.localizedDescription
-                status = "Could not save the iCloud preference."
+                status = storedEnabled
+                    ? "iCloud stopped; the saved setting is still on. "
+                        + "Choose a folder or turn off before closing."
+                    : "Could not save the iCloud preference. iCloud remains off."
             }
             throw error
         }
         guard configurationID == configuration, enabled else { return }
+        storedEnabled = true
         storage = factory(bookmark)
         resume()
     }
@@ -132,20 +141,39 @@ public final class ConversationCloudSync {
     public func disable() {
         pause()
         configurationID = UUID()
+        let configuration = configurationID
         enabled = false
+        offPreferencePending = true
         storage = nil
         choices = []
         conflictRead = nil
         conflictLocal = nil
         error = nil
-        status = "iCloud is off. Existing cloud files are kept."
-        let epoch = generation
+        status = "iCloud stopped; saving the off setting…"
         preferenceTask = Task {
-            do { try await persistSettings() } catch {
-                guard generation == epoch, !enabled else { return }
+            guard configurationID == configuration, !enabled else { return }
+            do {
+                try await persistSettings()
+                guard configurationID == configuration, !enabled else { return }
+                settingsSaved(enabled: false)
+            } catch {
+                guard configurationID == configuration, !enabled, offPreferencePending else { return }
                 self.error = error.localizedDescription
-                status = "iCloud stopped, but the preference could not be saved. Retry before closing."
+                status = storedEnabled
+                    ? "iCloud stopped; the saved setting is still on and may resume after reopening. "
+                        + "Retry before closing."
+                    : "iCloud stopped, but the preference could not be saved. Retry before closing."
             }
+        }
+    }
+
+    /// Called by the serial archive writer only after settings are actually durable.
+    func settingsSaved(enabled: Bool) {
+        storedEnabled = enabled
+        if !self.enabled, !enabled, offPreferencePending {
+            offPreferencePending = false
+            error = nil
+            status = "iCloud is off. Existing cloud files are kept."
         }
     }
 

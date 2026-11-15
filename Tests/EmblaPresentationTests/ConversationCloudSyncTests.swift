@@ -562,6 +562,77 @@ private actor PreferenceCheckpointStore: ConversationStoring {
     func allowEnabledSaves() { failEnabled = false }
 }
 
+@Test @MainActor
+func failedFolderPreferenceChangeReportsTheSavedOnSettingWithoutResumingProvider() async throws {
+    let provider = SyncProviderFixture()
+    let harness = SyncHarness(local: syncSnapshot("saved chat"), provider: provider)
+    harness.cloud.restore(enabled: true, bookmark: Data("saved permission".utf8), base: nil)
+    harness.cloud.persist = { throw CocoaError(.fileWriteOutOfSpace) }
+    do {
+        try await harness.cloud.enable(bookmark: Data("new permission".utf8))
+        Issue.record("Changing the folder preference must fail.")
+    } catch { #expect((error as? CocoaError)?.code == .fileWriteOutOfSpace) }
+    #expect(harness.cloud.enabled)
+    #expect(harness.cloud.error != nil)
+    #expect(harness.cloud.status.contains("saved setting is still on"))
+    harness.cloud.setForeground(false)
+    harness.cloud.setForeground(true)
+    await harness.cloud.waitUntilIdle()
+    #expect(await provider.reads == 0)
+    #expect(await provider.writes == 0)
+    harness.cloud.pause()
+}
+
+private actor OffSaveFailureStore: ConversationStoring {
+    private let store: ConversationStore
+    private var failOffOnce = true
+    init(root: URL) { store = ConversationStore(root: root) }
+    func load() async throws -> ConversationArchive? { try await store.load() }
+    func save(_ archive: ConversationArchive) async throws {
+        if failOffOnce, !archive.cloudEnabled {
+            failOffOnce = false
+            throw CocoaError(.fileWriteOutOfSpace)
+        }
+        try await store.save(archive)
+    }
+}
+
+@Test @MainActor
+func backgroundPauseDoesNotHideFailedOffSaveAndStorageRetryConfirmsOff() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let snapshot = syncSnapshot("saved cloud chat")
+    var archive = ConversationArchive(sequence: 1, snapshot: snapshot)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("saved permission".utf8)
+    archive.cloudBaseFingerprint = try snapshot.fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: snapshot, uploaded: true))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: OffSaveFailureStore(root: root), cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    let reads = await provider.reads
+    cloud.disable()
+    cloud.setForeground(false)
+    await cloud.waitUntilIdle()
+    #expect(!cloud.enabled && cloud.error != nil)
+    #expect(cloud.status.contains("saved setting is still on"))
+    #expect(try await ConversationStore(root: root).load()?.cloudEnabled == true)
+    try await model.flushChatStorage()
+    #expect(cloud.error == nil)
+    #expect(cloud.status == "iCloud is off. Existing cloud files are kept.")
+    #expect(try await ConversationStore(root: root).load()?.cloudEnabled == false)
+    cloud.setForeground(true)
+    await cloud.waitUntilIdle()
+    #expect(await provider.reads == reads)
+    #expect(await provider.writes == 0)
+}
+
 @Test(.timeLimit(.minutes(1))) @MainActor
 func checkpointQueuedDuringFailedConsentCannotEnableCloudAfterReopening() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
