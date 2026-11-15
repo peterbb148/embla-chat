@@ -107,7 +107,10 @@ public actor ConversationStore {
         encoder.outputFormatting = [.sortedKeys]
         let bytes = try encoder.encode(archive)
         #if os(iOS)
-            try bytes.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            let options: Data.WritingOptions = [
+                .atomic, .completeFileProtectionUntilFirstUserAuthentication,
+            ]
+            try bytes.write(to: file, options: options)
         #else
             try bytes.write(to: file, options: .atomic)
         #endif

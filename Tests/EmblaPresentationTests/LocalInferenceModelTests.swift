@@ -126,9 +126,11 @@ private struct PresentationFixture {
     }
     func clean() { try? FileManager.default.removeItem(at: root) }
 
-    @MainActor func model(session: InferenceSession) async -> LocalInferenceModel {
+    @MainActor func model(
+        session: InferenceSession, chatStore: ConversationStore? = nil
+    ) async -> LocalInferenceModel {
         let model = LocalInferenceModel(
-            repository: repository, manifest: manifest, session: session)
+            repository: repository, manifest: manifest, session: session, chatStore: chatStore)
         model.check()
         await model.waitUntilIdle()
         return model
@@ -524,4 +526,128 @@ func retryAfterFailedSummaryExcludesTheEmptyFailedAssistantTurn() async throws {
     #expect(!backend.encodedMessages.contains { context in
         context.contains { $0.role == .assistant && $0.content.isEmpty && $0.reasoning == nil }
     })
+}
+
+@Test @MainActor
+func controllerRestoresSavedTranscriptAndUnsentDraftWithoutStartingInference() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let root = fixture.root.appendingPathComponent("Conversation")
+    let backend = PresentationBackend(pauseFirst: false)
+    let first = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    first.prompt = "Remember this message"
+    first.run()
+    await first.waitUntilIdle()
+    first.prompt = "A draft kept on this device"
+    #expect(first.storageStatus == "Saving on this device…")
+    try await first.flushChatStorage()
+    #expect(first.storageStatus == "Saved on this device.")
+    let calls = backend.calls
+    let second = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    #expect(second.chatRestored && second.storageError == nil)
+    #expect(second.messages == first.messages)
+    #expect(second.conversationID == first.conversationID)
+    #expect(second.prompt == "A draft kept on this device")
+    #expect(!second.loaded && backend.calls == calls)
+}
+
+@Test @MainActor
+func controllerRestoresCompactedContextAndUsesItForTheNextReply() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let root = fixture.root.appendingPathComponent("Conversation")
+    let backend = PresentationBackend(pauseFirst: false, countCharacters: true)
+    let first = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    for _ in 0..<4 {
+        first.prompt = String(repeating: "x", count: 1_600)
+        first.run()
+        await first.waitUntilIdle()
+    }
+    try await first.flushChatStorage()
+    let second = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    #expect(second.compaction == first.compaction)
+    #expect(second.compaction.summarizedMessageCount == 2)
+    #expect(second.messages == first.messages)
+    second.prompt = "Continue using earlier requirements"
+    second.run()
+    await second.waitUntilIdle()
+    #expect(second.error == nil && second.storageError == nil)
+    #expect(backend.encodedMessages.last?.first?.role == .system)
+    #expect(backend.encodedMessages.last?.first?.content.contains(first.compaction.summary) == true)
+}
+
+@Test @MainActor
+func controllerRecoversPersistedPartialReplyWithoutRestartingGeneration() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let root = fixture.root.appendingPathComponent("Conversation")
+    let store = ConversationStore(root: root)
+    let snapshot = ConversationSnapshot(
+        conversationID: UUID(), messages: [
+            ChatMessage(role: .user, text: "Original request"),
+            ChatMessage(role: .assistant, text: "Partial output", state: .streaming),
+        ], compaction: CompactionState())
+    try await store.save(ConversationArchive(sequence: 1, snapshot: snapshot))
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    #expect(model.chatRestored && model.messages.last?.state == .interrupted)
+    #expect(model.messages.last?.id == snapshot.messages.last?.id)
+    #expect(model.messages.last?.text == "Partial output")
+    #expect(backend.calls == 0 && !model.running)
+    let saved = try await ConversationStore(root: root).load()
+    #expect(saved?.snapshot.messages.last?.state == .interrupted)
+}
+
+@Test @MainActor
+func corruptChatBlocksGenerationAndNewChatWithoutDestroyingSavedBytes() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let root = fixture.root.appendingPathComponent("Conversation")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let file = root.appendingPathComponent("active-chat.json")
+    let corrupt = Data("corrupt saved conversation".utf8)
+    try corrupt.write(to: file)
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    #expect(!model.chatRestored && model.storageError != nil)
+    model.prompt = "Do not overwrite my saved data"
+    #expect(!model.canRun)
+    model.run()
+    model.newChat()
+    await model.waitUntilIdle()
+    #expect(try Data(contentsOf: file) == corrupt)
+    #expect(backend.calls == 0)
+}
+
+@Test @MainActor
+func failedResetSaveKeepsTheVisibleChatUntilAnActualDurableResetSucceeds() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let root = fixture.root.appendingPathComponent("Conversation")
+    let backup = fixture.root.appendingPathComponent("ConversationBackup")
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    model.prompt = "Keep until reset is durable"
+    model.run()
+    await model.waitUntilIdle()
+    try await model.flushChatStorage()
+    let original = model.messages
+    let originalID = model.conversationID
+    try FileManager.default.moveItem(at: root, to: backup)
+    try Data("blocked directory".utf8).write(to: root)
+    model.newChat()
+    await model.waitUntilIdle()
+    #expect(model.messages == original && model.conversationID == originalID)
+    #expect(model.storageError != nil)
+    try FileManager.default.removeItem(at: root)
+    try FileManager.default.moveItem(at: backup, to: root)
+    model.newChat()
+    await model.waitUntilIdle()
+    #expect(model.messages.isEmpty && model.conversationID != originalID)
+    #expect(model.storageError == nil)
+    let reopened = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
+    #expect(reopened.messages.isEmpty && reopened.conversationID == model.conversationID)
 }

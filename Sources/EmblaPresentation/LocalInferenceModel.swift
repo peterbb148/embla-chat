@@ -6,7 +6,9 @@ import EmblaRuntime
 
 /// A visible turn in the single active conversation.
 public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
-    public enum State: String, Codable, Sendable { case streaming, complete, interrupted, failed, limited }
+    public enum State: String, Codable, Sendable {
+        case streaming, complete, interrupted, failed, limited
+    }
     public let id: UUID
     public let role: ConversationMessage.Role
     public var text: String
@@ -32,7 +34,7 @@ public final class LocalInferenceModel {
     public private(set) var compaction = CompactionState()
     public private(set) var compacting = false
     @ObservationIgnored private let compactionPolicy = ContextCompaction()
-    public var prompt = ""
+    public var prompt = "" { didSet { scheduleChatSave() } }
     public private(set) var messages: [ChatMessage] = []
     public private(set) var manifest: ModelManifest?
     public private(set) var readyDirectory: URL?
@@ -49,6 +51,18 @@ public final class LocalInferenceModel {
     public private(set) var answer = ""
     public private(set) var metrics: GenerationMetrics?
     public private(set) var loadMilliseconds: Double?
+    public private(set) var chatRestored = false
+    public private(set) var storageStatus = "Opening saved chat…"
+    public private(set) var storageError: String?
+    @ObservationIgnored private var chatStore: ConversationStore?
+    @ObservationIgnored private var saveTask: Task<Void, Error>?
+    @ObservationIgnored private var checkpointTask: Task<Void, Never>?
+    @ObservationIgnored private var persistenceSequence: UInt64 = 0
+    @ObservationIgnored private var lastSnapshot: ConversationSnapshot?
+    @ObservationIgnored private var restoringChat = false
+    @ObservationIgnored private var cloudEnabled = false
+    @ObservationIgnored private var cloudFolderBookmark: Data?
+    @ObservationIgnored private var cloudBaseRevision: UUID?
     @ObservationIgnored private var repository: ModelRepository?
     @ObservationIgnored private let session: InferenceSession
     @ObservationIgnored private var task: Task<Void, Never>?
@@ -58,13 +72,17 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var pendingClear = false
 
     public var canRun: Bool {
-        !busy && readyDirectory != nil
+        !busy && chatRestored && storageError == nil && readyDirectory != nil
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Production always uses the pinned Embla runtime and app-managed model storage.
     public init() {
         session = EmblaRuntime.makeSession()
+        do { chatStore = ConversationStore(root: try ConversationStore.defaultRoot()) } catch {
+            storageError = error.localizedDescription
+            storageStatus = "Chat storage is unavailable."
+        }
         do {
             let manifest = try ModelManifest.bundled()
             self.manifest = manifest
@@ -77,10 +95,16 @@ public final class LocalInferenceModel {
     }
 
     /// Test-only construction is internal; the app cannot select a substitute runtime.
-    init(repository: ModelRepository?, manifest: ModelManifest, session: InferenceSession) {
+    init(
+        repository: ModelRepository?, manifest: ModelManifest, session: InferenceSession,
+        chatStore: ConversationStore? = nil
+    ) {
         self.repository = repository
         self.manifest = manifest
         self.session = session
+        self.chatStore = chatStore
+        chatRestored = chatStore == nil
+        if chatStore == nil { storageStatus = "Test session without persistence." }
         if repository == nil {
             error = "Model setup is unavailable."
             status = "Model setup is unavailable."
@@ -102,7 +126,7 @@ public final class LocalInferenceModel {
 
     /// Defers clearing until any current generation has drained, preventing stale text.
     public func newChat() {
-        guard !busy || running else { return }
+        guard chatRestored, !busy || running else { return }
         resetting = true
         pendingClear = true
         if busy { stop() } else { start(.clear) }
@@ -110,6 +134,7 @@ public final class LocalInferenceModel {
 
     /// Called on inactivity; blocking prefill can only stop at the runtime's next callback.
     public func becameInactive() {
+        scheduleChatSave(immediately: true)
         if running { stop() }
     }
 
@@ -127,7 +152,7 @@ public final class LocalInferenceModel {
     private enum Operation { case check, download, delete, generate, clear, unload }
 
     private func start(_ operation: Operation) {
-        guard !busy else { return }
+        guard !busy, operation != .generate || chatRestored else { return }
         busy = true
         downloading = operation == .download
         running = operation == .generate
@@ -142,6 +167,7 @@ public final class LocalInferenceModel {
         }
         task = Task {
             do {
+                try await restoreChatIfNeeded()
                 if loaded && operation != .generate && operation != .clear {
                     try await session.unload()
                     loaded = false
@@ -194,6 +220,9 @@ public final class LocalInferenceModel {
                     self.error = "Could not read model storage usage: \(error.localizedDescription)"
                 }
             }
+            if chatRestored && operation != .clear {
+                do { try await saveChatNow() } catch { /* Storage diagnostics stay visible. */ }
+            }
             await finishDeferredActions()
         }
     }
@@ -213,6 +242,7 @@ public final class LocalInferenceModel {
         reasoning = ""
         answer = ""
         metrics = nil
+        try await saveChatNow()
         if !loaded {
             status = "Verifying and loading model…"
             loadMilliseconds = nil
@@ -248,6 +278,7 @@ public final class LocalInferenceModel {
                     status = "Answering…"
                 case let .finished(value): metrics = value
                 }
+                scheduleChatSave()
             }
         } catch { streamError = error }
         await run.waitUntilFinished()
@@ -312,6 +343,113 @@ public final class LocalInferenceModel {
         return compacted
     }
 
+    /// Retries local persistence explicitly; corrupt startup data is never replaced with empty state.
+    public func retryChatStorage() {
+        if !chatRestored { check(); return }
+        Task {
+            do { try await saveChatNow() } catch { /* saveChatNow exposes the failure. */ }
+        }
+    }
+
+    /// Drains checkpoints for deterministic persistence/lifecycle tests.
+    func flushChatStorage() async throws { try await saveChatNow() }
+
+    private func restoreChatIfNeeded() async throws {
+        guard !chatRestored else { return }
+        guard let chatStore else {
+            throw PresentationFailure(message: storageError ?? "Chat storage is unavailable.")
+        }
+        do {
+            let existing = try await chatStore.load()
+            let archive = (existing ?? ConversationArchive(
+                sequence: 1,
+                snapshot: ConversationSnapshot(
+                    conversationID: conversationID, messages: [], compaction: CompactionState())
+            )).recoveringInterruptedResponses()
+            if existing == nil || archive != existing { try await chatStore.save(archive) }
+            restoringChat = true
+            conversationID = archive.snapshot.conversationID
+            messages = archive.snapshot.messages
+            compaction = archive.snapshot.compaction
+            prompt = archive.draft
+            persistenceSequence = archive.sequence
+            lastSnapshot = archive.snapshot
+            cloudEnabled = archive.cloudEnabled
+            cloudFolderBookmark = archive.cloudFolderBookmark
+            cloudBaseRevision = archive.cloudBaseRevision
+            restoringChat = false
+            chatRestored = true
+            storageError = nil
+            storageStatus = "Saved on this device."
+        } catch {
+            storageError = error.localizedDescription
+            storageStatus = "Could not open the saved chat."
+            throw error
+        }
+    }
+
+    /// Coalesces streamed updates, while draft changes and background transitions also checkpoint.
+    private func scheduleChatSave(immediately: Bool = false) {
+        guard chatRestored, chatStore != nil, !restoringChat, !resetting else { return }
+        if immediately { checkpointTask?.cancel(); checkpointTask = nil }
+        storageStatus = "Saving on this device…"
+        guard checkpointTask == nil else { return }
+        checkpointTask = Task { [weak self] in
+            do {
+                if !immediately { try await Task.sleep(for: .milliseconds(500)) }
+                try Task.checkCancellation()
+                guard let self else { return }
+                self.checkpointTask = nil
+                try await self.saveChatNow()
+            } catch { /* Cancellation is expected; save errors are exposed by saveChatNow. */ }
+        }
+    }
+
+    /// Captures on the main actor and queues writes in order; only the latest write sets status.
+    private func saveChatNow(
+        snapshot replacement: ConversationSnapshot? = nil, draft: String? = nil
+    ) async throws {
+        guard chatRestored, let chatStore else { return }
+        checkpointTask?.cancel()
+        checkpointTask = nil
+        var snapshot = replacement ?? ConversationSnapshot(
+            conversationID: conversationID, messages: messages, compaction: compaction)
+        if replacement == nil, let lastSnapshot,
+            lastSnapshot.conversationID == snapshot.conversationID,
+            lastSnapshot.messages == snapshot.messages, lastSnapshot.compaction == snapshot.compaction
+        {
+            snapshot.revision = lastSnapshot.revision
+        }
+        lastSnapshot = snapshot
+        persistenceSequence += 1
+        let sequence = persistenceSequence
+        var archive = ConversationArchive(
+            sequence: sequence, snapshot: snapshot, draft: draft ?? prompt)
+        archive.cloudEnabled = cloudEnabled
+        archive.cloudFolderBookmark = cloudFolderBookmark
+        archive.cloudBaseRevision = cloudBaseRevision
+        storageStatus = "Saving on this device…"
+        let previous = saveTask
+        let write = Task {
+            if let previous { _ = await previous.result }
+            try await chatStore.save(archive)
+        }
+        saveTask = write
+        do {
+            try await write.value
+            if sequence == persistenceSequence && checkpointTask == nil {
+                storageError = nil
+                storageStatus = "Saved on this device."
+            }
+        } catch {
+            if sequence == persistenceSequence {
+                storageError = error.localizedDescription
+                storageStatus = "Chat has unsaved changes."
+            }
+            throw error
+        }
+    }
+
     private func finishDeferredActions() async {
         // Main-actor callbacks can enqueue another action while reset/unload awaits the session.
         while pendingUnload || pendingClear {
@@ -327,13 +465,19 @@ public final class LocalInferenceModel {
                 }
                 if clear {
                     if loaded { try await session.reset() }
+                    let newID = UUID()
+                    let snapshot = ConversationSnapshot(
+                        conversationID: newID, messages: [], compaction: CompactionState())
+                    try await saveChatNow(snapshot: snapshot, draft: "")
+                    restoringChat = true
                     prompt = ""
                     messages.removeAll()
                     compaction = CompactionState()
                     reasoning = ""
                     answer = ""
                     metrics = nil
-                    conversationID = UUID()
+                    conversationID = newID
+                    restoringChat = false
                     status = error == nil ? "New chat." : "Chat cleared after an error."
                 }
             } catch {

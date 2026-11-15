@@ -136,6 +136,10 @@ struct ContentView: View {
                 }
                 .accessibilityIdentifier("model-status")
             }
+            if let error = model.storageError {
+                Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                    .accessibilityIdentifier("chat-storage-error")
+            }
             if let error = model.error {
                 Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
                     .accessibilityIdentifier("chat-error")
@@ -144,7 +148,7 @@ struct ContentView: View {
                 TextField("Message", text: $model.prompt, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($composerFocused)
-                    .disabled(model.resetting)
+                    .disabled(model.resetting || !model.chatRestored)
                     .frame(minHeight: 24, alignment: .topLeading)
                     .accessibilityIdentifier("prompt")
                     .accessibilityLabel("Message")
@@ -266,10 +270,15 @@ private struct ModelSettingsView: View {
         NavigationStack {
             Form {
                 Section("Conversation") {
-                    Text(
-                        "Chat history is kept while the app is open. iCloud saving is not available yet."
-                    )
-                    .font(.callout).foregroundStyle(.secondary)
+                    Text(model.storageStatus)
+                        .accessibilityIdentifier("chat-storage-status")
+                    Text("iCloud synchronization is not enabled. Chats are saved on this device.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if let error = model.storageError {
+                        Text(error).foregroundStyle(.red).textSelection(.enabled)
+                        Button("Retry chat storage") { model.retryChatStorage() }
+                            .disabled(model.busy)
+                    }
                 }
                 Section("Model") {
                     Text("Embla 1").font(.headline)
