@@ -24,7 +24,10 @@ to fix a vulnerable default-branch dependency instead of deadlocking
 on an alert that can close only after the fix merges.
 
 `Secret scan` uses a checksummed, pinned Gitleaks binary against full fetched Git history,
-with per-parent merge diffs (`--all -m`) and findings redacted. A disposable synthetic-history
+with per-parent merge diffs (`--all -m`) and findings redacted. Required policy uses an
+external fixed default-rule configuration, rejects repository fingerprint-ignore files, ignores
+inline allow comments, disables baselines and prevents Git text-conversion/diff overrides.
+Repository configuration cannot suppress findings in this required scan. A disposable synthetic-history
 smoke check proves a clean history
 passes and a credential removed from the latest tree is still rejected without exposing
 its value. No real credential is used in the fixture.
@@ -160,3 +163,10 @@ changed head, missing external approval or non-owner authentication cannot publi
 Its actual live attestation is recorded on the final commit immediately before merge.
 Repository Actions defaults were also verified read-only, with automated PR-review approval
 disabled. First-time external contributors require workflow-run approval.
+
+The detector smoke suite also creates three separate synthetic suppression cases: inline
+allow comments, repository configuration allowlists and fingerprint ignores. Ordinary
+Gitleaks accepts each case; the required policy refuses each. The pinned tool always loads
+source/.gitleaksignore even with an explicit alternative ignore path, so the policy rejects
+that source file rather than silently accepting its fingerprints. No ignore entries or
+real credentials are added to the project.

@@ -66,8 +66,9 @@ def attest(number: int, sha: str) -> None:
     try:
         require_owner_approval(request, number, sha)
         # Only counts leave gh. Native alert payloads can contain actual secret values.
+        endpoint = f"repos/{REPOSITORY}/secret-scanning/alerts?state=open&per_page=100"
         counts = gh(
-            "api", "--paginate", f"repos/{REPOSITORY}/secret-scanning/alerts?state=open&per_page=100",
+            "api", "--paginate", endpoint,
             "--jq", 'if type=="array" then length else error("Invalid secret inventory") end',
         ).splitlines()
         if not counts or any(not count.isdecimal() for count in counts):

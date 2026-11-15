@@ -10,14 +10,17 @@ SHA = "a" * 40
 
 
 class SecretAttestationTests(unittest.TestCase):
-    def run_fixture(self, *, counts="0\n", broken=False, changed=False,
-                    external=False, approved=True) -> list[str]:
+    def run_fixture(self, *, counts: str = "0\n", broken: bool = False,
+                    changed: bool = False, external: bool = False, approved: bool = True,
+                    review_sha: str = SHA, revoked: bool = False) -> list[str]:
         """Use explicit API fixtures and retain only status states for assertions."""
         states = []
         reads = 0
+        review_reads = 0
 
         def cli(*args: str) -> str:
-            nonlocal reads
+            """Return explicit API fixture data without credentials or network access."""
+            nonlocal reads, review_reads
             if args == ("api", "user"):
                 return json.dumps({"login": OWNER})
             if any("/statuses/" in arg for arg in args):
@@ -25,9 +28,12 @@ class SecretAttestationTests(unittest.TestCase):
                                    if arg.startswith("state=")))
                 return "{}"
             if any("/reviews" in arg for arg in args):
+                review_reads += 1
+                state = "APPROVED" if approved else "CHANGES_REQUESTED"
+                if revoked and review_reads > 1:
+                    state = "DISMISSED"
                 return json.dumps([[{"id": 1, "user": {"login": OWNER},
-                                     "state": "APPROVED" if approved else "CHANGES_REQUESTED",
-                                     "commit_id": SHA}]])
+                                     "state": state, "commit_id": review_sha}]])
             if any("secret-scanning/alerts" in arg for arg in args):
                 if broken:
                     raise ValueError("Unavailable API")
@@ -59,6 +65,14 @@ class SecretAttestationTests(unittest.TestCase):
     def test_external_approval_is_required(self) -> None:
         self.assertEqual(self.run_fixture(external=True, approved=False), ["pending", "failure"])
         self.assertEqual(self.run_fixture(external=True), ["pending", "success"])
+
+    def test_approval_of_an_older_commit_is_not_enough(self) -> None:
+        states = self.run_fixture(external=True, review_sha="b" * 40)
+        self.assertEqual(states, ["pending", "failure"])
+
+    def test_approval_withdrawn_during_inventory_invalidates_attestation(self) -> None:
+        states = self.run_fixture(external=True, revoked=True)
+        self.assertEqual(states, ["pending", "failure"])
 
     def test_non_owner_authentication_cannot_publish(self) -> None:
         with patch("check_secret_alerts.gh", return_value='{"login":"outside"}') as cli:

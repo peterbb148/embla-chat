@@ -65,4 +65,4 @@ jobs:
       - name: Verify scanner enforcement with disposable synthetic history
         run: bash scripts/check-secret-scanner.sh "$RUNNER_TEMP/gitleaks"
       - name: Scan full history without exposing secret values
-        run: '"$RUNNER_TEMP/gitleaks" git --redact=100 --no-banner --exit-code=1 --log-opts="--all -m" .'
+        run: bash scripts/run-secret-scan.sh "$RUNNER_TEMP/gitleaks" .
