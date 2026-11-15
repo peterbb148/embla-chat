@@ -7,7 +7,7 @@ public struct MessageMarkdown {
             case prose
             case heading(Int)
             case code(String?)
-            case listItem(String)
+            case listItem(String, showsMarker: Bool = true)
             case quote
         }
 
@@ -24,6 +24,7 @@ public struct MessageMarkdown {
     public init(_ source: String) throws {
         let parsed = try AttributedString(markdown: source)
         var result: [Block] = []
+        var markedItems: Set<Int> = []
         for run in parsed.runs {
             let components = run.presentationIntent?.components ?? []
             let identity = components.first?.identity ?? 0
@@ -46,7 +47,13 @@ public struct MessageMarkdown {
                 let container = components.dropFirst(itemIndex + 1).first {
                     $0.kind == .orderedList || $0.kind == .unorderedList
                 }
-                style = .listItem(container?.kind == .orderedList ? "\(ordinal)." : "•")
+                let itemID = components[itemIndex].identity
+                let newBlock = result.last?.id != identity
+                let firstParagraph = !markedItems.contains(itemID)
+                style = .listItem(
+                    container?.kind == .orderedList ? "\(ordinal)." : "•",
+                    showsMarker: firstParagraph)
+                if newBlock { markedItems.insert(itemID) }
             } else if style == .prose && components.contains(where: { $0.kind == .blockQuote }) {
                 style = .quote
             }

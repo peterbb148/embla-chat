@@ -9,8 +9,7 @@ struct ContentView: View {
     @State private var model = LocalInferenceModel()
     @State private var sheet: Sheet?
     @State private var confirmNewChat = false
-    @State private var followingOutput = true
-    @State private var readerScrolling = false
+    @State private var transcriptScroll = TranscriptScrollState()
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
 
@@ -22,6 +21,7 @@ struct ContentView: View {
     private struct Viewport: Equatable {
         let height: CGFloat
         let contentHeight: CGFloat
+        let offset: CGFloat
         let nearBottom: Bool
     }
 
@@ -46,25 +46,34 @@ struct ContentView: View {
                         Viewport(
                             height: geometry.containerSize.height,
                             contentHeight: geometry.contentSize.height,
+                            offset: geometry.contentOffset.y,
                             nearBottom: geometry.contentOffset.y + geometry.containerSize.height
                                 >= geometry.contentSize.height - 100)
                     } action: { old, new in
-                        if readerScrolling {
-                            followingOutput = new.nearBottom
-                        } else if followingOutput && (
+                        transcriptScroll.geometryChanged(
+                            offset: new.offset, nearBottom: new.nearBottom)
+                        if transcriptScroll.shouldScrollAutomatically && (
                             old.height != new.height || old.contentHeight != new.contentHeight
                         ) {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
                     }
-                    .onScrollPhaseChange { _, phase in
-                        readerScrolling = phase == .tracking || phase == .interacting
-                            || phase == .decelerating
+                    .onScrollPhaseChange { _, phase, context in
+                        let geometry = context.geometry
+                        transcriptScroll.phaseChanged(
+                            scrolling: phase == .tracking || phase == .interacting
+                                || phase == .decelerating,
+                            offset: geometry.contentOffset.y,
+                            nearBottom: geometry.contentOffset.y + geometry.containerSize.height
+                                >= geometry.contentSize.height - 100)
+                        if phase == .idle && transcriptScroll.shouldScrollAutomatically {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
                     }
                     .overlay(alignment: .bottomTrailing) {
-                        if !followingOutput {
+                        if !transcriptScroll.followingOutput {
                             Button {
-                                followingOutput = true
+                                transcriptScroll.resumeFollowing()
                                 reader.scrollTo("latest-message", anchor: .bottom)
                             } label: {
                                 Label("Jump to latest", systemImage: "arrow.down")
@@ -76,20 +85,30 @@ struct ContentView: View {
                         }
                     }
                     .onChange(of: model.messages.last?.text) { _, _ in
-                        if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                        if transcriptScroll.shouldScrollAutomatically {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
                     }
                     .onChange(of: model.messages.last?.reasoning) { _, _ in
-                        if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                        if transcriptScroll.shouldScrollAutomatically {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
                     }
                     .onChange(of: model.messages.count) { oldCount, _ in
                         if model.messages.isEmpty || model.messages.dropFirst(oldCount).contains(
                             where: { $0.role == .user }
                         ) {
-                            followingOutput = true
+                            transcriptScroll.resumeFollowing()
                         }
-                        if followingOutput { reader.scrollTo("latest-message", anchor: .bottom) }
+                        if transcriptScroll.shouldScrollAutomatically {
+                            reader.scrollTo("latest-message", anchor: .bottom)
+                        }
                     }
                     composer
+                }
+                .onChange(of: model.conversationID) { _, _ in
+                    transcriptScroll = TranscriptScrollState()
+                    reader.scrollTo("latest-message", anchor: .bottom)
                 }
             }
             .navigationTitle("Embla Chat")
@@ -136,7 +155,6 @@ struct ContentView: View {
                 composerFocused = !resetting
             }
             .onChange(of: model.conversationID) { _, _ in
-                followingOutput = true
                 composerFocused = true
             }
             .onChange(of: model.busy) { _, _ in updateIdleTimer() }
@@ -507,9 +525,11 @@ private struct MessageMarkdownView: View {
                             Text(block.text)
                                 .font(level == 1 ? .title2.bold() : .headline)
                                 .accessibilityAddTraits(.isHeader)
-                        case .listItem(let marker):
+                        case .listItem(let marker, let showsMarker):
                             HStack(alignment: .top, spacing: 10) {
                                 Text(marker).foregroundStyle(.secondary)
+                                    .opacity(showsMarker ? 1 : 0)
+                                    .accessibilityHidden(!showsMarker)
                                 Text(block.text)
                             }
                         case .quote:

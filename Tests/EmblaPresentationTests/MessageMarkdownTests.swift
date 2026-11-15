@@ -42,3 +42,9 @@ import Testing
     ])
     #expect(blocks[2].plainText == "let x = 1\n")
 }
+
+@Test func listContinuationParagraphsDoNotRepeatTheirMarker() throws {
+    let blocks = try MessageMarkdown("1. **First** paragraph\n\n   Continuation\n2. Next").blocks
+    #expect(blocks.map(\.style) == [.listItem("1."), .listItem("1.", showsMarker: false), .listItem("2.")])
+    #expect(blocks.map(\.plainText) == ["First paragraph", "Continuation", "Next"])
+}
