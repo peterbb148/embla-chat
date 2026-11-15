@@ -66,6 +66,21 @@ point locally merely to test the UI: it creates an isolated simulator and requir
 hosted Xcode version. List existing devices and select its ID; never create a replacement
 just because a result bundle or build directory is new.
 
+The full UI suite is a **model-unconfigured readiness scenario**. Before running it:
+
+- Embla's global iCloud switch must be **Off**. A production launch with an existing On
+  preference and folder grant can synchronize.
+- No downloaded/verified model may be available to this simulator app. The tests require
+  the Download model control and disabled Send/counting before setup; installed weights
+  change those expected controls even when iCloud is Off.
+- Local quick actions must use the starter configuration in [examples/actions.json](../examples/actions.json).
+  The action-card test expects those labels and editable prompts.
+
+Hosted CI starts in that state. Reusing a simulator does not recreate it automatically.
+If existing weights or custom actions are present, stop and arrange authorized state
+preparation while preserving them. These instructions do not authorize deleting weights,
+overwriting a configuration, resetting app data or creating another simulator.
+
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 xcrun simctl list devices available
@@ -81,9 +96,7 @@ xcodebuild test -project EmblaChat.xcodeproj -scheme EmblaChat \
 ```
 
 Production UI tests use actual app storage and create/retain test chats and drafts.
-Before local UI tests, verify Embla's global iCloud switch is **Off**: a production launch
-with an existing On preference and folder grant can synchronize. The tests do not sign
-into accounts, grant new folder access or generate model replies. Real-provider checks
+The tests do not sign into accounts, grant new folder access or generate model replies. Real-provider checks
 remain deferred to #45; use a dedicated explicitly authorized test folder for those checks.
 UI tests and unsigned device builds require no Developer Program membership. No simulator
 reset, new device or personal-account change is needed. Reuse the derived-data directory;

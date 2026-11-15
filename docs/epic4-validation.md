@@ -35,7 +35,9 @@ at its tested revisions; it is not proof that the latest history/Projects/Action
 reuse an existing simulator ID. Hosted `scripts/check.sh` uses a disposable runner, runs
 package tests, builds an unsigned generic-iPhone Release app, asserts both actual compiled
 Files-sharing keys, and runs all nine production UI tests. It removes its own isolated
-simulator on exit. Hosted checks do not download model weights or run real inference.
+simulator on exit. Hosted checks do not download model weights or run real inference. Their readiness UI
+scenario requires an unconfigured model, local cloud saving Off and starter quick actions;
+reused local simulators need those explicit prerequisites without unauthorized data deletion.
 
 The delivered application package suite reports 133 tests: 111 presentation and 22 core.
 Live-model tests are opt-in; default execution is not a live inference pass. The three
