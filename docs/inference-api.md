@@ -53,16 +53,22 @@ engine drains submitted GPU commands before returning; the application must disp
 that it is stopping until the worker finishes. Cancelling a loading Task is checked
 before and after the synchronous constructor, releasing the model if cancelled.
 
-The minimal UI controller cancels, waits, and unloads on background transition;
+The shared chat controller cancels, waits, and unloads on background transition;
 unloads before model storage operations; discards stale events; and applies the
 same cancellation/wait sequence for New Chat. Presentation tests verify this
-sequencing with fixtures; physical behavior still requires #17 evidence. No background inference
+sequencing with fixtures; physical observations are recorded in
+[device validation](device-validation.md). No background inference
 is supported. A thrown generation failure unloads the failed backend and requires
 an explicit reload before retrying. A genuine backend error remains an error even
 if a cancellation request races with it; cancellation never hides diagnostics or
 marks a failed backend reusable.
 
 ## Conversation and context contract
+
+The shared controller keeps a chronological `messages` transcript and supplies all
+user turns and nonempty actual assistant text/reasoning on every Send. Cancelled and
+limited responses keep their explicit UI state and their real partial content. New Chat
+waits for active work to drain before clearing both transcript and inference state.
 
 The application supplies the conversation. The adapter uses upstream ChatTemplate
 and Tokenizer without heuristic substitutes. Earlier assistant reasoning is handled
@@ -95,5 +101,6 @@ The runtime adapter compiles locally with Command Line Tools, including the actu
 Embla dependencies. Core lifecycle tests use an explicit test backend to exercise
 streaming, cancellation, serialization, budgets, reset, unload, and reload after a
 thrown failure. These tests do not run the model. Hosted checks build the adapter
-for iOS. Actual output, memory viability and offline operation remain physical-device
-acceptance under #17, and #4 remains open until that evidence exists.
+for iOS. Actual output, measured memory and offline operation were observed in #17;
+see [device validation](device-validation.md) for the tested implementation and limits.
+The conversational UI work in #25 requires its own context/keyboard observations.

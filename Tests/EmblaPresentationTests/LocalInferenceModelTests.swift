@@ -11,16 +11,28 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     let contextSize = 8_192
     private let lock = NSLock()
     private var count = 0
+    private var inputs: [[ConversationMessage]] = []
+    private let pauseFirst: Bool
+    private let firstFinishReason: String
     private let failOnStop: Bool
     private let stopGate: DispatchSemaphore?
     private var reachedStop = false
     var calls: Int { lock.withLock { count } }
+    var encodedMessages: [[ConversationMessage]] { lock.withLock { inputs } }
 
-    init(failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil) {
+    init(
+        failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil, pauseFirst: Bool = true,
+        firstFinishReason: String = "stop"
+    ) {
         self.failOnStop = failOnStop
         self.stopGate = stopGate
+        self.pauseFirst = pauseFirst
+        self.firstFinishReason = firstFinishReason
     }
-    func encode(_ messages: [ConversationMessage]) throws -> [Int] { [1, 2] }
+    func encode(_ messages: [ConversationMessage]) throws -> [Int] {
+        lock.withLock { inputs.append(messages) }
+        return [1, 2]
+    }
     func reset() {}
     func generate(
         prompt: [Int], options: GenerationOptions,
@@ -29,7 +41,7 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
         let index = lock.withLock {
             count += 1; return count
         }
-        if index == 1 {
+        if index == 1 && pauseFirst {
             while emit(.reasoning("fixture reasoning")) { Thread.sleep(forTimeInterval: 0.01) }
             lock.withLock { reachedStop = true }
             stopGate?.wait()
@@ -39,7 +51,8 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
             _ = emit(.answer("fixture answer"))
         }
         return GenerationMetrics(
-            finishReason: "stop", promptTokens: 2, completionTokens: 2,
+            finishReason: index == 1 ? firstFinishReason : "stop",
+            promptTokens: 2, completionTokens: 2,
             promptMilliseconds: 1, decodeMilliseconds: 1
         )
     }
@@ -102,11 +115,15 @@ func stopWaitsForTheWorkerAndAllowsAnotherPrompt() async throws {
     await model.waitUntilIdle()
     #expect(!model.busy)
     #expect(model.error == nil)
+    #expect(model.messages.count == 2)
+    #expect(model.messages[1].state == .interrupted)
     model.prompt = "Second prompt"
     model.run()
     await model.waitUntilIdle()
     #expect(model.answer == "fixture answer")
     #expect(model.metrics?.completionTokens == 2)
+    #expect(model.messages.count == 4)
+    #expect(model.messages[3].state == .complete)
     #expect(backend.calls == 2)
 }
 
@@ -122,6 +139,7 @@ func newChatClearsOnlyAfterStoppingAndNeverDeletesTheModel() async throws {
     model.newChat()
     await model.waitUntilIdle()
     #expect(model.prompt.isEmpty && model.reasoning.isEmpty && model.answer.isEmpty)
+    #expect(model.messages.isEmpty)
     #expect(model.readyDirectory != nil)
     let directory = try await fixture.repository.installedDirectory()
     #expect(directory != nil)
@@ -146,6 +164,7 @@ func backgroundStopsAndUnloadsBeforeModelDeletion() async throws {
     await model.waitUntilIdle()
     let directory = try await fixture.repository.installedDirectory()
     #expect(directory == nil)
+    #expect(model.messages.count == 2)
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
@@ -160,6 +179,7 @@ func cancellationNeverHidesAGenuineBackendFailureInTheUI() async throws {
     model.stop()
     await model.waitUntilIdle()
     #expect(model.error != nil)
+    #expect(model.messages.last?.state == .failed)
     #expect(!model.loaded && !model.busy)
     let diagnostic = model.error
     model.enteredBackground()
@@ -168,6 +188,95 @@ func cancellationNeverHidesAGenuineBackendFailureInTheUI() async throws {
     let state = await session.state
     #expect(state == .unloaded)
     #expect(!model.busy)
+}
+
+@Test @MainActor
+func followUpIncludesPriorTurnsAndNewChatResetsContext() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    model.prompt = "My name is Ada"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.prompt.isEmpty)
+    model.prompt = "What is my name"
+    model.run()
+    await model.waitUntilIdle()
+    let followUp = try #require(backend.encodedMessages.last)
+    #expect(followUp.map(\.role) == [.user, .assistant, .user])
+    #expect(followUp.map(\.content) == ["My name is Ada", "fixture answer", "What is my name"])
+    #expect(followUp[1].reasoning == "fixture reasoning")
+    #expect(model.messages.count == 4)
+    model.newChat()
+    await model.waitUntilIdle()
+    model.prompt = "A new conversation"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(backend.encodedMessages.last == [
+        ConversationMessage(role: .user, content: "A new conversation")
+    ])
+    #expect(model.messages.count == 2)
+}
+
+@Test @MainActor
+func rejectedEmptyRequestDoesNotChangeThePreviousResponse() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    model.prompt = "A valid message"
+    model.run()
+    await model.waitUntilIdle()
+    let response = try #require(model.messages.last)
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.error == InferenceError.emptyPrompt.localizedDescription)
+    #expect(model.messages.count == 2)
+    #expect(model.messages.last?.id == response.id)
+    #expect(model.messages.last?.state == .complete)
+    #expect(backend.calls == 1)
+}
+
+@Test @MainActor
+func limitedResponseKeepsActualPartialContentInFollowUpContext() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false, firstFinishReason: "length")
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    model.prompt = "A request that reaches its output budget"
+    model.run()
+    await model.waitUntilIdle()
+    let partial = try #require(model.messages.last)
+    #expect(partial.state == .limited)
+    #expect(partial.text == "fixture answer" && partial.reasoning == "fixture reasoning")
+    #expect(model.metrics?.finishReason == "length")
+    #expect(model.error == nil)
+    model.prompt = "Continue that answer"
+    model.run()
+    await model.waitUntilIdle()
+    let context = try #require(backend.encodedMessages.last)
+    #expect(context.map(\.role) == [.user, .assistant, .user])
+    #expect(context[1].content == partial.text)
+    #expect(context[1].reasoning == partial.reasoning)
+    #expect(model.messages[1].id == partial.id && model.messages[1].state == .limited)
+    #expect(model.messages.last?.state == .complete)
+}
+
+@Test @MainActor
+func newChatWithoutModelStorageStillClearsAndUnlocksTheComposer() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = LocalInferenceModel(
+        repository: nil, manifest: fixture.manifest,
+        session: InferenceSession { _, _ in backend })
+    let diagnostic = model.error
+    let previousConversation = model.conversationID
+    model.prompt = "Draft while setup is unavailable"
+    model.newChat()
+    await model.waitUntilIdle()
+    #expect(!model.resetting && !model.busy)
+    #expect(model.prompt.isEmpty && model.messages.isEmpty)
+    #expect(model.conversationID != previousConversation)
+    #expect(model.error == diagnostic)
+    #expect(backend.calls == 0)
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
@@ -189,4 +298,33 @@ func stoppingRemainsBusyUntilTheWorkerActuallyDrains() async throws {
     gate.signal()
     await model.waitUntilIdle()
     #expect(!model.busy)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func newChatKeepsComposerLockedUntilDeferredClearingFinishes() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let gate = DispatchSemaphore(value: 0)
+    defer { gate.signal() }
+    let backend = PresentationBackend(stopGate: gate)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend })
+    let previousConversation = model.conversationID
+    model.prompt = "First message"
+    model.run()
+    try await backend.waitForStart()
+    model.prompt = "Draft being deliberately cleared"
+    model.newChat()
+    try await backend.waitForStop()
+    #expect(model.resetting && model.busy)
+    #expect(model.conversationID == previousConversation)
+    #expect(model.prompt == "Draft being deliberately cleared")
+    gate.signal()
+    await model.waitUntilIdle()
+    #expect(!model.resetting && !model.busy)
+    #expect(model.prompt.isEmpty && model.messages.isEmpty)
+    #expect(model.conversationID != previousConversation)
+    model.prompt = "A message composed after reset"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.messages.first?.text == "A message composed after reset")
+    #expect(model.messages.last?.state == .complete)
 }
