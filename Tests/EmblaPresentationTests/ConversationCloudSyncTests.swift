@@ -319,6 +319,41 @@ private actor ResetCheckpointStore: ConversationStoring {
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
+func disablingCloudDuringDurableResetCannotSaveTheOldTranscriptAgain() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let local = syncSnapshot("chat being cleared")
+    var archive = ConversationArchive(sequence: 1, snapshot: local)
+    archive.cloudEnabled = true
+    archive.cloudFolderBookmark = Data("fixture permission".utf8)
+    archive.cloudBaseFingerprint = try local.fingerprint()
+    try await ConversationStore(root: root).save(archive)
+    let provider = SyncProviderFixture(.init(current: local))
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let store = ResetCheckpointStore(root: root)
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: store, cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    model.newChat()
+    try await store.resetGate.waitForEntry()
+    #expect(model.messages == local.messages)
+    cloud.disable()
+    // Let the preference task enter persistence while reset completion is held.
+    for _ in 0..<20 { await Task.yield() }
+    await store.resetGate.release()
+    await model.waitUntilIdle()
+    await cloud.waitUntilIdle()
+    let reopened = try #require(try await ConversationStore(root: root).load())
+    #expect(model.messages.isEmpty && reopened.snapshot.messages.isEmpty)
+    #expect(reopened.snapshot.conversationID == model.conversationID)
+    #expect(!reopened.cloudEnabled)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
 func cloudUploadCannotQueueOldMetadataWhileResetArchiveCompletionIsPending() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }

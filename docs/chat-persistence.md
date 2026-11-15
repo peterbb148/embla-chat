@@ -78,7 +78,7 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 66 package tests pass. These include coordinated temporary-file tests,
+On 2026-11-15, all 68 package tests pass. These include coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
 17 Pro / iOS 27.2 simulator UI tests pass, including opt-in cancellation and local draft
@@ -94,8 +94,12 @@ background-resume gaps. Fixes now have deterministic package regressions, includ
 real reset archive write's completion while the old visible chat and cloud upload still exist.
 The next review also identified stale conflict choices after New Chat. Reset now clears those
 choices while paused, then reevaluates them against the reset conversation when synchronization
-resumes. A regression verifies no manual Refresh is needed. Fresh review and hosted checks
-remain pending.
+resumes. A regression verifies no manual Refresh is needed. A further review found that an
+opt-out preference write could capture the old visible chat during a durable reset. Preference
+saves now await the reset operation before capturing the published conversation; the gated
+regression reproduces the old transcript resurrection without the fix. Retry also recreates a
+missing local store after initialization failure, preserving any existing archive. Fresh review
+and hosted checks remain pending.
 
 Remaining gates for #9:
 

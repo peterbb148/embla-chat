@@ -56,6 +56,7 @@ public final class LocalInferenceModel {
     public private(set) var storageStatus = "Opening saved chat…"
     public private(set) var storageError: String?
     @ObservationIgnored private var chatStore: (any ConversationStoring)?
+    @ObservationIgnored private var chatStoreFactory: (() throws -> any ConversationStoring)?
     @ObservationIgnored private var saveTask: Task<Void, Error>?
     @ObservationIgnored private var checkpointTask: Task<Void, Never>?
     @ObservationIgnored private var persistenceSequence: UInt64 = 0
@@ -79,7 +80,8 @@ public final class LocalInferenceModel {
         session = EmblaRuntime.makeSession()
         cloud = ConversationCloudSync()
         configureCloud()
-        do { chatStore = ConversationStore(root: try ConversationStore.defaultRoot()) } catch {
+        chatStoreFactory = { ConversationStore(root: try ConversationStore.defaultRoot()) }
+        do { chatStore = try chatStoreFactory?() } catch {
             storageError = error.localizedDescription
             storageStatus = "Chat storage is unavailable."
         }
@@ -97,7 +99,8 @@ public final class LocalInferenceModel {
     /// Test-only construction is internal; the app cannot select a substitute runtime.
     init(
         repository: ModelRepository?, manifest: ModelManifest, session: InferenceSession,
-        chatStore: (any ConversationStoring)? = nil, cloud: ConversationCloudSync? = nil
+        chatStore: (any ConversationStoring)? = nil, cloud: ConversationCloudSync? = nil,
+        chatStoreFactory: (() throws -> any ConversationStoring)? = nil
     ) {
         self.repository = repository
         self.manifest = manifest
@@ -105,8 +108,9 @@ public final class LocalInferenceModel {
         self.cloud = cloud ?? ConversationCloudSync()
         configureCloud()
         self.chatStore = chatStore
-        chatRestored = chatStore == nil
-        if chatStore == nil { storageStatus = "Test session without persistence." }
+        self.chatStoreFactory = chatStoreFactory
+        chatRestored = chatStore == nil && chatStoreFactory == nil
+        if chatRestored { storageStatus = "Test session without persistence." }
         if repository == nil {
             error = "Model setup is unavailable."
             status = "Model setup is unavailable."
@@ -365,10 +369,11 @@ public final class LocalInferenceModel {
 
     private func restoreChatIfNeeded() async throws {
         guard !chatRestored else { return }
-        guard let chatStore else {
-            throw PresentationFailure(message: storageError ?? "Chat storage is unavailable.")
-        }
         do {
+            if chatStore == nil { chatStore = try chatStoreFactory?() }
+            guard let chatStore else {
+                throw PresentationFailure(message: storageError ?? "Chat storage is unavailable.")
+            }
             let existing = try await chatStore.load()
             let archive = (existing ?? ConversationArchive(
                 sequence: 1,
@@ -481,6 +486,9 @@ public final class LocalInferenceModel {
         }
         cloud.persist = { [weak self] in
             guard let self else { throw CancellationError() }
+            // A reset publishes its new transcript only after the empty archive is durable.
+            // Preference writes must capture that published state, never the old visible chat.
+            while self.resetting, let operation = self.task { await operation.value }
             try await self.saveChatNow(notifyCloud: false)
         }
         cloud.apply = { [weak self] snapshot, expected in

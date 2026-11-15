@@ -651,3 +651,31 @@ func failedResetSaveKeepsTheVisibleChatUntilAnActualDurableResetSucceeds() async
         session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
     #expect(reopened.messages.isEmpty && reopened.conversationID == model.conversationID)
 }
+
+@Test @MainActor
+func retryRecreatesChatStoreAfterItsInitialLocationBecomesAvailable() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let root = fixture.root.appendingPathComponent("Conversation")
+    let snapshot = ConversationSnapshot(
+        conversationID: UUID(), messages: [], compaction: CompactionState())
+    try await ConversationStore(root: root).save(
+        ConversationArchive(sequence: 1, snapshot: snapshot, draft: "Retain this saved draft"))
+    var unavailable = true
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = LocalInferenceModel(
+        repository: fixture.repository, manifest: fixture.manifest,
+        session: InferenceSession { _, _ in backend },
+        chatStoreFactory: {
+            if unavailable { throw ModelTestError.backendFailure }
+            return ConversationStore(root: root)
+        })
+    model.check()
+    await model.waitUntilIdle()
+    #expect(!model.chatRestored && model.storageError != nil)
+    unavailable = false
+    model.retryChatStorage()
+    await model.waitUntilIdle()
+    #expect(model.chatRestored && model.storageError == nil)
+    #expect(model.prompt == "Retain this saved draft")
+    #expect(model.conversationID == snapshot.conversationID && model.canRun)
+}
