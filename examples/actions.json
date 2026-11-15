@@ -1,0 +1,29 @@
+{
+  "formatVersion": 1,
+  "actions": [
+    {
+      "id": "draft-email",
+      "label": "Draft an email",
+      "order": 10,
+      "enabled": true,
+      "type": "prompt",
+      "prompt": "Help me draft an email. Ask who it is for and what I want to say."
+    },
+    {
+      "id": "translate",
+      "label": "Translate text",
+      "order": 20,
+      "enabled": true,
+      "type": "prompt",
+      "prompt": "Help me translate some text. Ask for the text and target language."
+    },
+    {
+      "id": "summarize",
+      "label": "Summarize text",
+      "order": 30,
+      "enabled": true,
+      "type": "prompt",
+      "prompt": "Help me summarize some text. Ask me to paste it."
+    }
+  ]
+}
