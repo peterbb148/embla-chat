@@ -23,8 +23,7 @@ inside one rounded card and no separate keyboard Done row. Visual acceptance is 
 in [chat UI validation](docs/chat-ui-validation.md). Automatic on-device compaction is
 implemented; see [the policy and validation status](docs/context-compaction.md). Local
 chat and draft persistence are integrated, including restoration after process exit. Optional,
-default-off iCloud Drive synchronization is implemented but live account validation remains
-pending; see
+default-off iCloud Drive synchronization has real iPhone/Mac transfer and restoration evidence; see
 [the persistence design and validation status](docs/chat-persistence.md).
 
 See [runtime integration](docs/runtime-integration.md) for pinned inputs, APIs,

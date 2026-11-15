@@ -306,6 +306,102 @@ private actor SyncCheckpointGate {
     }
 }
 
+/// Holds the first enabled-preference write before it becomes durable.
+private actor PreferenceCheckpointStore: ConversationStoring {
+    private let store: ConversationStore
+    let gate = SyncCheckpointGate()
+    private var failEnabled: Bool
+
+    init(root: URL, failEnabled: Bool = false) {
+        store = ConversationStore(root: root)
+        self.failEnabled = failEnabled
+    }
+    func load() async throws -> ConversationArchive? { try await store.load() }
+    func save(_ archive: ConversationArchive) async throws {
+        if archive.cloudEnabled {
+            await gate.blockOnce()
+            if failEnabled { throw CocoaError(.fileWriteOutOfSpace) }
+        }
+        try await store.save(archive)
+    }
+    func allowEnabledSaves() { failEnabled = false }
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+func optInWaitsForDurableConsentAndPendingDisablePreventsProviderAccess(
+    disableWhileSaving: Bool
+) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let snapshot = syncSnapshot("private until consent is saved")
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot))
+    let provider = SyncProviderFixture()
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let store = PreferenceCheckpointStore(root: root)
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: store, cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    let enabling = Task { try await cloud.enable(bookmark: Data("fixture permission".utf8)) }
+    try await store.gate.waitForEntry()
+    #expect(await provider.reads == 0)
+    #expect(await provider.writes == 0)
+    #expect(try await ConversationStore(root: root).load()?.cloudEnabled == false)
+    if disableWhileSaving { cloud.disable() }
+    await store.gate.release()
+    try await enabling.value
+    await cloud.waitUntilIdle()
+    let saved = try #require(try await ConversationStore(root: root).load())
+    #expect(saved.cloudEnabled == !disableWhileSaving)
+    #expect(saved.snapshot == snapshot)
+    if disableWhileSaving {
+        #expect(await provider.reads == 0)
+        #expect(await provider.writes == 0)
+    } else {
+        #expect(await provider.reads > 0)
+        #expect(await provider.writes == 1)
+    }
+    cloud.pause()
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func failedOptInSaveStaysOffWithoutProviderAccessAndCanBeRetried() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let snapshot = syncSnapshot("preserve this local chat")
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot))
+    let provider = SyncProviderFixture()
+    let cloud = ConversationCloudSync(factory: { _ in provider })
+    let store = PreferenceCheckpointStore(root: root, failEnabled: true)
+    let model = LocalInferenceModel(
+        repository: nil, manifest: try ModelManifest.bundled(),
+        session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
+        chatStore: store, cloud: cloud)
+    model.check()
+    await model.waitUntilIdle()
+    let enabling = Task { try await cloud.enable(bookmark: Data("fixture permission".utf8)) }
+    try await store.gate.waitForEntry()
+    await store.gate.release()
+    do {
+        try await enabling.value
+        Issue.record("Opt-in must fail when consent cannot be saved.")
+    } catch { #expect((error as? CocoaError)?.code == .fileWriteOutOfSpace) }
+    #expect(!cloud.enabled && cloud.error != nil && model.storageError != nil)
+    #expect(await provider.reads == 0)
+    #expect(await provider.writes == 0)
+    let saved = try #require(try await ConversationStore(root: root).load())
+    #expect(!saved.cloudEnabled && saved.snapshot == snapshot)
+    await store.allowEnabledSaves()
+    try await cloud.enable(bookmark: Data("fixture permission".utf8))
+    await cloud.waitUntilIdle()
+    #expect(cloud.enabled && cloud.error == nil && model.storageError == nil)
+    #expect(try await ConversationStore(root: root).load()?.cloudEnabled == true)
+    #expect(await provider.writes == 1)
+    cloud.pause()
+}
+
 /// Holds a real empty-archive write's completion while the old transcript is still visible.
 private actor ResetCheckpointStore: ConversationStoring {
     private let store: ConversationStore

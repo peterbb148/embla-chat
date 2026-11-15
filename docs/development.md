@@ -93,8 +93,9 @@ The real tokenizer triggers local compaction before the context fills; the visib
 is retained. Interrupted, failed and length-limited responses remain explicitly marked.
 See [compaction](context-compaction.md) for budgets, cancellation and device evidence.
 There is no silent truncation or substitute model. Local persistence now restores the transcript, summary and draft after process exit;
-see [chat persistence](chat-persistence.md) for checkpoint/error behavior and simulator evidence.
-Optional, default-off iCloud Drive synchronization remains in progress in #9.
+see [chat persistence](chat-persistence.md) for checkpoint/error behavior, simulator tests and
+real iPhone/Mac iCloud transfer/restoration evidence. Optional iCloud remains off by default;
+final review and merge are tracked in #9.
 
 The composer uses native SwiftUI focus and a vertical layout: the transcript has its
 own clipped scrolling region above a single rounded input card. Send/Stop and a keyboard

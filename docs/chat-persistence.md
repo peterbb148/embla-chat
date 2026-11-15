@@ -3,7 +3,8 @@
 ## Implementation checkpoint
 
 Local persistence and the optional iCloud Drive flow are integrated on the issue branch.
-Actual personal-iCloud transfer/restoration remains unverified.
+Real iCloud Drive transfer/restoration has been validated on an iPhone 17 Pro; see the
+separate physical-provider evidence below.
 `ConversationSnapshot` preserves stable message IDs, response states, the rolling summary,
 and its transcript boundary in a versioned document. `ConversationArchive` is the separate
 device-local envelope for the draft, global default-off cloud preference, folder permission
@@ -37,9 +38,8 @@ Confirmed New Chat queues a durable empty replacement after older writes and onl
 clears the visible transcript/summary. A failed reset leaves the current chat visible. The
 local envelope keeps unsent drafts on this device; they are not part of the cloud document.
 
-On 2026-11-15, all 47 package tests passed and all four iPhone 17 Pro / iOS 27.2 simulator
-UI tests passed. The latter include terminating/relaunching the production app and restoring
-a draft. This does not claim simulator inference, cloud account access or cloud transfer.
+Simulator UI checks include terminating/relaunching the production app and restoring a draft.
+Simulator UI checks do not claim real model inference or actual cloud transfer.
 
 ## Optional iCloud Drive flow
 
@@ -78,40 +78,61 @@ files remain explicit errors rather than silently selecting another location.
 
 ## Validation checkpoint and remaining work
 
-On 2026-11-15, all 70 package tests pass. These include coordinated temporary-file tests,
+On 2026-11-15, all 72 package tests pass (one has two parameterized cases). These include
+coordinated temporary-file tests,
 explicit simulated cloud-provider tests for consent/disable/stale-read/conflict policies, and
 controller tests combining real local files with simulated remote changes. All five iPhone
 17 Pro / iOS 27.2 simulator UI tests pass, including opt-in cancellation and local draft
-restoration. These tests do not prove iCloud authentication, transfer or cross-device conflicts.
+restoration. Hosted iOS build/launch checks passed for the physically tested commit
+`0b92dd4ff4a0cb57f6197f5815933dd2cc607586`
+([run 43713175710](https://github.com/peterbb148/embla-chat/actions/runs/43713175710)).
+These automated tests do not prove real cloud transfer.
 
-The production native Files picker and consent flow have been exercised manually on the
-simulator. Actual iCloud folder access, transfer, restoration and cross-device conflicts still
-require live validation. Personal account identifiers, authentication state, and system Drive
-settings are not part of public test records. Do not run UI automation during a user handoff.
+Gated regressions cover preference persistence before the first provider operation, disabling
+while opt-in saving is pending, and failed opt-in save/retry without provider access before
+consent becomes durable. Other regressions hold actual local replacement writes open to verify
+preference saves cannot resurrect the old conversation after either New Chat or cloud restore.
+An explicit completion barrier covers both replacement paths. Unchanged polls do not rewrite
+the archive. Retry recreates a missing local store. The UI reset helper waits for an enabled,
+empty composer rather than a disabled New Chat button, which also describes an active reset.
 
-The first Copilot review found reset/upload, stale conflict-callback, transfer-error and
-background-resume gaps. Fixes now have deterministic package regressions, including holding a
-real reset archive write's completion while the old visible chat and cloud upload still exist.
-The next review also identified stale conflict choices after New Chat. Reset now clears those
-choices while paused, then reevaluates them against the reset conversation when synchronization
-resumes. A regression verifies no manual Refresh is needed. A further review found that an
-opt-out preference write could capture the old visible chat during a durable reset. Preference
-saves now await the reset operation before capturing the published conversation; the gated
-regression reproduces the old transcript resurrection without the fix. Retry also recreates a
-missing local store after initialization failure, preserving any existing archive. Preference
-saves await an explicit replacement-completion barrier for both New Chat and cloud restoration;
-a cloud restore can be active without a model-operation task. Unchanged cloud polls no longer
-rewrite the local archive: cloud metadata is saved when the shared base changes. Both additional
-regressions reproduce their respective failures with these fixes removed. The launch-test reset
-helper now waits for an enabled, empty composer; a disabled New Chat button alone also describes
-an in-progress reset. Fresh review and hosted checks remain pending.
+## Physical iCloud Drive evidence (2026-11-15)
 
-Remaining gates for #9:
+The production Release app at `0b92dd4` was installed on an iPhone 17 Pro / iOS 27.2.1.
+The following used the real Files provider and a Mac, with no substitute cloud provider:
 
-- Verify persistent folder permission and actual personal-iCloud upload/download/restoration,
-  including the transcript and summary, in an authenticated test environment.
-- Record provider account/network errors and real conflict behavior separately from fixtures.
-- Complete final-head Copilot review, fixes/re-review, and hosted checks before merge.
+- Created `iCloud Drive/EmblaChat` through Files, selected it through Embla's native folder
+  picker, and observed `ActiveChat.json` arrive on the Mac.
+- A coordinated Mac edit supplied three clearly labelled synthetic storage-test messages and
+  a summary with boundary 2. The phone restored them. A copied app archive matched the cloud
+  snapshot exactly, including message IDs, summary and boundary. The synthetic assistant text
+  and summary were storage fixtures, not generated inference results.
+- With app sync disabled, restarted the app and restored the conversation, summary and local
+  draft. The real local Embla model then answered the summary-recall prompt with
+  `EMBLA-CLOUD-17`. Its completed answer was saved locally; the cloud document stayed at three
+  messages while the local conversation had five. Drafts and folder bookmarks were absent
+  from the portable document.
+- Reconnecting the folder showed the five-message device chat and three-message cloud chat
+  as explicit choices. Cancel preserved both. Confirming the device copy uploaded the complete
+  five-message snapshot; its contents and IDs matched on the Mac. Settings reported Synced.
+- Restarted the app with sync enabled. The saved folder permission worked without another
+  picker and Settings again reported Synced.
+- Temporarily renamed only the test cloud document, preserving its contents. Embla showed the
+  missing-previously-synchronized-chat error and retained the local chat. Restoring the file
+  recovered synchronization and cleared the error.
+- Cancelled New Chat preserved the visible conversation. Confirmed New Chat cleared messages,
+  summary and summary boundary locally and in the cloud; the Mac document matched the new
+  empty phone snapshot. Settings reported Synced. App sync was then disabled, keeping the
+  cloud file and downloaded model.
+
+This proves real transfer, content divergence/choice, persistence and missing-file recovery.
+It does not claim forced account/network failures or an OS-generated `NSFileVersion` duplicate
+conflict. Those error/version branches have explicit provider/file fixtures. Personal account
+identifiers, authentication state and system Drive settings are excluded from public evidence.
+Do not run UI automation during a user handoff.
+
+Remaining gate for #9: complete final-head Copilot review, fixes/re-review, and hosted checks
+for the added tests and evidence documentation before merge.
 
 Developer Program-dependent capabilities/distribution are deferred to #32. The current
 Files-based storage design does not use CloudKit or an app-owned iCloud container. Later
