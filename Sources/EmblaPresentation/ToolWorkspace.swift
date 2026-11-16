@@ -149,6 +149,13 @@ public final class ToolWorkspace {
         if let setupError {
             throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)
         }
+        // Send owns cancellable discovery now; a Settings task must not publish over it.
+        if let connectTask {
+            connectTask.cancel()
+            self.connectTask = nil
+            connectRequestID = UUID()
+            connecting = nil
+        }
         var expected = revision
         _ = try await validateSkill(using: cloud)
         guard revision == expected else { throw SkillFailure.changed }

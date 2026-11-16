@@ -233,6 +233,18 @@ func realNaturalQuestionsSelectRelevantToolsWithoutNamingThem() async throws {
     if let call = refreshedCalls.last {
         try assertReturnedClockTimeAppears(in: model.answer, call: call)
     }
+    // A Send immediately after Save must not race the Settings discovery task.
+    workspace.pause()
+    workspace.discover(server.id)
+    try #require(workspace.connecting == server.id)
+    model.prompt = "What time is it in Copenhagen?"
+    model.run(); await model.waitUntilIdle()
+    let overlappingCalls = model.messages.filter { $0.toolName != nil }
+    print("SEND DURING DISCOVERY: error: \(model.error ?? "none"); answer: \(model.answer)")
+    #expect(model.error == nil && overlappingCalls.count == refreshedCalls.count + 1)
+    if let call = overlappingCalls.last {
+        try assertReturnedClockTimeAppears(in: model.answer, call: call)
+    }
 }
 
 /// Accept normal 12/24-hour English/Danish formatting, comparing to the actual server result.

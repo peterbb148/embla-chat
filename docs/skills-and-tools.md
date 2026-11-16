@@ -52,7 +52,9 @@ Turn individual tools off afterward if needed. This initial grant is saved once;
 refreshes and restarts preserve those choices, and older registrations keep their exact
 permissions. A changed endpoint still clears permissions. Enabled registrations (and new
 registrations awaiting their first successful discovery) reconnect on Send after restart.
-Discovery and calls do not run merely at app launch. No server is registered implicitly. The endpoint must use HTTPS; loopback HTTP is allowed for local developer tests.
+Discovery and calls do not run merely at app launch. No server is registered implicitly.
+Sending while Settings is still discovering takes ownership of connection setup under the
+Send task, so setup cannot race the submitted message and cancellation remains effective. The endpoint must use HTTPS; loopback HTTP is allowed for local developer tests.
 Redirects are rejected, and the client has no cookie jar or shared credential store.
 Credentials/query strings in endpoints are not supported. Name, endpoint and selected
 tool names are stored in excluded-from-backup device settings, separately from chat and
