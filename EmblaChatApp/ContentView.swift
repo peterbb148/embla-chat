@@ -33,18 +33,14 @@ struct ContentView: View {
     }
 
     private enum ChatConfirmation {
-        case newChat, replaceDraft(QuickAction)
+        case replaceDraft(QuickAction)
         var title: String {
             switch self {
-            case .newChat: return "Start a new chat?"
             case .replaceDraft: return "Replace draft?"
             }
         }
         var message: String {
             switch self {
-            case .newChat:
-                return "Your current chat and draft will be saved in history. "
-                    + "Any active response stops first."
             case .replaceDraft:
                 return "Replace the current draft with this action's prompt? "
                     + "You can edit it before sending."
@@ -182,7 +178,8 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        confirmation = .newChat
+                        composerFocused = false
+                        model.newChat()
                     } label: {
                         Label("New Chat", systemImage: "square.and.pencil")
                     }
@@ -212,11 +209,6 @@ struct ContentView: View {
                 )
             ) {
                 switch confirmation {
-                case .newChat:
-                    Button("Start new chat") {
-                        composerFocused = false
-                        model.newChat()
-                    }
                 case .replaceDraft(let action):
                     Button("Replace draft") { selectAction(action, replacing: true) }
                 case nil: EmptyView()
@@ -282,7 +274,8 @@ struct ContentView: View {
                         Spacer()
                         Button {
                             showHistory = false
-                            confirmation = .newChat
+                            composerFocused = false
+                            model.newChat()
                         } label: {
                             Label("New Chat", systemImage: "square.and.pencil")
                         }
@@ -369,7 +362,6 @@ struct ContentView: View {
                 .frame(width: min(geometry.size.width * 0.86, 360))
                 .frame(maxHeight: .infinity)
                 .background(Color(uiColor: .systemBackground))
-                .accessibilityIdentifier("chat-sidebar")
             }
         }
     }

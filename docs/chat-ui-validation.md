@@ -3,7 +3,8 @@
 ## Current history extension
 
 The [history sidebar](chat-history.md) now opens from the leading menu, holds Settings and
-reopens saved chats. New Chat archives the previous transcript/summary/draft. The source-commit
+reopens saved chats. New Chat starts without confirmation and archives the previous
+transcript/summary/draft. The source-commit
 observations below describe the earlier UI milestones.
 
 ## Original implemented behavior
