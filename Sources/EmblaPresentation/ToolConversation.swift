@@ -43,6 +43,27 @@ extension ToolWorkspace {
         return text
     }
 
+    /// Ephemeral app state beside the current request; it never changes the saved transcript.
+    func requestContext(using cloud: ConversationCloudSync) throws -> String {
+        let specifications = try specifications(using: cloud)
+        guard !specifications.isEmpty else { return "" }
+        let data = try ToolJSON.object([
+            "enabled_functions": .array(specifications.map {
+                .object(["name": .string($0.functionName), "description": .string($0.description)])
+            }),
+            "device_timezone": .string(TimeZone.autoupdatingCurrent.identifier),
+            "selected_skill": selectedSkill.map {
+                .object(["name": .string($0.name), "description": .string($0.description)])
+            } ?? .null,
+        ]).text()
+        return """
+            Current app capabilities (JSON context for this request, not another request):
+            \(data)
+            These functions are available NOW, even if earlier replies said otherwise.
+            Reconsider the user's request using these current capabilities.
+            """
+    }
+
     func invocation(server: String, name: String, arguments: [String: ToolJSON]) throws
         -> ToolInvocation
     {

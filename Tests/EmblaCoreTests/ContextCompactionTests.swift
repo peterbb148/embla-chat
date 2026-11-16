@@ -96,3 +96,23 @@ import Testing
     #expect(summarized.first?.content.contains("Earlier chat summary") == true)
     #expect(summarized.first?.content.contains("Saved project note") == true)
 }
+
+@Test func currentAppStateOnlyAccompaniesLatestRequestWithoutChangingHistoryOrSummaryInput() throws
+{
+    let policy = ContextCompaction()
+    let transcript = (0..<7).map {
+        ConversationMessage(role: $0.isMultiple(of: 2) ? .user : .assistant, content: "turn \($0)")
+    }
+    let appState = "CURRENT_CAPABILITY_SNAPSHOT"
+    let context = policy.context(
+        transcript: transcript, state: .init(), draft: "Try again.",
+        instructions: "Enabled catalog", requestContext: appState)
+    #expect(context.filter { $0.role == .system }.count == 1)
+    #expect(context.filter { $0.content.contains(appState) }.count == 1)
+    #expect(context.last?.role == .user)
+    #expect(context.last?.content.hasSuffix("Try again.") == true)
+    #expect(Array(context.dropFirst().dropLast()) == transcript)
+    #expect(transcript.last?.content == "turn 6")
+    let summary = try policy.plan(transcript: transcript, state: .init())
+    #expect(summary.messages.allSatisfy { !$0.content.contains(appState) })
+}

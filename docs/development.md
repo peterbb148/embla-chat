@@ -194,3 +194,15 @@ argument through the registered/enabled test tool. Do not substitute private cha
 credentials in a public test. The second copies an isolated synthetic standard skill and
 checks its observed effect on actual model output. Neither command is an iPhone benchmark,
 a real iCloud transfer test or a guarantee of arbitrary skills/server compatibility.
+
+To exercise automatic selection with the actual local model and public Time.Now server:
+
+```sh
+EMBLA_REAL_NATURAL_TOOLS=1 \
+EMBLA_REAL_MODEL_ROOT="$PWD/build/VerificationModel" \
+swift test --filter realNaturalQuestionsSelectRelevantToolsWithoutNamingThem
+```
+
+This opt-in check uses isolated chat/server settings, reuses existing verified weights and
+requires network access to the configured public server. It covers ordinary questions and
+capability changes in an existing conversation; it is not a physical-iPhone performance test.
