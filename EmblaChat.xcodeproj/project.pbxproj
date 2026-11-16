@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A02700000000000000000001 /* ToolViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A02700000000000000000002 /* ToolViews.swift */; };
 		A03700000000000000000001 /* QuickActionViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A03700000000000000000002 /* QuickActionViews.swift */; };
 		A03400000000000000000001 /* ProjectViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A03400000000000000000002 /* ProjectViews.swift */; };
 		A02800000000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A02800000000000000000002 /* Assets.xcassets */; };
@@ -35,6 +36,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A02700000000000000000002 /* ToolViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolViews.swift; sourceTree = "<group>"; };
 		A03700000000000000000002 /* QuickActionViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionViews.swift; sourceTree = "<group>"; };
 		A03700000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A03400000000000000000002 /* ProjectViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectViews.swift; sourceTree = "<group>"; };
@@ -99,6 +101,7 @@
 				6285176BA2C09CD88592557F /* ContentView.swift */,
 				A03400000000000000000002 /* ProjectViews.swift */,
 				A03700000000000000000002 /* QuickActionViews.swift */,
+				A02700000000000000000002 /* ToolViews.swift */,
 				A03700000000000000000003 /* Info.plist */,
 				8D7E1FDF7FFA10D11F9E6842 /* EmblaChatApp.swift */,
 			);
@@ -263,6 +266,7 @@
 				CCD86097D5BE8FAA2F6D174A /* ContentView.swift in Sources */,
 				A03400000000000000000001 /* ProjectViews.swift in Sources */,
 				A03700000000000000000001 /* QuickActionViews.swift in Sources */,
+				A02700000000000000000001 /* ToolViews.swift in Sources */,
 				1F559B06A802518BF1B02D77 /* EmblaChatApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

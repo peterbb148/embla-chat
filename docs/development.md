@@ -170,3 +170,27 @@ Presentation tests use explicit fixture backends to verify actual context arrays
 interruption states, reset and lifecycle sequencing. The app's public constructor always
 selects EmblaRuntime; there is no app mock mode. Physical model acceptance from Epic 2
 is in [device validation](device-validation.md); new UI/device observations belong to #25.
+
+## Skills and MCP validation
+
+[Skills and MCP](skills-and-tools.md) records protocol/permission boundaries and separates
+fixture tests from actual-model/network evidence. Package tests include a loopback-only
+Python HTTP/SSE fixture with synthetic data; Python 3 must be available through `env`.
+It does not expose a public listener or run copied skill scripts. Production UI tests add
+and remove a uniquely named no-token test server without connecting it. They preserve
+other configured servers and credentials.
+
+Real-model tests are opt-in and must run separately to avoid loading multiple GPU engines:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+export EMBLA_REAL_MODEL_ROOT=/absolute/path/to/verified-model-storage-root
+EMBLA_REAL_PRODUCTION_TOOLS=1 swift test --filter realProductionToolLoopUsesRegisteredPublicTimeAndPersistsTheReturnedFact
+EMBLA_REAL_SKILL=1 swift test --filter realSelectedPortableSkillChangesTheModelsActualAnswer
+```
+
+The first command contacts `https://time.now/mcp` with only the public Copenhagen timezone
+argument through the registered/enabled test tool. Do not substitute private chat data or
+credentials in a public test. The second copies an isolated synthetic standard skill and
+checks its observed effect on actual model output. Neither command is an iPhone benchmark,
+a real iCloud transfer test or a guarantee of arbitrary skills/server compatibility.

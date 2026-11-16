@@ -1,0 +1,179 @@
+import Darwin
+import Foundation
+
+/// Shares the global source contract with Actions; neither chat sync nor reset modifies skills.
+actor SkillStore {
+    let localRoot: URL
+
+    init(localRoot: URL) { self.localRoot = localRoot }
+
+    func entries(_ source: QuickActionSource) throws -> [SkillEntry] {
+        try withRoot(source) { root, descriptor in
+            let folders = try Self.names(in: descriptor).sorted()
+            return try folders.map { name in
+                try Task.checkCancellation()
+                do {
+                    let document = try SkillDocument.decode(
+                        readFile("SKILL.md", folder: name, root: root, descriptor: descriptor),
+                        directoryName: name)
+                    return SkillEntry(id: name, document: document, error: nil)
+                } catch is CancellationError { throw CancellationError() } catch {
+                    return SkillEntry(id: name, document: nil, error: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    func resource(_ path: String, skill: SkillDocument, source: QuickActionSource) throws -> String
+    {
+        try withRoot(source) { root, descriptor in
+            let current = try SkillDocument.decode(
+                readFile("SKILL.md", folder: skill.name, root: root, descriptor: descriptor),
+                directoryName: skill.name)
+            guard current == skill else { throw SkillFailure.changed }
+            guard path.split(separator: "/").first != "scripts" else {
+                throw SkillFailure.unsupportedResource
+            }
+            let data = try readFile(path, folder: skill.name, root: root, descriptor: descriptor)
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw SkillFailure.unsupportedResource
+            }
+            return text
+        }
+    }
+
+    private func readFile(_ path: String, folder: String, root: URL, descriptor: Int32) throws
+        -> Data
+    {
+        try Task.checkCancellation()
+        let parts = [folder] + path.components(separatedBy: "/")
+        guard parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") }) else {
+            throw SkillFailure.unsupportedResource
+        }
+        let file = parts.reduce(root) { $0.appendingPathComponent($1) }
+        var result: Result<Data, Error>?
+        var failure: NSError?
+        NSFileCoordinator().coordinate(readingItemAt: file, options: [], error: &failure) { _ in
+            // Coordination materializes cloud files. The opened root remains authoritative:
+            // never reopen an absolute URL after a path component may have been replaced.
+            result = Result { try Self.readRelativeFile(parts, descriptor: descriptor) }
+        }
+        if let failure { throw failure }
+        guard let result else { throw CloudConversationError.coordination }
+        return try result.get()
+    }
+
+    /// Directory descriptors pin the selected tree; O_NOFOLLOW makes each traversal atomic.
+    static func openDirectory(_ path: String) throws -> Int32 {
+        let descriptor = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw SkillFailure.unsupportedResource }
+        return descriptor
+    }
+
+    /// Enumerate the pinned directory, rather than resolving its possibly replaced URL.
+    private static func names(in descriptor: Int32) throws -> [String] {
+        let copy = dup(descriptor)
+        guard copy >= 0 else { throw SkillFailure.unsupportedResource }
+        guard let directory = fdopendir(copy) else {
+            close(copy)
+            throw SkillFailure.unsupportedResource
+        }
+        defer { closedir(directory) }
+        var names: [String] = []
+        while true {
+            errno = 0
+            guard let entry = readdir(directory) else {
+                guard errno == 0 else { throw SkillFailure.unsupportedResource }
+                break
+            }
+            let name = withUnsafePointer(to: entry.pointee.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: 256) { String(cString: $0) }
+            }
+            guard !name.hasPrefix(".") else { continue }
+            names.append(name)
+            guard names.count <= 256 else {
+                throw SkillFailure.invalid("The Skills folder exceeds the 256-entry limit.")
+            }
+        }
+        return names
+    }
+
+    /// Read only regular files through the pinned directory, never following a symbolic link.
+    static func readRelativeFile(_ parts: [String], descriptor: Int32) throws -> Data {
+        guard !parts.isEmpty,
+            parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") })
+        else { throw SkillFailure.unsupportedResource }
+        var directory = dup(descriptor)
+        guard directory >= 0 else { throw SkillFailure.unsupportedResource }
+        defer { close(directory) }
+        for component in parts.dropLast() {
+            try Task.checkCancellation()
+            let next = openat(directory, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard next >= 0 else { throw SkillFailure.unsupportedResource }
+            close(directory)
+            directory = next
+        }
+        let file = openat(directory, parts.last!, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+        guard file >= 0 else { throw SkillFailure.unsupportedResource }
+        defer { close(file) }
+        var info = stat()
+        guard fstat(file, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+            info.st_size >= 0, info.st_size <= 65_536
+        else { throw SkillFailure.unsupportedResource }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 8_192)
+        while true {
+            try Task.checkCancellation()
+            let count = buffer.withUnsafeMutableBytes { read(file, $0.baseAddress!, $0.count) }
+            if count < 0 && errno == EINTR { continue }
+            guard count >= 0 else { throw SkillFailure.unsupportedResource }
+            if count == 0 { break }
+            guard data.count + count <= 65_536 else { throw SkillFailure.unsupportedResource }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        return data
+    }
+
+    private func withRoot<T>(
+        _ source: QuickActionSource, _ action: (URL, Int32) throws -> T
+    ) throws -> T {
+        try Task.checkCancellation()
+        switch source {
+        case .device:
+            try FileManager.default.createDirectory(
+                at: localRoot, withIntermediateDirectories: true)
+            let descriptor = try Self.openDirectory(localRoot.path)
+            defer { close(descriptor) }
+            var root = localRoot
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try root.setResourceValues(values)
+            return try action(root, descriptor)
+        case .cloud(let bookmark):
+            var stale = false
+            #if os(macOS)
+                let options: URL.BookmarkResolutionOptions = [.withSecurityScope]
+            #else
+                let options: URL.BookmarkResolutionOptions = []
+            #endif
+            let root = try URL(
+                resolvingBookmarkData: bookmark, options: options,
+                relativeTo: nil, bookmarkDataIsStale: &stale)
+            guard !stale, root.startAccessingSecurityScopedResource() else {
+                throw CloudConversationError.permission
+            }
+            defer { root.stopAccessingSecurityScopedResource() }
+            let descriptor = try Self.openDirectory(root.path)
+            defer { close(descriptor) }
+            let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isUbiquitousItemKey])
+            guard root.lastPathComponent == "EmblaChat", values.isDirectory == true,
+                values.isUbiquitousItem == true
+            else { throw CloudConversationError.notICloudFolder }
+            let skills = openat(
+                descriptor, "Skills", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard skills >= 0 else { throw SkillFailure.unsupportedResource }
+            defer { close(skills) }
+            return try action(root.appendingPathComponent("Skills", isDirectory: true), skills)
+        }
+    }
+}

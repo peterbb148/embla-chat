@@ -28,22 +28,20 @@ scope before provider access. Disabled mode never opens the folder provider. Con
 choices replace a whole
 library with explicit confirmation. These operations do not replace, clear or scan Skills.
 
-`Skills` reserves the portable skill library requested in #27. Each copied skill retains its
+`Skills` holds the portable skill library introduced in #27. Each copied skill retains its
 own directory and relative supporting files. The [Agent Skills specification](https://agentskills.io/specification)
 defines `SKILL.md` as YAML frontmatter with required `name` and `description`, followed by
 Markdown instructions. The name must match its directory. Supporting scripts, references,
 assets and additional files are preserved rather than converted to an Embla-specific format.
 
-The current app creates the Skills directory but does not yet discover, load or execute
-skills. Copying a skill does not make its script language, dependencies or tools available
-on iOS. #27 must validate compatibility, report unsupported requirements and implement real
-tool use. There is no placeholder tool execution or automatic substitute for missing tools.
-
-MCP server connections are a separate capability from the on-disk skill format. #27 tracks
-server configuration, authentication, discovery, a cancellable model/tool loop and visible
-results/errors against the [MCP specification](https://modelcontextprotocol.io/specification/2026-07-28).
-Remote tools can send data over the network even when model inference stays local. That
-behavior requires explicit controls and must not be represented as offline inference.
+The app discovers valid copied skills and lets the user explicitly select one. Supporting
+UTF-8 text files can be read on demand inside that skill when that skill is selected. Scripts, dependencies
+and arbitrary process launch are not installed or made executable by copying files.
+[Skills and MCP](skills-and-tools.md) documents validation, source selection, protocol support,
+authorization, Keychain credentials and actual evidence. MCP server settings stay device-local;
+copying a skill does not configure or authorize servers. Remote tool arguments leave the
+device even while model inference remains local. Requests/results form part of saved chats
+and follow their existing global iCloud consent.
 
 The earlier unmerged storage implementation used `EmblaChat/ActiveChat.json`. Its disposable
 validation document is moved intact to `Chats/ActiveChat.json` for the new layout. The app
@@ -52,4 +50,4 @@ uses the new path directly; it does not silently choose between two chat locatio
 [Quick actions](quick-actions.md) reads Actions/actions.json from the selected cloud root
 only when the global preference is durably On. Off uses an on-device Actions directory
 visible in Files, excluded from automatic backup. Missing/invalid On configuration never
-selects a local substitute. Skills remain reserved; skill cards cannot execute yet.
+selects a local substitute. Skill cards select a validated skill and optionally fill a draft; they do not submit or authorize tools.

@@ -12,10 +12,17 @@ let package = Package(
     dependencies: [
         .package(
             url: "https://github.com/peterbb148/embla-metal",
-            revision: "0c8caaa3616372482d047fa9e953ea656cb34588")
+            revision: "0c8caaa3616372482d047fa9e953ea656cb34588"),
+        .package(
+            url: "https://github.com/jpsim/Yams",
+            exact: "6.2.2"),
     ],
     targets: [
-        .target(name: "EmblaCore", resources: [.copy("Resources/model-manifest.json")]),
+        .target(
+            name: "EmblaCore",
+            resources: [
+                .copy("Resources/model-manifest.json"), .copy("Resources/Yams-LICENSE"),
+            ]),
         .testTarget(name: "EmblaCoreTests", dependencies: ["EmblaCore"]),
         .target(
             name: "EmblaRuntime",
@@ -23,8 +30,9 @@ let package = Package(
                 "EmblaCore", .product(name: "EmblaChat", package: "embla-metal"),
                 .product(name: "EmblaMetal", package: "embla-metal"),
             ]),
-        .target(name: "EmblaPresentation", dependencies: ["EmblaCore", "EmblaRuntime"]),
+        .target(name: "EmblaPresentation", dependencies: ["EmblaCore", "EmblaRuntime", "Yams"]),
         .testTarget(
-            name: "EmblaPresentationTests", dependencies: ["EmblaPresentation", "EmblaCore", "EmblaRuntime"]),
+            name: "EmblaPresentationTests",
+            dependencies: ["EmblaPresentation", "EmblaCore", "EmblaRuntime"]),
     ]
 )

@@ -11,6 +11,7 @@ model inference or cloud transfer.
 - [Context compaction](context-compaction.md) and [context usage](context-usage.md)
 - [Persistence and iCloud](chat-persistence.md)
 - [History](chat-history.md), [Projects](projects.md) and [quick actions](quick-actions.md)
+- [Skills and MCP host/transport evidence](skills-and-tools.md)
 - [Repository security and merge gates](repository-security.md)
 
 Each feature record identifies its evidence and limits. The delivery acceptance record

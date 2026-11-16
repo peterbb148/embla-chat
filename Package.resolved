@@ -1,5 +1,5 @@
 {
-  "originHash" : "b16e4682c99246a9a70de47a84ca684cb187a871d25ad9d99293ad01a4fb2580",
+  "originHash" : "88365faa7440dbcdc96b6e9c754aa7d6bdcd26a8d7dcb2cc9dddadffecd63ebf",
   "pins" : [
     {
       "identity" : "embla-metal",
@@ -7,6 +7,15 @@
       "location" : "https://github.com/peterbb148/embla-metal",
       "state" : {
         "revision" : "0c8caaa3616372482d047fa9e953ea656cb34588"
+      }
+    },
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jpsim/Yams",
+      "state" : {
+        "revision" : "a27b21e0c81c5bf42049b897a62aaf387e80f279",
+        "version" : "6.2.2"
       }
     }
   ],

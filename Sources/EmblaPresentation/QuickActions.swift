@@ -1,6 +1,6 @@
 import Foundation
 
-/// Human-editable action configuration. Skill references are reserved, never simulated.
+/// Human-editable prompts and explicit portable skill references; never auto-submitted.
 public struct QuickAction: Codable, Sendable, Equatable, Identifiable {
     public enum Kind: String, Codable, Sendable { case prompt, skill }
     public let id: String
@@ -124,7 +124,7 @@ public enum QuickActionError: Error, LocalizedError, Sendable {
                 "actions.json already exists. Edit it in Files; starter actions were not written."
         case .changed: return "The action configuration changed. Select the action again."
         case .skillsUnavailable:
-            return "Skill actions require skills support, which is not available yet."
+            return "Select this action as a skill rather than requesting a prompt-only action."
         case .sourceUnavailable:
             return "Confirm the iCloud preference and folder in Settings first."
         }

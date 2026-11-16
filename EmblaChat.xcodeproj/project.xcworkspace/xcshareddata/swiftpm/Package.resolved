@@ -1,4 +1,5 @@
 {
+  "originHash" : "ba69ead4f4c817b04771b35a5e953cde98a427d4bd67a2cd5f60f1edfbf574c0",
   "pins" : [
     {
       "identity" : "embla-metal",
@@ -7,7 +8,16 @@
       "state" : {
         "revision" : "0c8caaa3616372482d047fa9e953ea656cb34588"
       }
+    },
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jpsim/Yams",
+      "state" : {
+        "revision" : "a27b21e0c81c5bf42049b897a62aaf387e80f279",
+        "version" : "6.2.2"
+      }
     }
   ],
-  "version" : 2
+  "version" : 3
 }

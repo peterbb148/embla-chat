@@ -16,7 +16,8 @@ saved chats through iCloud Drive. Model inference runs locally after the model i
 - Saved chat history, a sidebar and separate drafts for each conversation.
 - Projects with editable memory that you explicitly save from a chat.
 - Automatic context compaction, a usage indicator and manual compaction controls.
-- Configurable quick actions that fill editable prompts.
+- Configurable quick actions that fill editable prompts or select a skill.
+- Portable Agent Skills and automatic calls to registered, enabled MCP tools.
 - Model download, integrity verification and storage management.
 - Optional iCloud Drive synchronization, off by default.
 
@@ -47,7 +48,8 @@ rather than extracted automatically from your chats.
 
 See [persistence](docs/chat-persistence.md) and [storage layout](docs/storage-layout.md) for
 consent, file formats, conflicts and configuration folders. Quick actions are documented
-[here](docs/quick-actions.md).
+[here](docs/quick-actions.md). [Skills and MCP](docs/skills-and-tools.md) explains tool
+authorization, supported protocols and network destinations; remote tools require connectivity.
 
 ## Architecture and documentation
 
@@ -58,6 +60,7 @@ Embla Metal runtime. There is no remote inference service in the application pat
 - [Inference API](docs/inference-api.md) and [runtime integration](docs/runtime-integration.md)
 - [Context management](docs/context-compaction.md) and [context usage](docs/context-usage.md)
 - [Chat history](docs/chat-history.md) and [Projects](docs/projects.md)
+- [Skills and MCP tools](docs/skills-and-tools.md)
 - [Validation records](docs/validation.md)
 - [Branding and the name Embla](docs/branding/README.md)
 
@@ -73,4 +76,6 @@ Report vulnerabilities using the guidance in [SECURITY.md](SECURITY.md).
 
 Embla Chat's original code is licensed under the [MIT License](LICENSE). Upstream runtime
 and model licenses remain separate; notices are retained in [third-party](third-party).
+The pinned Yams YAML parser has its [MIT notice](Sources/EmblaCore/Resources/Yams-LICENSE)
+in the shared resource bundle.
 Model weights are downloaded separately and are not bundled in this repository.

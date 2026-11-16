@@ -7,7 +7,8 @@ model, pending count or counting error has an explicit state instead of an inven
 ## What the count means
 
 The indicator projects the context for the next message: the stored rolling summary,
-retained conversation and current trimmed draft, including its user-message framing even
+retained conversation, selected skill, enabled-tool schemas and current trimmed draft,
+including its user-message framing even
 when the draft is empty. Both counting and generation use the pinned upstream ChatTemplate
 and Tokenizer through the same rendering function. Prior reasoning is retained/dropped
 according to that template, not counted from the visible text. This is a next-message
@@ -18,7 +19,11 @@ while typing does not construct a GPU engine, load model weights, call a network
 or require a successful GPU compilation. Counts debounce draft/stream changes and reject
 superseded results. Restore, New Chat, summary changes and foreground activation refresh
 them; inactive/background states cancel counting. Production always supplies the real
-counter. Internal test construction can inject an explicit counter fixture.
+counter. Internal test construction can inject an explicit counter fixture. If registered
+tool schemas are not yet available, the indicator reports that state; discovery happens
+when the user connects in Settings or sends, never as a counting side effect. During a
+tool loop the ring still projects the next user message from the visible transcript; the
+session separately checks each actual growing model/tool prompt before generation.
 
 Capacity is 8192 tokens. Details distinguish the 512-token reply reserve, 1536-token summary
 reserve and 256-token headroom, explaining the existing automatic threshold of 5888.
