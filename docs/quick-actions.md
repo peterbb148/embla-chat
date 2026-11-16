@@ -68,17 +68,18 @@ Copy [the starter file](../examples/actions.json), then edit the fields below:
 | `label` | Required nonempty display text. |
 | `order` | Required integer; ascending order, with file order breaking ties. |
 | `enabled` | Required Boolean; false entries are omitted from the cards. |
-| `type` | Required `prompt` or reserved `skill`; unknown values are rejected. |
+| `type` | Required `prompt` or `skill`; unknown values are rejected. |
 | `prompt` | Required nonempty string for prompt actions; exact text is preserved. |
-| `skill` | Required nonempty reference for reserved skill actions. |
+| `skill` | Required name of a valid copied skill for skill actions. |
 
 Labels, IDs and required content cannot be whitespace-only. Malformed JSON, missing/wrong
 fields and duplicate IDs are errors; invalid configurations are not partially rendered.
 This is Embla's format, rather than an automatic import of another app's proprietary format.
 
-Skill cards are visibly unavailable and cannot fill/submit a prompt or run code. Standard
-skill loading and actual MCP/tool execution remain #27 in Epic 5. Credentials do not belong
-in action JSON. No credentials or remote-tool authentication are implemented here.
+Skill cards explicitly select a valid copied skill from the current Skills source. An optional
+`prompt` fills the draft with replacement confirmation; without one the existing draft is kept.
+No action submits, runs scripts or registers/enables an MCP server. Missing/changed/invalid skills
+fail visibly. Credentials do not belong in action JSON; see [skills and MCP](skills-and-tools.md).
 
 ## Evidence boundary
 
@@ -93,7 +94,7 @@ without downloaded weights or fake assistant replies. Real model inference and p
 behavior have separate host/device evidence; a filled composer is not a generated response.
 Actual new-format iCloud provider checks remain explicitly deferred to #45 by the user.
 
-Local validation: the package suite reports 133 tests, and all nine production UI tests
+At the Epic 4 checkpoint, the package suite reported 133 tests, and all nine production UI tests
 passed on the existing iPhone 17 Pro/iOS 27.2. The focused action case also retains app-only
 screenshots in its xcresult; inspection shows the horizontally scrolling cards, filled
 composer above the keyboard, and native replacement confirmation. No assistant response is

@@ -113,10 +113,10 @@ final class LaunchTests: XCTestCase {
         app.launch()
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         let restored = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "Local draft survives restart"), object: composer)
+            predicate: NSPredicate(format: "value == %@", "Local draft survives restart"),
+            object: composer)
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
     }
-
 
     @MainActor
     func testICloudStartsOffAndCancellingConsentKeepsItOff() throws {
@@ -164,7 +164,8 @@ final class LaunchTests: XCTestCase {
         confirmation.buttons["Start new chat"].tap()
         XCTAssertTrue(confirmation.waitForNonExistence(timeout: 5))
         let empty = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
+            predicate: NSPredicate(
+                format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
             object: composer)
         XCTAssertEqual(XCTWaiter.wait(for: [empty], timeout: 10), .completed)
         composer.tap()
@@ -284,6 +285,38 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["actions-source"].label.contains("On My iPhone"))
         XCTAssertTrue(app.buttons["Reload actions"].isEnabled)
         XCTAssertFalse(app.staticTexts["actions-error"].exists)
+    }
+
+    @MainActor
+    func testSkillsAndMCPConfigurationStayExplicitAndDoNotConnectAutomatically() throws {
+        let app = try launchCleanChat()
+        app.buttons["Choose skill"].tap()
+        XCTAssertTrue(app.buttons["Reload skills"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["selected-skill"].exists)
+        XCTAssertEqual(app.staticTexts["selected-skill"].label, "None")
+        app.buttons["Done"].tap()
+        app.buttons["Chat history"].tap()
+        app.buttons["Settings"].tap()
+        app.buttons["MCP servers"].tap()
+        app.buttons["Add Time.Now example"].tap()
+        let name = app.textFields["mcp-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText(" UI fixture " + UUID().uuidString.prefix(8))
+        app.buttons["Save server"].tap()
+        let connect = app.buttons["Connect and discover tools"]
+        reveal(connect, in: app)
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.switches["get_current_time"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Explicit MCP endpoint configuration without connection or credentials"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        reveal(app.buttons["Delete server…"], in: app)
+        app.buttons["Delete server…"].tap()
+        let confirmation = app.alerts["Delete this MCP server?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["Delete"].tap()
     }
 
 }

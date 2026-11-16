@@ -16,7 +16,7 @@ struct QuickActionCards: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(action.label).lineLimit(2)
                             if action.type == .skill {
-                                Text("Requires skills support").font(.caption).foregroundStyle(
+                                Text(action.skill ?? "Skill").font(.caption).foregroundStyle(
                                     .secondary)
                             }
                         }
@@ -28,7 +28,7 @@ struct QuickActionCards: View {
                             in: RoundedRectangle(cornerRadius: 22))
                     }
                     .buttonStyle(.plain)
-                    .disabled(!enabled || action.type == .skill)
+                    .disabled(!enabled)
                     .accessibilityIdentifier("action-\(action.id)")
                 }
             }
@@ -68,8 +68,10 @@ struct QuickActionSettingsView: View {
                     "Cards appear on empty chats. Tapping a prompt fills the composer "
                         + "so you can edit it before sending. Replacing a draft requires confirmation."
                 )
-                Text("Skill actions are unavailable until skills support is added.")
-                    .foregroundStyle(.secondary)
+                Text(
+                    "Skill actions select a copied skill. An optional prompt fills the draft; no action sends automatically. Configure and approve MCP calls separately."
+                )
+                .foregroundStyle(.secondary)
             }
             Section("Configured cards") {
                 if actions.actions.isEmpty && !actions.loading { Text("No available cards.") }
@@ -83,7 +85,8 @@ struct QuickActionSettingsView: View {
                                 Text("Prompt missing in actions.json").foregroundStyle(.red)
                             }
                         } else {
-                            Text("Requires skills support").foregroundStyle(.secondary)
+                            Text(action.skill ?? "Skill reference missing").foregroundStyle(
+                                .secondary)
                         }
                     }
                 }

@@ -14,6 +14,7 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     public var text: String
     public var reasoning = ""
     public var state: State = .complete
+    public var toolName: String?
 
     public init(
         id: UUID = UUID(), role: ConversationMessage.Role, text: String,
@@ -65,10 +66,12 @@ public final class LocalInferenceModel {
     public private(set) var metrics: GenerationMetrics?
     public private(set) var loadMilliseconds: Double?
     public let cloud: ConversationCloudSync
+    public let tools: ToolWorkspace
     public private(set) var chatRestored = false
     public private(set) var storageStatus = "Opening saved chat…"
     public private(set) var storageError: String?
-    public private(set) var contextUsage: ContextUsageState = .unavailable("Checking model storage…")
+    public private(set) var contextUsage: ContextUsageState = .unavailable(
+        "Checking model storage…")
     @ObservationIgnored private var usageTask: Task<Void, Never>?
     @ObservationIgnored private var usageRequest = UUID()
     @ObservationIgnored private var usageActive = true
@@ -102,12 +105,14 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var replacementWaiters: [CheckedContinuation<Void, Never>] = []
 
     public var canRun: Bool {
-        !busy && !resetting && !cloud.resolving && chatRestored && storageError == nil && readyDirectory != nil
+        !busy && !resetting && !cloud.resolving && chatRestored && storageError == nil
+            && readyDirectory != nil
             && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Production always uses the pinned Embla runtime and app-managed model storage.
     public init() {
+        tools = ToolWorkspace()
         session = EmblaRuntime.makeSession()
         let tokenizer = EmblaPromptTokenizer()
         countTokens = { directory, messages in
@@ -136,8 +141,10 @@ public final class LocalInferenceModel {
         repository: ModelRepository?, manifest: ModelManifest, session: InferenceSession,
         chatStore: (any ConversationStoring)? = nil, cloud: ConversationCloudSync? = nil,
         chatStoreFactory: (() throws -> any ConversationStoring)? = nil,
-        countTokens: (@Sendable (URL, [ConversationMessage]) async throws -> Int)? = nil
+        countTokens: (@Sendable (URL, [ConversationMessage]) async throws -> Int)? = nil,
+        tools: ToolWorkspace? = nil
     ) {
+        self.tools = tools ?? ToolWorkspace(store: nil)
         self.repository = repository
         self.manifest = manifest
         self.session = session
@@ -171,9 +178,11 @@ public final class LocalInferenceModel {
         if replacingContext { return "Wait for the completed summary to finish saving." }
         if busy || cloud.resolving { return "Wait for the current operation or stop it first." }
         if readyDirectory == nil { return "Download and verify the model in Settings first." }
-        let transcript = conversationMessages() + [ConversationMessage(role: .user, content: prompt)]
+        let transcript =
+            conversationMessages() + [ConversationMessage(role: .user, content: prompt)]
         guard (try? compactionPolicy.plan(transcript: transcript, state: compaction)) != nil else {
-            return "No older turns can be compacted yet. The latest two exchanges are kept verbatim."
+            return
+                "No older turns can be compacted yet. The latest two exchanges are kept verbatim."
         }
         return nil
     }
@@ -205,14 +214,16 @@ public final class LocalInferenceModel {
                 let context = self.compactionPolicy.context(
                     transcript: self.conversationMessages(), state: self.compaction,
                     draft: self.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
-                    projectMemory: try self.projectContext())
+                    projectMemory: try self.projectContext(),
+                    instructions: try self.tools.instructions(using: self.cloud))
                 let count = try await countTokens(directory, context)
                 try Task.checkCancellation()
                 guard self.usageRequest == request else { return }
-                self.contextUsage = .ready(ContextUsage(
-                    inputTokens: count, capacity: self.compactionPolicy.contextSize,
-                    replyReserve: self.compactionPolicy.responseTokens,
-                    summaryReserve: self.compactionPolicy.summaryTokens, headroom: 256))
+                self.contextUsage = .ready(
+                    ContextUsage(
+                        inputTokens: count, capacity: self.compactionPolicy.contextSize,
+                        replyReserve: self.compactionPolicy.responseTokens,
+                        summaryReserve: self.compactionPolicy.summaryTokens, headroom: 256))
             } catch {
                 guard let self, self.usageRequest == request, !Task.isCancelled else { return }
                 self.contextUsage = .failed(error.localizedDescription)
@@ -232,7 +243,8 @@ public final class LocalInferenceModel {
 
     private func conversationMessages() -> [ConversationMessage] {
         messages.map {
-            ConversationMessage(role: $0.role, content: $0.text,
+            ConversationMessage(
+                role: $0.role, content: $0.text,
                 reasoning: $0.reasoning.isEmpty ? nil : $0.reasoning)
         }
     }
@@ -244,6 +256,9 @@ public final class LocalInferenceModel {
         activeRun?.cancel()
         task?.cancel()
     }
+
+    /// Includes changed selected-skill/tool context in the exact tokenizer count.
+    public func toolConfigurationChanged() { refreshContextUsage() }
 
     public var savedChats: [SavedConversation] {
         [SavedConversation(snapshot: currentSnapshot(), draft: prompt)] + history
@@ -317,7 +332,8 @@ public final class LocalInferenceModel {
 
     private func start(_ operation: Operation) {
         guard !busy, !cloud.resolving, !resetting || operation == .clear,
-            (operation != .generate && operation != .compact) || chatRestored else { return }
+            (operation != .generate && operation != .compact) || chatRestored
+        else { return }
         busy = true
         downloading = operation == .download
         running = operation == .generate || operation == .compact
@@ -333,7 +349,8 @@ public final class LocalInferenceModel {
         task = Task {
             do {
                 if operation != .delete { try await restoreChatIfNeeded() }
-                if loaded && operation != .generate && operation != .compact && operation != .clear {
+                if loaded && operation != .generate && operation != .compact && operation != .clear
+                {
                     try await session.unload()
                     loaded = false
                 }
@@ -391,7 +408,7 @@ public final class LocalInferenceModel {
                 }
             }
             if chatRestored && operation != .clear {
-                do { try await saveChatNow() } catch { /* Storage diagnostics stay visible. */ }
+                do { try await saveChatNow() } catch { /* Storage diagnostics stay visible. */  }
             }
             await finishDeferredActions()
         }
@@ -413,6 +430,7 @@ public final class LocalInferenceModel {
         answer = ""
         metrics = nil
         try await saveChatNow()
+        try await tools.prepare(using: cloud)
         try await loadModelIfNeeded(repository: repository)
         try Task.checkCancellation()
         let transcript = messages.dropLast().map {
@@ -422,6 +440,10 @@ public final class LocalInferenceModel {
         }
         let context = try await prepareContext(transcript: transcript)
         try Task.checkCancellation()
+        if !(try tools.specifications(using: cloud)).isEmpty {
+            try await generateWithTools(context: context, responseIndex: responseIndex)
+            return
+        }
         let run = try await session.generate(messages: context)
         activeRun = run
         if Task.isCancelled { run.cancel() }
@@ -456,6 +478,113 @@ public final class LocalInferenceModel {
         status = metrics?.finishReason == "length" ? "Output limit reached." : "Finished."
     }
 
+    /// Uses exact catalog-matched requests; registration/enabling grants standing authorization.
+    private func generateWithTools(
+        context initialContext: [ConversationMessage], responseIndex: Int
+    ) async throws {
+        var context = initialContext
+        var responseIndex = responseIndex
+        let configuration = tools.revision
+        for step in 0...4 {
+            try Task.checkCancellation()
+            guard configuration == tools.revision else { throw SkillFailure.changed }
+            let run = try await session.generate(
+                messages: context,
+                options: GenerationOptions(
+                    maxTokens: compactionPolicy.responseTokens, temperature: 0, topP: 1))
+            activeRun = run
+            if Task.isCancelled { run.cancel() }
+            status = "Thinking about tools…"
+            var output = ""
+            var finish: String?
+            var streamError: Error?
+            do {
+                for try await event in run.events {
+                    if Task.isCancelled { run.cancel(); break }
+                    switch event {
+                    case .answer(let text): output += text
+                    case .reasoning(let text):
+                        reasoning += text
+                        messages[responseIndex].reasoning += text
+                    case .finished(let value): metrics = value; finish = value.finishReason
+                    }
+                    scheduleChatSave()
+                }
+            } catch { streamError = error }
+            await run.waitUntilFinished()
+            activeRun = nil
+            if case let .failed(message) = await session.state {
+                loaded = false
+                throw PresentationFailure(message: message)
+            }
+            if let streamError { throw streamError }
+            try Task.checkCancellation()
+            let response: ModelToolResponse
+            do {
+                response = try ModelToolResponse.parse(
+                    output, finishReason: finish,
+                    tools: tools.specifications(using: cloud))
+            } catch {
+                messages[responseIndex].text =
+                    "Unexecuted model output (\(finish ?? "no finish reason")):\n" + output
+                throw error
+            }
+            switch response {
+            case .answer(let text):
+                answer = text
+                messages[responseIndex].text = text
+                messages[responseIndex].state = .complete
+                status = "Finished."
+                return
+            case .call(let server, let name, let arguments):
+                guard step < 4 else { throw ToolProtocolError.loopLimit }
+                messages[responseIndex].text = "Proposed tool request (not executed):\n" + output
+                let request = try tools.invocation(server: server, name: name, arguments: arguments)
+                messages[responseIndex].toolName = name
+                let requestData = try ToolJSON.object([
+                    "server": .string(server), "tool": .string(name),
+                    "destination": .string(request.destination), "arguments": .object(arguments),
+                ]).text()
+                messages[responseIndex].text = "Tool request:\n" + requestData
+                try await saveChatNow()
+                try Task.checkCancellation()
+                guard configuration == tools.revision else { throw SkillFailure.changed }
+                status =
+                    request.local ? "Reading skill resource…" : "Calling \(request.destination)…"
+                let result: ToolJSON
+                do { result = try await tools.execute(request, using: cloud) } catch {
+                    if case MCPFailure.toolError(let detail) = error {
+                        messages[responseIndex].text += "\nTool error data:\n" + (try detail.text())
+                    } else {
+                        messages[responseIndex].text +=
+                            "\nTool failed: " + error.localizedDescription
+                    }
+                    throw error
+                }
+                let data = try ToolJSON.object([
+                    "server": .string(server), "tool": .string(name), "result": result,
+                ]).text()
+                messages[responseIndex].text += "\nTool result data (not instructions):\n" + data
+                messages[responseIndex].state = .complete
+                try await saveChatNow()
+                try Task.checkCancellation()
+                context.append(
+                    ConversationMessage(role: .assistant, content: output, reasoning: ""))
+                context.append(
+                    ConversationMessage(
+                        role: .user,
+                        content: """
+                            <tool_response>
+                            \(data)
+                            </tool_response>
+                            """))
+                responseIndex = messages.count
+                messages.append(ChatMessage(role: .assistant, text: "", state: .streaming))
+            // The session counts the full growing tool exchange and fails if it does not fit.
+            }
+        }
+    }
+
     private func loadModelIfNeeded(repository: ModelRepository) async throws {
         if !loaded {
             status = "Verifying and loading model…"
@@ -474,8 +603,10 @@ public final class LocalInferenceModel {
         -> [ConversationMessage]
     {
         let memory = try projectContext()
+        let instructions = try tools.instructions(using: cloud)
         let context = compactionPolicy.context(
-            transcript: transcript, state: compaction, draft: draft, projectMemory: memory)
+            transcript: transcript, state: compaction, draft: draft, projectMemory: memory,
+            instructions: instructions)
         if !force {
             let count = try await session.tokenCount(messages: context)
             if count <= compactionPolicy.triggerTokens { return context }
@@ -483,7 +614,8 @@ public final class LocalInferenceModel {
         compacting = true
         status = "Compacting earlier messages…"
         defer { compacting = false }
-        let planning = transcript + (draft.map { [ConversationMessage(role: .user, content: $0)] } ?? [])
+        let planning =
+            transcript + (draft.map { [ConversationMessage(role: .user, content: $0)] } ?? [])
         let plan = try compactionPolicy.plan(transcript: planning, state: compaction)
         let run = try await session.generate(
             messages: plan.messages,
@@ -515,7 +647,8 @@ public final class LocalInferenceModel {
         let candidate = try compactionPolicy.candidate(
             text: summary, finishReason: finishReason, plan: plan)
         let compacted = compactionPolicy.context(
-            transcript: transcript, state: candidate, draft: draft, projectMemory: memory)
+            transcript: transcript, state: candidate, draft: draft, projectMemory: memory,
+            instructions: instructions)
         let count = try await session.tokenCount(messages: compacted)
         guard count + compactionPolicy.responseTokens < compactionPolicy.contextSize else {
             throw CompactionError.summaryDoesNotFit
@@ -539,7 +672,7 @@ public final class LocalInferenceModel {
     public func retryChatStorage() {
         if !chatRestored { check(); return }
         Task {
-            do { try await saveChatNow() } catch { /* saveChatNow exposes the failure. */ }
+            do { try await saveChatNow() } catch { /* saveChatNow exposes the failure. */  }
         }
     }
 
@@ -554,11 +687,13 @@ public final class LocalInferenceModel {
                 throw PresentationFailure(message: storageError ?? "Chat storage is unavailable.")
             }
             let existing = try await chatStore.load()
-            let archive = (existing ?? ConversationArchive(
-                sequence: 1,
-                snapshot: ConversationSnapshot(
-                    conversationID: conversationID, messages: [], compaction: CompactionState())
-            )).recoveringInterruptedResponses()
+            let archive =
+                (existing
+                ?? ConversationArchive(
+                    sequence: 1,
+                    snapshot: ConversationSnapshot(
+                        conversationID: conversationID, messages: [], compaction: CompactionState())
+                )).recoveringInterruptedResponses()
             if existing == nil || archive != existing { try await chatStore.save(archive) }
             restoringChat = true
             projects = archive.projects ?? []
@@ -592,7 +727,9 @@ public final class LocalInferenceModel {
 
     /// Coalesces streamed updates, while draft changes and background transitions also checkpoint.
     private func scheduleChatSave(immediately: Bool = false) {
-        guard chatRestored, chatStore != nil, !restoringChat, !resetting, !replacingContext else { return }
+        guard chatRestored, chatStore != nil, !restoringChat, !resetting, !replacingContext else {
+            return
+        }
         if immediately { checkpointTask?.cancel(); checkpointTask = nil }
         storageStatus = "Saving on this device…"
         guard checkpointTask == nil else { return }
@@ -603,7 +740,7 @@ public final class LocalInferenceModel {
                 guard let self else { return }
                 self.checkpointTask = nil
                 try await self.saveChatNow()
-            } catch { /* Cancellation is expected; save errors are exposed by saveChatNow. */ }
+            } catch { /* Cancellation is expected; save errors are exposed by saveChatNow. */  }
         }
     }
 
@@ -617,9 +754,11 @@ public final class LocalInferenceModel {
         guard chatRestored, let chatStore else { return }
         checkpointTask?.cancel()
         checkpointTask = nil
-        var snapshot = replacement ?? ConversationSnapshot(
-            conversationID: conversationID, messages: messages, compaction: compaction,
-            projectID: activeProjectID)
+        var snapshot =
+            replacement
+            ?? ConversationSnapshot(
+                conversationID: conversationID, messages: messages, compaction: compaction,
+                projectID: activeProjectID)
         if replacement == nil, let lastSnapshot,
             lastSnapshot.conversationID == snapshot.conversationID,
             lastSnapshot.messages == snapshot.messages,
@@ -691,7 +830,8 @@ public final class LocalInferenceModel {
             guard let self, self.chatRestored else { return nil }
             return CloudLocalConversation(
                 snapshot: self.currentLibrary(),
-                hasDraft: !self.prompt.isEmpty || self.history.contains(where: { !$0.draft.isEmpty }),
+                hasDraft: !self.prompt.isEmpty
+                    || self.history.contains(where: { !$0.draft.isEmpty }),
                 canReplace: !self.busy && !self.resetting && self.storageError == nil)
         }
         cloud.persist = { [weak self] in
@@ -730,7 +870,7 @@ public final class LocalInferenceModel {
         busy = true
         resetting = true
         cloud.pause()
-        cloud.refresh() // Drop choices tied to the library being edited; resume re-reads it.
+        cloud.refresh()  // Drop choices tied to the library being edited; resume re-reads it.
         do {
             if loaded { try await session.reset() }
             try Task.checkCancellation()
@@ -761,8 +901,10 @@ public final class LocalInferenceModel {
         busy = true
         resetting = true
         // Selection is device-local; a replacement library may not include the current ID.
-        guard let selected = library.chats.first(where: { $0.conversationID == conversationID })
-            ?? library.chats.first else { throw ConversationStorageError.invalidDocument }
+        guard
+            let selected = library.chats.first(where: { $0.conversationID == conversationID })
+                ?? library.chats.first
+        else { throw ConversationStorageError.invalidDocument }
         var archive = ConversationArchive(sequence: 0, snapshot: selected)
         archive.projects = library.projects
         archive.history = library.chats.filter { $0.conversationID != selected.conversationID }
@@ -787,6 +929,7 @@ public final class LocalInferenceModel {
         _ snapshot: ConversationSnapshot, draft: String, history: [SavedConversation]
     ) {
         restoringChat = true
+        tools.clearSkill()
         self.history = history
         activeProjectID = snapshot.projectID
         messages = snapshot.messages
@@ -822,13 +965,15 @@ public final class LocalInferenceModel {
                         }
                         selected = saved.remove(at: index)
                     } else {
-                        selected = SavedConversation(snapshot: ConversationSnapshot(
-                            conversationID: UUID(), messages: [], compaction: CompactionState(),
-                            projectID: pendingProjectID))
+                        selected = SavedConversation(
+                            snapshot: ConversationSnapshot(
+                                conversationID: UUID(), messages: [], compaction: CompactionState(),
+                                projectID: pendingProjectID))
                     }
                     pendingSelection = nil
                     pendingProjectID = nil
-                    saved.insert(SavedConversation(snapshot: currentSnapshot(), draft: prompt), at: 0)
+                    saved.insert(
+                        SavedConversation(snapshot: currentSnapshot(), draft: prompt), at: 0)
                     try await saveChatNow(
                         snapshot: selected.snapshot, draft: selected.draft, history: saved)
                     publish(selected.snapshot, draft: selected.draft, history: saved)

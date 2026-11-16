@@ -17,13 +17,14 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private enum Sheet: Identifiable {
-        case settings, context, newProject
+        case settings, context, newProject, skills
         case project(UUID), moveChat(UUID), memory(UUID, UUID, ChatMessage)
         var id: String {
             switch self {
             case .settings: return "settings"
             case .context: return "context"
             case .newProject: return "new-project"
+            case .skills: return "skills"
             case .project(let id): return "project-" + id.uuidString
             case .moveChat(let id): return "move-" + id.uuidString
             case .memory(_, _, let message): return "memory-" + message.id.uuidString
@@ -66,7 +67,8 @@ struct ContentView: View {
                 contentHeight: geometry.contentSize.height,
                 viewportHeight: geometry.containerSize.height,
                 topInset: geometry.contentInsets.top, bottomInset: geometry.contentInsets.bottom)
-            nearBottom = TranscriptScrollState.boundedOffset(offset, within: bounds)
+            nearBottom =
+                TranscriptScrollState.boundedOffset(offset, within: bounds)
                 >= bounds.upperBound - 100
         }
     }
@@ -78,7 +80,8 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 24) {
                             ForEach(model.messages) { message in
-                                ChatMessageRow(message: message,
+                                ChatMessageRow(
+                                    message: message,
                                     canSaveMemory: model.activeProjectID != nil, model: model
                                 ) {
                                     guard let projectID = model.activeProjectID else { return }
@@ -99,9 +102,9 @@ struct ContentView: View {
                     } action: { old, new in
                         transcriptScroll.geometryChanged(
                             offset: new.offset, nearBottom: new.nearBottom, bounds: new.bounds)
-                        if transcriptScroll.shouldScrollAutomatically && (
-                            old.height != new.height || old.contentHeight != new.contentHeight
-                        ) {
+                        if transcriptScroll.shouldScrollAutomatically
+                            && (old.height != new.height || old.contentHeight != new.contentHeight)
+                        {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
                     }
@@ -141,9 +144,11 @@ struct ContentView: View {
                         }
                     }
                     .onChange(of: model.messages.count) { oldCount, _ in
-                        if model.messages.isEmpty || model.messages.dropFirst(oldCount).contains(
-                            where: { $0.role == .user }
-                        ) {
+                        if model.messages.isEmpty
+                            || model.messages.dropFirst(oldCount).contains(
+                                where: { $0.role == .user }
+                            )
+                        {
                             transcriptScroll.resumeFollowing()
                         }
                         if transcriptScroll.shouldScrollAutomatically {
@@ -190,17 +195,22 @@ struct ContentView: View {
                 switch destination {
                 case .settings: ModelSettingsView(model: model, actions: quickActions)
                 case .context: ContextUsageView(model: model)
+                case .skills: SkillsView(model: model)
                 case .newProject: ProjectNameEditor(model: model, projectID: nil, name: "")
                 case .project(let id): ProjectDetailView(model: model, projectID: id)
                 case .moveChat(let id): MoveChatView(model: model, chatID: id)
                 case .memory(let projectID, let chatID, let message):
-                    ProjectMemoryEditor(model: model, projectID: projectID,
+                    ProjectMemoryEditor(
+                        model: model, projectID: projectID,
                         sourceChatID: chatID, message: message)
                 }
             }
-            .alert(confirmation?.title ?? "Chat", isPresented: Binding(
-                get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }
-            )) {
+            .alert(
+                confirmation?.title ?? "Chat",
+                isPresented: Binding(
+                    get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }
+                )
+            ) {
                 switch confirmation {
                 case .newChat:
                     Button("Start new chat") {
@@ -212,11 +222,15 @@ struct ContentView: View {
                 case nil: EmptyView()
                 }
                 Button("Cancel", role: .cancel) {}
-            } message: { Text(confirmation?.message ?? "") }
+            } message: {
+                Text(confirmation?.message ?? "")
+            }
             .task { model.check() }
             .task(id: QuickActionsModel.sourceKey(for: model.cloud)) {
                 quickActions.reload(using: model.cloud)
+                model.tools.reloadSkills(using: model.cloud)
             }
+            .onChange(of: model.tools.revision) { _, _ in model.toolConfigurationChanged() }
             .onChange(of: model.resetting) { _, resetting in
                 composerFocused = !resetting
             }
@@ -228,14 +242,17 @@ struct ContentView: View {
                 if phase == .active {
                     model.becameActive()
                     quickActions.resume(using: model.cloud)
+                    model.tools.reloadSkills(using: model.cloud)
                 }
                 if phase == .inactive {
                     model.becameInactive()
                     quickActions.pause()
+                    model.tools.pause()
                 }
                 if phase == .background {
                     model.enteredBackground()
                     quickActions.pause()
+                    model.tools.pause()
                 }
                 updateIdleTimer()
             }
@@ -243,7 +260,9 @@ struct ContentView: View {
         .allowsHitTesting(!showHistory)
         .accessibilityHidden(showHistory)
         .overlay(alignment: .leading) {
-            if showHistory { historySidebar.transition(.move(edge: .leading).combined(with: .opacity)) }
+            if showHistory {
+                historySidebar.transition(.move(edge: .leading).combined(with: .opacity))
+            }
         }
     }
 
@@ -264,10 +283,14 @@ struct ContentView: View {
                         Button {
                             showHistory = false
                             confirmation = .newChat
-                        } label: { Label("New Chat", systemImage: "square.and.pencil") }
+                        } label: {
+                            Label("New Chat", systemImage: "square.and.pencil")
+                        }
                         .labelStyle(.iconOnly)
                         .accessibilityIdentifier("sidebar-new-chat")
-                        .disabled(!model.canNavigateChats || (model.messages.isEmpty && model.prompt.isEmpty))
+                        .disabled(
+                            !model.canNavigateChats
+                                || (model.messages.isEmpty && model.prompt.isEmpty))
                     }
                     .padding(.horizontal, 20)
                     ScrollView {
@@ -300,10 +323,12 @@ struct ContentView: View {
                                     withAnimation(.easeInOut(duration: 0.2)) { showHistory = false }
                                 } label: {
                                     HStack {
-                                        Text(chat.title).lineLimit(2).multilineTextAlignment(.leading)
+                                        Text(chat.title).lineLimit(2).multilineTextAlignment(
+                                            .leading)
                                         Spacer(minLength: 8)
                                         if chat.id == model.conversationID {
-                                            Image(systemName: "checkmark").accessibilityLabel("Current chat")
+                                            Image(systemName: "checkmark").accessibilityLabel(
+                                                "Current chat")
                                         }
                                     }
                                     .padding(14)
@@ -322,7 +347,9 @@ struct ContentView: View {
                                     }.disabled(!model.canEditProjects)
                                 }
                                 .accessibilityLabel(chat.title)
-                                .accessibilityValue(chat.id == model.conversationID ? "Current chat" : "Saved chat")
+                                .accessibilityValue(
+                                    chat.id == model.conversationID ? "Current chat" : "Saved chat"
+                                )
                                 .accessibilityIdentifier("history-\(chat.id.uuidString)")
                             }
                         }
@@ -332,7 +359,9 @@ struct ContentView: View {
                     Button {
                         showHistory = false
                         sheet = .settings
-                    } label: { Label("Settings", systemImage: "gearshape") }
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
                 }
@@ -348,10 +377,18 @@ struct ContentView: View {
     private func selectAction(_ action: QuickAction, replacing: Bool = false) {
         actionError = nil
         do {
-            let prompt = try quickActions.prompt(for: action, using: model.cloud)
+            _ = try quickActions.validatedAction(action, using: model.cloud)
+            let prompt =
+                action.type == .prompt
+                ? try quickActions.prompt(for: action, using: model.cloud)
+                : action.prompt ?? model.prompt
             if !replacing && !model.prompt.isEmpty && model.prompt != prompt {
                 confirmation = .replaceDraft(action)
                 return
+            }
+            if action.type == .skill {
+                guard let name = action.skill else { throw SkillFailure.changed }
+                try model.tools.selectSkill(name, using: model.cloud)
             }
             model.prompt = prompt
             composerFocused = true
@@ -362,7 +399,8 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 10) {
             if model.messages.isEmpty {
                 if quickActions.loadedSourceKey == QuickActionsModel.sourceKey(for: model.cloud) {
-                    QuickActionCards(actions: quickActions.actions,
+                    QuickActionCards(
+                        actions: quickActions.actions,
                         enabled: model.chatRestored && !model.resetting && !model.cloud.resolving,
                         select: { selectAction($0) })
                 }
@@ -395,6 +433,15 @@ struct ContentView: View {
                     .accessibilityIdentifier("chat-error")
             }
             VStack(alignment: .leading, spacing: 6) {
+                if let skill = model.tools.selectedSkill {
+                    HStack {
+                        Label(skill.name, systemImage: "sparkles").font(.caption)
+                        Button("Remove skill", systemImage: "xmark.circle") {
+                            model.tools.clearSkill()
+                        }
+                        .labelStyle(.iconOnly).disabled(model.busy)
+                    }.accessibilityIdentifier("composer-skill")
+                }
                 TextField("Message", text: $model.prompt, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($composerFocused)
@@ -403,6 +450,14 @@ struct ContentView: View {
                     .accessibilityIdentifier("prompt")
                     .accessibilityLabel("Message")
                 HStack {
+                    Button {
+                        composerFocused = false
+                        sheet = .skills
+                    } label: {
+                        Image(systemName: "sparkles").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Choose skill")
+                    .disabled(model.busy || !model.chatRestored)
                     Button {
                         composerFocused = false
                     } label: {
@@ -477,6 +532,10 @@ private struct ChatMessageRow: View, Equatable {
             if message.role == .user { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 10) {
                 if message.role == .assistant {
+                    if let toolName = message.toolName {
+                        Label(toolName, systemImage: "wrench.and.screwdriver")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if !message.reasoning.isEmpty {
                         DisclosureGroup("Thoughts") {
                             Text(message.reasoning).font(.callout).foregroundStyle(.secondary)
@@ -570,6 +629,11 @@ private struct ModelSettingsView: View {
                         QuickActionSettingsView(actions: actions, cloud: model.cloud)
                     }
                 }
+                Section("Skills and tools") {
+                    NavigationLink("MCP servers") { MCPSettingsView(model: model) }
+                    Text("Choose skills with the sparkle button beside the composer.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Model") {
                     Text("Embla 1").font(.headline)
                     if let manifest = model.manifest {
@@ -627,25 +691,33 @@ private struct ModelSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
-            .fileImporter(isPresented: $chooseCloudFolder, allowedContentTypes: [.folder]) { result in
+            .fileImporter(isPresented: $chooseCloudFolder, allowedContentTypes: [.folder]) {
+                result in
                 switch result {
                 case let .success(folder): Task { await model.cloud.enable(folder: folder) }
                 case let .failure(error): model.cloud.folderSelectionFailed(error)
                 }
             }
-            .alert(activeAlert?.title ?? "Settings", isPresented: Binding(
-                get: { activeAlert != nil }, set: { if !$0 { activeAlert = nil } }
-            ), presenting: activeAlert) { selection in
+            .alert(
+                activeAlert?.title ?? "Settings",
+                isPresented: Binding(
+                    get: { activeAlert != nil }, set: { if !$0 { activeAlert = nil } }
+                ), presenting: activeAlert
+            ) { selection in
                 switch selection {
                 case .cloudConsent:
                     Button("Choose folder") { chooseCloudFolder = true }
                 case .deleteModel:
                     Button("Delete model", role: .destructive) { model.delete() }
                 case let .cloudChoice(choice):
-                    Button(choice.label, role: .destructive) { model.cloud.resolve(choiceID: choice.id) }
+                    Button(choice.label, role: .destructive) {
+                        model.cloud.resolve(choiceID: choice.id)
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
-            } message: { selection in Text(selection.message) }
+            } message: { selection in
+                Text(selection.message)
+            }
 
         }
     }
@@ -664,11 +736,12 @@ private struct ModelSettingsView: View {
         var message: String {
             switch self {
             case .deleteModel:
-                return "You will need to download the model again. This does not clear your conversation."
+                return
+                    "You will need to download the model again. This does not clear your conversation."
             case .cloudConsent:
                 return "All saved chats, their summaries and project memory will be stored in "
                     + "iCloud Drive/EmblaChat/Chats. "
-                    + "Select the EmblaChat folder; Skills is reserved for portable skills. "
+                    + "Select the EmblaChat folder; Skills contains portable skills you can select. "
                     + "Quick actions uses Actions/actions.json in the same folder. "
                     + "Your drafts and model stay on this device. Choose or create EmblaChat in Files."
             case .cloudChoice:
@@ -683,13 +756,16 @@ private struct ModelSettingsView: View {
 
     private var cloudSection: some View {
         Section("iCloud") {
-            Toggle("Store chats and project memory in iCloud Drive", isOn: Binding(
-                get: { model.cloud.enabled },
-                set: { enabled in
-                    if enabled { activeAlert = .cloudConsent } else { model.cloud.disable() }
-                }))
-                .disabled(!model.chatRestored || model.busy || model.cloud.resolving)
-                .accessibilityIdentifier("icloud-toggle")
+            Toggle(
+                "Store chats and project memory in iCloud Drive",
+                isOn: Binding(
+                    get: { model.cloud.enabled },
+                    set: { enabled in
+                        if enabled { activeAlert = .cloudConsent } else { model.cloud.disable() }
+                    })
+            )
+            .disabled(!model.chatRestored || model.busy || model.cloud.resolving)
+            .accessibilityIdentifier("icloud-toggle")
             Text("Off by default. This setting applies to all chats and project memory.")
                 .font(.caption).foregroundStyle(.secondary)
             Text(model.cloud.status).accessibilityIdentifier("icloud-status")
@@ -713,8 +789,10 @@ private struct ModelSettingsView: View {
                 } label: {
                     VStack(alignment: .leading) {
                         Text(choice.label)
-                        Text("\(choice.snapshot.chats.count) chats · \(choice.snapshot.chats.reduce(0) { $0 + $1.messages.count }) messages")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text(
+                            "\(choice.snapshot.chats.count) chats · \(choice.snapshot.chats.reduce(0) { $0 + $1.messages.count }) messages"
+                        )
+                        .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 .disabled(model.cloud.syncing || model.busy)
@@ -728,7 +806,6 @@ private struct ModelSettingsView: View {
 
     private func milliseconds(_ time: Double) -> String { String(format: "%.0f ms", time) }
 }
-
 
 /// Renders Foundation Markdown blocks using native selectable text and semantic fonts.
 private struct MessageMarkdownView: View {
@@ -748,7 +825,8 @@ private struct MessageMarkdownView: View {
                         case .code(let language):
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(language ?? "Code").font(.caption).foregroundStyle(.secondary)
+                                    Text(language ?? "Code").font(.caption).foregroundStyle(
+                                        .secondary)
                                     Spacer()
                                     CopyTextButton(text: block.plainText, label: "Copy code")
                                 }
@@ -760,8 +838,9 @@ private struct MessageMarkdownView: View {
                                 }
                             }
                             .padding(12)
-                            .background(Color(uiColor: .secondarySystemBackground),
-                                        in: .rect(cornerRadius: 14))
+                            .background(
+                                Color(uiColor: .secondarySystemBackground),
+                                in: .rect(cornerRadius: 14))
                         case .heading(let level):
                             Text(block.text)
                                 .font(level == 1 ? .title2.bold() : .headline)
@@ -823,7 +902,6 @@ private struct CopyTextButton: View {
     }
 }
 
-
 /// The context indicator is a button; opening details never starts compaction implicitly.
 private struct ContextUsageButton: View {
     let state: ContextUsageState
@@ -836,8 +914,10 @@ private struct ContextUsageButton: View {
                 switch state {
                 case .ready(let usage):
                     Circle().trim(from: 0, to: min(1, max(0, usage.fraction)))
-                        .stroke(usage.fraction >= 1 ? Color.red : Color.secondary,
-                                style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .stroke(
+                            usage.fraction >= 1 ? Color.red : Color.secondary,
+                            style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                        )
                         .rotationEffect(.degrees(-90))
                     Text("\(usage.percentage)%").font(.system(size: 9, weight: .medium))
                 case .counting:
@@ -880,11 +960,15 @@ private struct ContextUsageView: View {
                             .accessibilityIdentifier("context-used")
                         LabeledContent("Capacity", value: "\(usage.capacity) tokens")
                         LabeledContent("Reply reserve", value: "\(usage.replyReserve) tokens")
-                        LabeledContent("Auto-compaction threshold", value:
-                            "\(usage.automaticThreshold) tokens")
-                        Text("Summary generation reserves \(usage.summaryReserve) tokens, with "
-                             + "\(usage.headroom) tokens of headroom.")
-                            .font(.caption).foregroundStyle(.secondary)
+                        LabeledContent(
+                            "Auto-compaction threshold",
+                            value:
+                                "\(usage.automaticThreshold) tokens")
+                        Text(
+                            "Summary generation reserves \(usage.summaryReserve) tokens, with "
+                                + "\(usage.headroom) tokens of headroom."
+                        )
+                        .font(.caption).foregroundStyle(.secondary)
                     case .counting:
                         ProgressView("Counting context…")
                     case .unavailable(let reason):
@@ -893,9 +977,11 @@ private struct ContextUsageView: View {
                         Text("Could not count context: \(reason)").foregroundStyle(.red)
                         Button("Retry count") { model.refreshContextUsage() }
                     }
-                    Text("Includes the saved summary, retained turns, current draft and model template. "
-                         + "Earlier assistant reasoning follows the model’s template rules.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(
+                        "Includes the saved summary, retained turns, current draft and model template. "
+                            + "Earlier assistant reasoning follows the model’s template rules."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Compaction") {
                     Button("Compact now") {
@@ -906,17 +992,21 @@ private struct ContextUsageView: View {
                     if let reason = model.manualCompactionUnavailableReason {
                         Text(reason).font(.callout).foregroundStyle(.secondary)
                     }
-                    Text("Summarizes older turns on this device, keeping the visible chat and "
-                         + "latest two exchanges. Summaries can lose details. Use Stop during generation "
-                         + "to keep the previous committed summary.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text(
+                        "Summarizes older turns on this device, keeping the visible chat and "
+                            + "latest two exchanges. Summaries can lose details. Use Stop during generation "
+                            + "to keep the previous committed summary."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Context")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { dismiss() }
-            } }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
     }
 }

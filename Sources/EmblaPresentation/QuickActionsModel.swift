@@ -67,14 +67,21 @@ public final class QuickActionsModel {
     /// Revalidate a selected card after draft confirmation or a source/configuration change.
     public func prompt(for action: QuickAction, using cloud: ConversationCloudSync) throws -> String
     {
-        guard loadedSourceKey == Self.sourceKey(for: cloud), !loading, error == nil,
-            actions.contains(action)
-        else { throw QuickActionError.changed }
+        _ = try validatedAction(action, using: cloud)
         guard action.type == .prompt else { throw QuickActionError.skillsUnavailable }
         guard let prompt = action.prompt else {
             throw QuickActionError.invalidAction("Action '\(action.id)' has no prompt.")
         }
         return prompt
+    }
+
+    public func validatedAction(_ action: QuickAction, using cloud: ConversationCloudSync) throws
+        -> QuickAction
+    {
+        guard loadedSourceKey == Self.sourceKey(for: cloud), !loading, error == nil,
+            actions.contains(action)
+        else { throw QuickActionError.changed }
+        return action
     }
 
     private func start(using cloud: ConversationCloudSync, create: Bool) {
