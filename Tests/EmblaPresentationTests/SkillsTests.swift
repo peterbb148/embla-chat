@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -103,11 +104,46 @@ private let sampleSkill = """
     try FileManager.default.createDirectory(
         at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
-    #expect(throws: SkillFailure.self) { try SkillStore.validateRoot(link) }
+    #expect(throws: SkillFailure.self) {
+        let descriptor = try SkillStore.openDirectory(link.path)
+        close(descriptor)
+    }
     let store = SkillStore(localRoot: link)
     await #expect(throws: (any Error).self) { try await store.entries(.device) }
     let document = try SkillDocument.decode(Data(sampleSkill.utf8), directoryName: "sample-skill")
     await #expect(throws: (any Error).self) {
         try await store.resource("SKILL.md", skill: document, source: .device)
+    }
+}
+
+@Test(arguments: [false, true])
+func replacingSkillDirectoriesWithLinksCannotRedirectPinnedReads(_ replaceChild: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let skills = root.appendingPathComponent("Skills")
+    let child = skills.appendingPathComponent("sample-skill")
+    let outside = root.appendingPathComponent("Outside/sample-skill")
+    for directory in [child, outside] {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    try Data("inside selected tree".utf8).write(to: child.appendingPathComponent("fact.txt"))
+    try Data("outside selected tree".utf8).write(to: outside.appendingPathComponent("fact.txt"))
+    let descriptor = try SkillStore.openDirectory(skills.path)
+    defer { close(descriptor) }
+    if replaceChild {
+        try FileManager.default.moveItem(
+            at: child, to: root.appendingPathComponent("OriginalSkill"))
+        try FileManager.default.createSymbolicLink(at: child, withDestinationURL: outside)
+        #expect(throws: SkillFailure.self) {
+            try SkillStore.readRelativeFile(["sample-skill", "fact.txt"], descriptor: descriptor)
+        }
+    } else {
+        try FileManager.default.moveItem(
+            at: skills, to: root.appendingPathComponent("OriginalSkills"))
+        try FileManager.default.createSymbolicLink(
+            at: skills, withDestinationURL: outside.deletingLastPathComponent())
+        let data = try SkillStore.readRelativeFile(
+            ["sample-skill", "fact.txt"], descriptor: descriptor)
+        #expect(String(decoding: data, as: UTF8.self) == "inside selected tree")
     }
 }

@@ -34,8 +34,11 @@ access, binary/image resources and installing dependencies are unsupported. The 
 not claim those capabilities because files happen to be present. Each skill/resource is
 limited to 64 KiB, metadata to 16 KiB and the top-level library to 256 entries; oversized
 input fails rather than being silently truncated. Symbolic links and path traversal are
-rejected, including a symlinked top-level Skills storage folder in either source. The normal
-exact tokenizer/context limit still applies. Yams 6.2.2 is locked to its verified commit in
+rejected, including a symlinked top-level Skills storage folder in either source. Reads and
+library enumeration use a pinned directory descriptor; each child opens with openat and
+O_NOFOLLOW. Replacing a checked folder with a symlink cannot redirect the read. File
+coordination is retained for cloud materialization, without reopening the absolute path.
+The normal exact tokenizer/context limit still applies. Yams 6.2.2 is locked to its verified commit in
 both lockfiles; its own and included LibYAML notices are bundled in the shared resources.
 
 See [the copied-skill example](../examples/skills/concise-writing/SKILL.md).
@@ -164,7 +167,7 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 128 presentation
+from opt-in actual-model/public-server tests. The current suite reports 129 presentation
 and 34 core tests; five actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
