@@ -104,11 +104,11 @@ catalog; users do not need to name a function or request a tool call explicitly.
 knowledge questions can be answered without calling a tool. A request may use a relevant
 lookup chain, such as resolving a timezone before asking for its current time.
 
-Each tool-enabled request includes a refreshed snapshot of the enabled function names,
-the selected skill's metadata and the device's timezone alongside the original user text.
-This helps existing chats use current capabilities even when older replies said tools
-were unavailable. The same state
-is included in exact token counting and compaction budgets. It is ephemeral inference
+Each tool-enabled request includes a refreshed snapshot of enabled function names and
+descriptions, selected-skill metadata and the device timezone alongside the original user
+text. This helps existing chats use current capabilities even when older replies said
+tools were unavailable. The same state is included in exact token counting and compaction
+budgets. It is ephemeral inference
 context: the app preserves the original saved message and excludes the added snapshot
 from summarization input. The timezone is a device setting, not inferred geolocation;
 actual calls may pass that timezone to the registered server for local-time questions.
@@ -194,7 +194,7 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 130 presentation
+from opt-in actual-model/public-server tests. The current suite reports 131 presentation
 and 36 core tests; six actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was

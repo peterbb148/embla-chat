@@ -241,11 +241,44 @@ private func assertReturnedClockTimeAppears(in answer: String, call: ChatMessage
     try #require(clock.count == 2)
     let hour = try #require(Int(clock[0]))
     let minute = try #require(Int(clock[1]))
-    let possible = [hour, (hour + 11) % 12 + 1].flatMap { hour in
-        [
-            String(format: "%02d:%02d", hour, minute), String(format: "%d:%02d", hour, minute),
-            String(format: "%02d.%02d", hour, minute), String(format: "%d.%02d", hour, minute),
-        ]
+    #expect(try containsReturnedClock(in: answer, hour: hour, minute: minute))
+}
+
+/// Match full clock tokens; 12-hour values require the correct explicit AM/PM marker.
+private func containsReturnedClock(in answer: String, hour: Int, minute: Int) throws -> Bool {
+    let pattern = #"(?<![0-9:.])([0-9]{1,2})[:.]([0-9]{2})(?:[:.][0-9]{2})?"#
+        + #"(?:\s*([aApP])\.?[mM]\.?)?(?![0-9]|[.:][0-9])"#
+    let expression = try NSRegularExpression(pattern: pattern)
+    let text = answer as NSString
+    return expression.matches(in: answer, range: NSRange(location: 0, length: text.length)).contains {
+        guard let displayedHour = Int(text.substring(with: $0.range(at: 1))),
+            let displayedMinute = Int(text.substring(with: $0.range(at: 2))),
+            displayedMinute == minute
+        else { return false }
+        let meridiem = $0.range(at: 3)
+        if meridiem.location == NSNotFound { return displayedHour == hour }
+        guard (1...12).contains(displayedHour) else { return false }
+        let isPM = text.substring(with: meridiem).lowercased() == "p"
+        return displayedHour % 12 + (isPM ? 12 : 0) == hour
     }
-    #expect(possible.contains(where: { answer.contains($0) }))
+}
+
+@Test(arguments: [
+    ("It is 14:05.", 14, 5, true),
+    ("It is 2:05 PM.", 14, 5, true),
+    ("Klokken er 14.05.", 14, 5, true),
+    ("It is 2:05 AM.", 14, 5, false),
+    ("It is 14:05.", 4, 5, false),
+    ("It is 114:05.", 14, 5, false),
+    ("It is 14:050.", 14, 5, false),
+    ("It is 2:05.", 14, 5, false),
+    ("It is 12:05 a.m.", 0, 5, true),
+    ("It is 12:05 PM.", 12, 5, true),
+    ("It is 12:05 AM.", 12, 5, false),
+    ("It is 04:05:37.", 4, 5, true),
+])
+func clockAssertionsMatchWholeTimesAndCorrectMeridiem(
+    _ answer: String, _ hour: Int, _ minute: Int, _ expected: Bool
+) throws {
+    #expect(try containsReturnedClock(in: answer, hour: hour, minute: minute) == expected)
 }
