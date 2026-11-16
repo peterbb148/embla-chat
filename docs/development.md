@@ -206,3 +206,17 @@ swift test --filter realNaturalQuestionsSelectRelevantToolsWithoutNamingThem
 This opt-in check uses isolated chat/server settings, reuses existing verified weights and
 requires network access to the configured public server. It covers ordinary questions and
 capability changes in an existing conversation; it is not a physical-iPhone performance test.
+
+
+To validate official-registry selection and model routing with both Context7 and Time.Now:
+
+```sh
+EMBLA_REAL_REGISTRY_TOOLS=1 \
+EMBLA_REAL_MODEL_ROOT="$PWD/build/VerificationModel" \
+swift test --filter realRegistrySelectionRoutesOrdinaryQuestionsAcrossAllEnabledServers
+```
+
+This reads the real public catalog, registers the selected Context7 endpoint in isolated
+device-only test settings, and sends synthetic public documentation/time queries. No token
+is supplied. All tools from both servers stay available. Provider failures fail the run;
+this is Mac-host real inference evidence, separate from simulator UI and catalog fixtures.

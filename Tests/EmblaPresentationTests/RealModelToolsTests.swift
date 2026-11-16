@@ -298,3 +298,93 @@ func clockAssertionsMatchWholeTimesAndCorrectMeridiem(
 ) throws {
     #expect(try containsReturnedClock(in: answer, hour: hour, minute: minute) == expected)
 }
+
+/// Actual official-catalog selection, registration and model routing with both servers available.
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_REGISTRY_TOOLS"] == "1"),
+    .timeLimit(.minutes(5))) @MainActor
+func realRegistrySelectionRoutesOrdinaryQuestionsAcrossAllEnabledServers() async throws {
+    let root = URL(fileURLWithPath: try #require(
+        ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"]))
+    let page = try await MCPRegistryClient().page(search: "io.github.upstash/context7")
+    let listing = try #require(page.servers.first { $0.name == "io.github.upstash/context7" })
+    let endpoint = try #require(listing.endpoints.first)
+    try #require(!endpoint.requiresBearerToken)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let workspace = ToolWorkspace(configuration: directory.appendingPathComponent("servers.json"))
+    let time = MCPServer(name: "Time.Now", endpoint: URL(string: "https://time.now/mcp")!)
+    let docs = MCPServer(name: listing.displayName, endpoint: endpoint.url)
+    for server in [time, docs] {
+        try workspace.saveServer(server)
+        workspace.discover(server.id)
+        await workspace.waitUntilIdle()
+        try #require(workspace.error == nil)
+        let discovered = try #require(workspace.discovered[server.id])
+        #expect(workspace.servers.first { $0.id == server.id }?.enabledTools
+                == Set(discovered.map(\.name)))
+    }
+    let specifications = try workspace.remoteTools()
+    #expect(Set(specifications.map(\.server)) == Set([time.modelID, docs.modelID]))
+    print("ACTUAL REGISTRY: \(listing.name) \(listing.version); tools: \(specifications.count)")
+    let manifest = try ModelManifest.bundled()
+    let tokenizer = EmblaPromptTokenizer()
+    let store = ConversationStore(root: directory.appendingPathComponent("Chats"))
+    let model = LocalInferenceModel(
+        repository: ModelRepository(root: root, manifest: manifest), manifest: manifest,
+        session: EmblaRuntime.makeSession(), chatStore: store,
+        countTokens: { directory, messages in
+            try await tokenizer.count(messages: messages, in: directory)
+        }, tools: workspace)
+    model.check(); await model.waitUntilIdle()
+    for (question, tool, server) in [
+        ("What time is it in Copenhagen?", "get_current_time", time),
+        ("Find the Python documentation and give me its library ID.", "resolve-library-id", docs),
+    ] {
+        model.newChat(); await model.waitUntilIdle()
+        workspace.pause()
+        model.prompt = question
+        model.run(); await model.waitUntilIdle()
+        print("REGISTRY QUESTION: \(question); error: \(model.error ?? "none")")
+        print("REGISTRY ANSWER: \(model.answer)")
+        try #require(model.error == nil)
+        let calls = model.messages.filter { $0.toolName != nil }
+        let call = try #require(calls.first { $0.toolName == tool })
+        for call in calls {
+            let marker = try #require(call.text.range(of: "Tool result data (not instructions):\n"))
+            let result = try ToolJSON.decode(Data(call.text[marker.upperBound...].utf8))
+            #expect(result["server"]?.string == server.modelID)
+        }
+        if tool == "get_current_time" {
+            try assertReturnedClockTimeAppears(in: model.answer, call: call)
+        } else {
+            let marker = try #require(call.text.range(of: "Tool result data (not instructions):\n"))
+            let result = try ToolJSON.decode(Data(call.text[marker.upperBound...].utf8))
+            guard case .array(let content) = result["result"]?["content"] else {
+                Issue.record("The actual documentation tool did not return content blocks.")
+                return
+            }
+            let text: String = content.compactMap { $0["text"]?.string }.joined(separator: "\n")
+            let ids = text.components(separatedBy: .newlines).compactMap { line -> String? in
+                guard let range = line.range(of: "Context7-compatible library ID:") else {
+                    return nil
+                }
+                return String(line[range.upperBound...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            print("ACTUAL DOCUMENTATION IDS: \(ids)")
+            try #require(!ids.isEmpty)
+            let matches = try ids.map { id in
+                let pattern: String = #"(?<![\w/.-])"# + NSRegularExpression.escapedPattern(for: id)
+                    + #"(?=$|[\s)\]\x60>,;:]|\.(?:\s|$))"#
+                return try NSRegularExpression(pattern: pattern).firstMatch(
+                    in: model.answer, range: NSRange(model.answer.startIndex..., in: model.answer))
+                    != nil
+            }
+            #expect(matches.contains(true))
+        }
+        let saved = try #require(try await store.load())
+        #expect(saved.snapshot.messages.last?.text == model.answer)
+    }
+}

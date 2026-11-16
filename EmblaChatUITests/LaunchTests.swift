@@ -295,6 +295,17 @@ final class LaunchTests: XCTestCase {
         app.buttons["Reload skills"].tap()
         app.navigationBars["Skills"].buttons["Settings"].tap()
         app.buttons["MCP Servers"].tap()
+        app.buttons["Browse registry"].tap()
+        XCTAssertTrue(app.navigationBars["Server registry"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.searchFields.firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["registry-source"].exists)
+        app.searchFields.firstMatch.tap()
+        app.searchFields.firstMatch.typeText("ab")
+        XCTAssertTrue(app.staticTexts["registry-search-hint"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Retry"].exists)
+        app.buttons.matching(
+            NSPredicate(format: "label IN %@", ["Close", "Cancel"])).firstMatch.tap()
+        app.navigationBars["Server registry"].buttons["MCP Servers"].tap()
         reveal(app.buttons["Add MCP server"], in: app)
         app.buttons["Add MCP server"].tap()
         let name = app.textFields["mcp-name"]
