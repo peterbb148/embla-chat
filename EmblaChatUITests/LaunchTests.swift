@@ -295,6 +295,7 @@ final class LaunchTests: XCTestCase {
         app.buttons["Reload skills"].tap()
         app.navigationBars["Skills"].buttons["Settings"].tap()
         app.buttons["MCP Servers"].tap()
+        reveal(app.buttons["Add Time.Now example"], in: app)
         app.buttons["Add Time.Now example"].tap()
         let name = app.textFields["mcp-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
