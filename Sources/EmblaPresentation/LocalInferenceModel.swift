@@ -215,7 +215,8 @@ public final class LocalInferenceModel {
                     transcript: self.conversationMessages(), state: self.compaction,
                     draft: self.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     projectMemory: try self.projectContext(),
-                    instructions: try self.tools.instructions(using: self.cloud))
+                    instructions: try self.tools.instructions(using: self.cloud),
+                    requestContext: try self.tools.requestContext(using: self.cloud))
                 let count = try await countTokens(directory, context)
                 try Task.checkCancellation()
                 guard self.usageRequest == request else { return }
@@ -604,9 +605,10 @@ public final class LocalInferenceModel {
     {
         let memory = try projectContext()
         let instructions = try tools.instructions(using: cloud)
+        let requestContext = try tools.requestContext(using: cloud)
         let context = compactionPolicy.context(
             transcript: transcript, state: compaction, draft: draft, projectMemory: memory,
-            instructions: instructions)
+            instructions: instructions, requestContext: requestContext)
         if !force {
             let count = try await session.tokenCount(messages: context)
             if count <= compactionPolicy.triggerTokens { return context }
@@ -648,7 +650,7 @@ public final class LocalInferenceModel {
             text: summary, finishReason: finishReason, plan: plan)
         let compacted = compactionPolicy.context(
             transcript: transcript, state: candidate, draft: draft, projectMemory: memory,
-            instructions: instructions)
+            instructions: instructions, requestContext: requestContext)
         let count = try await session.tokenCount(messages: compacted)
         guard count + compactionPolicy.responseTokens < compactionPolicy.contextSize else {
             throw CompactionError.summaryDoesNotFit

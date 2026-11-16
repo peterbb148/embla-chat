@@ -96,6 +96,27 @@ Stop/inactivity cancels pending model/network work. Cancelling a
 network request cannot undo effects that already occurred on the server. No failed result
 is replaced with invented data.
 
+## Automatic tool selection
+
+Ask ordinary questions, such as "What time is it?", "Hvad er klokken i København?" or
+"Find three time zones containing Europe." The local model selects from the enabled
+catalog; users do not need to name a function or request a tool call explicitly. General
+knowledge questions can be answered without calling a tool. A request may use a relevant
+lookup chain, such as resolving a timezone before asking for its current time.
+
+Each tool-enabled request includes a refreshed snapshot of the enabled function names,
+the selected skill's metadata and the device's timezone alongside the original user text.
+This helps existing chats use current capabilities even when older replies said tools
+were unavailable. The same state
+is included in exact token counting and compaction budgets. It is ephemeral inference
+context: the app preserves the original saved message and excludes the added snapshot
+from summarization input. The timezone is a device setting, not inferred geolocation;
+actual calls may pass that timezone to the registered server for local-time questions.
+
+Selection remains model-driven, with the same exact catalog/schema checks, cancellation,
+result persistence and four-call limit. Language-model choices are not guaranteed for every
+phrasing; no keyword router, guessed call, repair/retry path or substituted result is used.
+
 ## Model contract and evidence
 
 The checkpoint's published [chat template](https://huggingface.co/sevren-ai/Embla1-4bit/blob/4d23eb7de21fc5b55c3051021c7550af1fdce0e8/chat_template.jinja)
@@ -173,11 +194,22 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 129 presentation
-and 35 core tests; five actual-model cases are opt-in and skipped by default. All ten
+from opt-in actual-model/public-server tests. The current suite reports 130 presentation
+and 36 core tests; six actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
 created. App-only UI screenshots are retained in the result bundle. Final hosted checks,
 review and merge evidence are recorded in [#27](https://github.com/peterbb148/embla-chat/issues/27)
 before delivery is declared. New-format real iCloud validation remains the separately
 deferred #45, not a successful test implied by this implementation.
+
+### Natural-question regression (#57)
+
+The real-model regression enables all three Time.Now tools and covers implicit local time,
+English/Danish city-time questions, timezone-name search and tool-free knowledge questions.
+It also generates two no-access replies with tools disabled, enables the tools in that same
+chat and retries the original request without naming a function. Returned clock values are
+compared with the actual saved server result, allowing ordinary 12/24-hour formatting.
+A further ordinary follow-up obtains a fresh result in that same chat.
+The prior system-only prompt failed this existing-chat case; the refreshed current-request
+capability context addresses it. Exact run results are recorded in #57 and its PR.

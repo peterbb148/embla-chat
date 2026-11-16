@@ -136,6 +136,9 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
             $0.toolName == "read_skill_file" && $0.text.contains("BLUE PENGUIN")
         })
     #expect(stored.snapshot.messages.last?.text == "BLUE PENGUIN")
+    #expect(fixture.backend.contexts.first?.last?.content.contains("enabled_functions") == true)
+    #expect(stored.snapshot.messages.first?.text == "Read the selected skill's fact.")
+    #expect(stored.snapshot.messages.allSatisfy { !$0.text.contains("enabled_functions") })
 }
 
 @Test @MainActor func unknownOrUnregisteredCallsFailWithoutExecution() async throws {

@@ -223,7 +223,10 @@ public enum ModelToolResponse: Sendable, Equatable {
     }
 
     /// Tool instruction syntax follows the pinned checkpoint's published chat_template.jinja.
-    public static func instructions(tools: [ModelToolSpecification]) throws -> String {
+    public static func instructions(
+        tools: [ModelToolSpecification],
+        timeZoneIdentifier: String = TimeZone.autoupdatingCurrent.identifier
+    ) throws -> String {
         let catalog = try tools.map { tool in
             guard !tool.functionName.isEmpty,
                 tool.functionName.utf8.allSatisfy({
@@ -242,13 +245,39 @@ public enum ModelToolResponse: Sendable, Equatable {
         return """
             # Tools
 
-            You have access to the following functions:
+            The following functions are available to request through this app now:
 
             <tools>
             \(catalog)
             </tools>
 
-            If you choose to call a function ONLY reply in the following format with NO suffix:
+            Use the relevant listed functions for requests needing current or external facts,
+            or a lookup those functions provide. Users ask normally; they do not need to name
+            a function or explicitly ask you to use tools. Answer general knowledge questions
+            directly when no function is needed.
+
+            Current app capability context accompanies each user request. Use that context
+            to interpret the request; do not acknowledge the context as a separate question.
+            When a skill is selected, follow its instructions from the system context,
+            including its response style for answers that need no function call.
+            This catalog defines your CURRENT capabilities. Earlier conversation claims that
+            you cannot access real-time information or use tools may be obsolete. Re-evaluate
+            the user's original request with the current catalog, including short follow-ups
+            such as "try again". Do not repeat an obsolete inability claim instead of using
+            a relevant available function. Never invent an unlisted function or a result.
+
+            The device timezone is \(try ToolJSON.string(timeZoneIdentifier).text()). Use it for
+            local-time questions without another location, unless the conversation specifies
+            a different timezone. Ask for clarification when required information is missing;
+            do not guess an IP address or physical location.
+
+            Get fresh results for new requests about changing facts. Use an earlier result
+            when the user asks about that earlier lookup, rather than treating it as current.
+            Use only the calls needed to answer the request. Once actual results answer it,
+            respond naturally using those results instead of calling again. Give the requested
+            facts directly from the returned fields and omit unrequested extras.
+
+            When a function is needed, ONLY reply in the following format with NO suffix:
 
             <tool_call>
             <function=example_function_name>
