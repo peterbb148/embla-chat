@@ -17,14 +17,13 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     private enum Sheet: Identifiable {
-        case settings, context, newProject, skills
+        case settings, context, newProject
         case project(UUID), moveChat(UUID), memory(UUID, UUID, ChatMessage)
         var id: String {
             switch self {
             case .settings: return "settings"
             case .context: return "context"
             case .newProject: return "new-project"
-            case .skills: return "skills"
             case .project(let id): return "project-" + id.uuidString
             case .moveChat(let id): return "move-" + id.uuidString
             case .memory(_, _, let message): return "memory-" + message.id.uuidString
@@ -192,7 +191,6 @@ struct ContentView: View {
                 switch destination {
                 case .settings: ModelSettingsView(model: model, actions: quickActions)
                 case .context: ContextUsageView(model: model)
-                case .skills: SkillsView(model: model)
                 case .newProject: ProjectNameEditor(model: model, projectID: nil, name: "")
                 case .project(let id): ProjectDetailView(model: model, projectID: id)
                 case .moveChat(let id): MoveChatView(model: model, chatID: id)
@@ -444,14 +442,6 @@ struct ContentView: View {
                 HStack {
                     Button {
                         composerFocused = false
-                        sheet = .skills
-                    } label: {
-                        Image(systemName: "sparkles").frame(width: 44, height: 44)
-                    }
-                    .accessibilityLabel("Choose skill")
-                    .disabled(model.busy || !model.chatRestored)
-                    Button {
-                        composerFocused = false
                     } label: {
                         Image(systemName: "keyboard.chevron.compact.down")
                             .font(.title3)
@@ -621,10 +611,13 @@ private struct ModelSettingsView: View {
                         QuickActionSettingsView(actions: actions, cloud: model.cloud)
                     }
                 }
+                Section("Skills") {
+                    NavigationLink("Manage skills") { SkillsView(model: model) }
+                    Text("Manage available skills and choose the active skill.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("MCP Servers") {
                     NavigationLink("MCP Servers") { MCPSettingsView(model: model) }
-                    Text("Choose skills with the sparkle button beside the composer.")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Model") {
                     Text("Embla 1").font(.headline)

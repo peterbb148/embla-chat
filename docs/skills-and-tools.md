@@ -21,8 +21,8 @@ match their folders. Optional compatibility, declared tools and metadata are pre
 compatibility requirements are shown for the user to assess. Invalid entries show their
 actual error. Metadata/tool declarations do not grant permissions.
 
-Use the sparkle button beside the composer to reload, inspect and explicitly select a
-skill. Its name remains visible in the composer. Selection is cleared when changing chats,
+Open **Settings → Manage skills** to reload, inspect and explicitly select a skill.
+Skill management is separate from MCP Servers; the composer does not open the manager. Its name remains visible in the composer. Selection is cleared when changing chats,
 reloading the skill source or leaving the active app. Skill actions in `Actions/actions.json`
 select a named skill and optionally fill a draft, with the same replacement confirmation
 as prompt actions. Nothing submits automatically.

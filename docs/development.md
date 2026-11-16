@@ -131,7 +131,8 @@ EmblaPresentation owns the active transcript, checkpoints it to local storage, a
 requests. The main view shows user messages, assistant responses, expandable reasoning,
 a bottom-anchored multiline composer, Send/Stop and immediate New Chat. Model download,
 verification, storage deletion and last-response measurements are in Settings. Opening
-Settings does not reset the conversation or start another readiness check.
+Settings does not reset the conversation or start another readiness check. Skills are
+managed from their own Settings destination; the selected skill stays visible in the composer.
 
 Every Send reconstructs inference context from explicit project memory, the rolling summary
 and recent transcript. The full visible transcript remains saved.

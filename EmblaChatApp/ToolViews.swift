@@ -8,89 +8,84 @@ struct SkillsView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Text(
-                        model.cloud.enabled
-                            ? "Selected iCloud EmblaChat / Skills"
-                            : "On My iPhone / Embla Chat / Skills"
-                    )
-                    .font(.callout).textSelection(.enabled)
-                    Text(
-                        "Copy standard skill folders here, then reload. Selecting a skill applies its instructions; scripts cannot run on iPhone. Supporting text files are read on demand while the skill is selected."
-                    )
-                    .font(.callout).foregroundStyle(.secondary)
-                    Button("Reload skills") { model.tools.reloadSkills(using: model.cloud) }
-                        .disabled(model.tools.loadingSkills || model.busy)
-                    if model.tools.loadingSkills { ProgressView("Loading skills…") }
-                    if let error = error ?? model.tools.error {
-                        Text(error).foregroundStyle(.red).textSelection(.enabled)
-                    }
+        List {
+            Section {
+                Text(
+                    model.cloud.enabled
+                        ? "Selected iCloud EmblaChat / Skills"
+                        : "On My iPhone / Embla Chat / Skills"
+                )
+                .font(.callout).textSelection(.enabled)
+                Text(
+                    "Copy standard skill folders here, then reload. Selecting a skill applies its instructions; scripts cannot run on iPhone. Supporting text files are read on demand while the skill is selected."
+                )
+                .font(.callout).foregroundStyle(.secondary)
+                Button("Reload skills") { model.tools.reloadSkills(using: model.cloud) }
+                    .disabled(model.tools.loadingSkills || model.busy)
+                if model.tools.loadingSkills { ProgressView("Loading skills…") }
+                if let error = error ?? model.tools.error {
+                    Text(error).foregroundStyle(.red).textSelection(.enabled)
                 }
-                Section("Selected skill") {
-                    Text(model.tools.selectedSkill?.name ?? "None")
-                        .accessibilityIdentifier("selected-skill")
-                    Button("Use no skill") {
-                        model.tools.clearSkill()
-                        model.toolConfigurationChanged()
-                    }.disabled(model.busy)
+            }
+            Section("Selected skill") {
+                Text(model.tools.selectedSkill?.name ?? "None")
+                    .accessibilityIdentifier("selected-skill")
+                Button("Use no skill") {
+                    model.tools.clearSkill()
+                    model.toolConfigurationChanged()
+                }.disabled(model.busy)
+            }
+            Section("Available skills") {
+                if model.tools.skills.isEmpty {
+                    Text("No skills found. Add Skills/<skill-name>/SKILL.md in Files.")
                 }
-                Section("Available skills") {
-                    if model.tools.skills.isEmpty {
-                        Text("No skills found. Add Skills/<skill-name>/SKILL.md in Files.")
-                    }
-                    ForEach(model.tools.skills) { entry in
-                        if let skill = entry.document {
-                            NavigationLink(skill.name) {
-                                Form {
-                                    Section("Description") { Text(skill.description) }
-                                    if let compatibility = skill.compatibility {
-                                        Section("Compatibility requirements") {
-                                            Text(compatibility)
-                                            Text(
-                                                "Check these requirements before selecting. Copied files do not install dependencies or authorize servers."
-                                            )
-                                            .foregroundStyle(.secondary)
-                                        }
+                ForEach(model.tools.skills) { entry in
+                    if let skill = entry.document {
+                        NavigationLink(skill.name) {
+                            Form {
+                                Section("Description") { Text(skill.description) }
+                                if let compatibility = skill.compatibility {
+                                    Section("Compatibility requirements") {
+                                        Text(compatibility)
+                                        Text(
+                                            "Check these requirements before selecting. Copied files do not install dependencies or authorize servers."
+                                        )
+                                        .foregroundStyle(.secondary)
                                     }
-                                    if let allowed = skill.allowedTools {
-                                        Section("Declared tools") {
-                                            Text(allowed)
-                                            Text(
-                                                "This metadata does not grant permissions. Enable MCP tools separately; enabled tools can run automatically."
-                                            )
-                                            .foregroundStyle(.secondary)
-                                        }
+                                }
+                                if let allowed = skill.allowedTools {
+                                    Section("Declared tools") {
+                                        Text(allowed)
+                                        Text(
+                                            "This metadata does not grant permissions. Enable MCP tools separately; enabled tools can run automatically."
+                                        )
+                                        .foregroundStyle(.secondary)
                                     }
-                                    Section("Instructions") {
-                                        Text(skill.instructions).textSelection(.enabled)
-                                    }
-                                    Button("Use this skill") {
-                                        do {
-                                            try model.tools.selectSkill(
-                                                skill.name, using: model.cloud)
-                                            model.toolConfigurationChanged()
-                                            dismiss()
-                                        } catch { self.error = error.localizedDescription }
-                                    }.disabled(model.busy)
-                                }.navigationTitle(skill.name)
-                            }
-                        } else {
-                            VStack(alignment: .leading) {
-                                Text(entry.id)
-                                Text(entry.error ?? "Invalid skill").font(.caption).foregroundStyle(
-                                    .red)
-                            }
+                                }
+                                Section("Instructions") {
+                                    Text(skill.instructions).textSelection(.enabled)
+                                }
+                                Button("Use this skill") {
+                                    do {
+                                        try model.tools.selectSkill(
+                                            skill.name, using: model.cloud)
+                                        model.toolConfigurationChanged()
+                                        dismiss()
+                                    } catch { self.error = error.localizedDescription }
+                                }.disabled(model.busy)
+                            }.navigationTitle(skill.name)
+                        }
+                    } else {
+                        VStack(alignment: .leading) {
+                            Text(entry.id)
+                            Text(entry.error ?? "Invalid skill").font(.caption).foregroundStyle(
+                                .red)
                         }
                     }
                 }
             }
-            .navigationTitle("Skills")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
         }
+        .navigationTitle("Skills")
     }
 }
 
