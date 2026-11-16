@@ -125,7 +125,8 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let file = root.appendingPathComponent("servers.json")
-    let server = MCPServer(name: "New fixture", endpoint: URL(string: "https://example.invalid/mcp")!)
+    let server = MCPServer(
+        name: "New fixture", endpoint: URL(string: "https://example.invalid/mcp")!)
     let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
     try workspace.saveServer(server)
     #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == true)
@@ -165,8 +166,9 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     try workspace.acceptDiscoveredTools(discoveredFixtureTools(["one", "two"]), serverID: id)
     #expect(workspace.servers.first?.enabledTools == Set(["one"]))
     try workspace.saveServer(
-        MCPServer(id: id, name: "Changed endpoint", endpoint: URL(string: "https://new.invalid/mcp")!,
-                  enabledTools: ["one"]))
+        MCPServer(
+            id: id, name: "Changed endpoint", endpoint: URL(string: "https://new.invalid/mcp")!,
+            enabledTools: ["one"]))
     try workspace.acceptDiscoveredTools(discoveredFixtureTools(["three"]), serverID: id)
     #expect(workspace.servers.first?.enabledTools.isEmpty == true)
     #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
@@ -181,7 +183,8 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     }
     let file = root.appendingPathComponent("servers.json")
     let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
-    let server = MCPServer(name: "New fixture", endpoint: URL(string: "https://example.invalid/mcp")!)
+    let server = MCPServer(
+        name: "New fixture", endpoint: URL(string: "https://example.invalid/mcp")!)
     try workspace.saveServer(server)
     let original = try Data(contentsOf: file)
     try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
