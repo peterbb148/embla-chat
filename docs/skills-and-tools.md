@@ -120,7 +120,8 @@ JSON integer arguments/results retain signed/unsigned 64-bit values exactly, inc
 beyond the exact Double range. Out-of-range integers fail rather than round; fractional
 values use Foundation Decimal’s supported precision. Untrusted JSON is checked against
 its original numeric lexemes; fractions that would round or underflow are rejected at the
-model/network boundary. Quoted digits remain ordinary string data. MCP integer parameter headers retain
+model/network boundary. Numbers are classified from their Decimal value before integer conversion, preventing
+Foundation’s near-integer fractional coercion. Quoted digits remain ordinary string data. MCP integer parameter headers retain
 the specification’s narrower safe-integer bound. Serialized tool JSON escapes literal `<`
 with a JSON Unicode escape so server text cannot introduce runtime message boundaries or
 close the tool envelope. JSON decoding still recovers the original data. Header discovery

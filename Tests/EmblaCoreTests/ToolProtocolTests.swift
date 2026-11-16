@@ -273,6 +273,11 @@ import Testing
     for raw in ["0.1", "1.2300e-2", "-2.5e-9", "1234.567890123456789", "18446744073709551615"] {
         _ = try ToolJSON.decode(Data(raw.utf8))
     }
+    for raw in ["1.000000000000000000000000000000001", "-0.999999999999999999999999999999999"] {
+        let expected = ToolJSON.number(try #require(Decimal(string: raw)))
+        #expect(try ToolJSON.decode(Data(raw.utf8)) == expected)
+        #expect(try JSONDecoder().decode(ToolJSON.self, from: Data(raw.utf8)) == expected)
+    }
     let tooPrecise = "0.1234567890123456789012345678901234567890123456789012345"
     for raw in [tooPrecise, "{\"nested\":[" + tooPrecise + "]}"] {
         #expect(throws: ToolProtocolError.self) { try ToolJSON.decode(Data(raw.utf8)) }

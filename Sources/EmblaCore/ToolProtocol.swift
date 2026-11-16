@@ -13,20 +13,24 @@ public enum ToolJSON: Codable, Sendable, Equatable {
             self = .bool(x)
         } else if let x = try? value.decode(String.self) {
             self = .string(x)
-        } else if let x = try? value.decode(Int64.self) {
-            self = .integer(x)
-        } else if let x = try? value.decode(UInt64.self) {
-            self = .unsignedInteger(x)
         } else if let x = try? value.decode(Decimal.self) {
+            // Foundation's Int64 decoder can round a near-integer fraction to an integer.
+            // Classify the exact decimal value first, rather than accepting that coercion.
             var original = x
             var integral = Decimal()
             NSDecimalRound(&integral, &original, 0, .plain)
-            guard !x.isNaN, x != integral else {
+            let digits = NSDecimalNumber(decimal: x).stringValue
+            if !x.isNaN, x != integral {
+                self = .number(x)
+            } else if let integer = Int64(digits) {
+                self = .integer(integer)
+            } else if let integer = UInt64(digits) {
+                self = .unsignedInteger(integer)
+            } else {
                 throw DecodingError.dataCorruptedError(
                     in: value,
                     debugDescription: "JSON integer exceeds the supported exact 64-bit range.")
             }
-            self = .number(x)
         } else if let x = try? value.decode([String: ToolJSON].self) {
             self = .object(x)
         } else {
