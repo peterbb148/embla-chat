@@ -181,7 +181,8 @@ private struct MCPServerEditor: View {
                         guard let url = URL(string: endpoint) else { throw MCPFailure.endpoint }
                         let isNew = !model.tools.servers.contains(where: { $0.id == initial.id })
                         if isNew && requiresBearerToken && token.isEmpty {
-                            throw MCPFailure.credential
+                            error = "This server requires a bearer token from its provider."
+                            return
                         }
                         let current =
                             model.tools.servers.first(where: { $0.id == initial.id }) ?? initial
@@ -361,12 +362,15 @@ private struct MCPRegistryView: View {
         guard !Task.isCancelled, request == current, completedRequest != current else { return }
         let search = current.search.trimmingCharacters(in: .whitespacesAndNewlines)
         if !search.isEmpty && search.unicodeScalars.count < 3 {
-            servers = []; nextCursor = nil; error = nil; loading = false
+            servers = []; nextCursor = nil; completedRequest = nil
+            error = nil; loading = false
             return
         }
         loading = true
         error = nil
-        if current.cursor == nil { servers = []; nextCursor = nil }
+        if current.cursor == nil {
+            servers = []; nextCursor = nil; completedRequest = nil
+        }
         defer { if request == current { loading = false } }
         do {
             if current.cursor == nil && !current.search.isEmpty {

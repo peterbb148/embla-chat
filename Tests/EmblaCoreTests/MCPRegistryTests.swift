@@ -149,3 +149,14 @@ func registryHTTPFailuresNeverBecomeAnEmptySuccessfulCatalog(_ status: Int) asyn
     let empty = try MCPRegistryClient.decode(registryPage([], cursor: ""))
     #expect(empty.servers.isEmpty && empty.nextCursor == nil)
 }
+
+@Test func registryRejectsOversizedWireResponseBeforeParsing() async throws {
+    let query = UUID().uuidString
+    let request = MCPRegistryClient.request(search: query, cursor: nil)
+    let session = RegistryWireFixture.session(
+        for: request, data: Data(repeating: 32, count: 2_097_153))
+    let client = MCPRegistryClient(session: session)
+    await #expect(throws: MCPRegistryFailure.tooLarge) {
+        try await client.page(search: query)
+    }
+}

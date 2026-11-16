@@ -45,7 +45,8 @@ public actor MCPRegistryClient {
     public func page(search: String = "", cursor: String? = nil) async throws -> MCPRegistryPage {
         try Task.checkCancellation()
         let request = Self.request(search: search, cursor: cursor)
-        let (data, response) = try await session.data(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
         try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse else {
             throw MCPRegistryFailure.invalidResponse
@@ -53,7 +54,15 @@ public actor MCPRegistryClient {
         guard response.statusCode == 200 else {
             throw MCPRegistryFailure.http(response.statusCode)
         }
-        guard data.count <= Self.limit else { throw MCPRegistryFailure.tooLarge }
+        guard response.expectedContentLength <= Self.limit else {
+            throw MCPRegistryFailure.tooLarge
+        }
+        var data = Data()
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            guard data.count < Self.limit else { throw MCPRegistryFailure.tooLarge }
+            data.append(byte)
+        }
         return try Self.decode(data)
     }
 

@@ -68,7 +68,7 @@ unavailable; actual connection/authentication errors remain visible. The catalog
 [namespace verification](https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/remote-servers.mdx)
 does not prove ownership of its remote URL. Records keep their own name/version identity,
 including when multiple publishers list the same URL. Catalog reads are limited to 2 MiB
-per page. Manual URL registration and the separate Time.Now example remain available.
+per page, enforced while receiving bytes. Manual URL registration and the separate Time.Now example remain available.
 
 ## MCP configuration and network boundary
 
@@ -228,7 +228,7 @@ credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
 from opt-in actual-model/public-server tests. The current suite reports 135 presentation
-and 40 core tests; seven actual-model cases are opt-in and skipped by default. All ten
+and 41 core tests; seven actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
 created. App-only UI screenshots are retained in the result bundle. Final hosted checks,
