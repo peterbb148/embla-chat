@@ -110,3 +110,114 @@ import Testing
         }
     }
 }
+
+@Test func schemaInvalidNativeCallsAreRejectedBeforeDispatch() throws {
+    let schema: ToolJSON = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "count": .object(["type": .string("integer"), "minimum": .integer(1)]),
+            "mode": .object(["type": .string("string"), "enum": .array([.string("brief")])]),
+            "details": .object([
+                "type": .string("object"), "required": .array([.string("city")]),
+                "properties": .object(["city": .object(["type": .string("string")])]),
+                "additionalProperties": .bool(false),
+            ]),
+        ]),
+        "required": .array([.string("count"), .string("mode"), .string("details")]),
+        "additionalProperties": .bool(false),
+    ])
+    let tool = ModelToolSpecification(
+        server: "fixture", name: "check", description: "", inputSchema: schema)
+    func request(_ count: String, _ mode: String, _ details: String) -> String {
+        """
+        <tool_call>
+        <function=fixture__check>
+        <parameter=count>
+        \(count)
+        </parameter>
+        <parameter=mode>
+        \(mode)
+        </parameter>
+        <parameter=details>
+        \(details)
+        </parameter>
+        </function>
+        </tool_call>
+        """
+    }
+    _ = try ModelToolResponse.parse(
+        request("1", "brief", "{\"city\":\"Oslo\"}"), finishReason: "stop", tools: [tool])
+    for bad in [
+        request("\"not an integer\"", "brief", "{\"city\":\"Oslo\"}"),
+        request("0", "brief", "{\"city\":\"Oslo\"}"),
+        request("1", "invented", "{\"city\":\"Oslo\"}"),
+        request("1", "brief", "{}"),
+        request("1", "brief", "{\"city\":42}"),
+        request("1", "brief", "{\"city\":\"Oslo\",\"extra\":true}"),
+    ] {
+        #expect(throws: ToolProtocolError.self) {
+            try ModelToolResponse.parse(bad, finishReason: "stop", tools: [tool])
+        }
+    }
+}
+
+@Test func schemaValidationPreservesExactNumbersAndChecksCompositionsArraysAndScalarLength() throws
+{
+    try ToolArgumentSchema.validate(
+        .unsignedInteger(UInt64.max),
+        schema: .object([
+            "type": .string("integer"), "minimum": .unsignedInteger(UInt64.max),
+            "const": .unsignedInteger(UInt64.max),
+        ]))
+    #expect(throws: ToolProtocolError.self) {
+        try ToolArgumentSchema.validate(
+            .integer(9_007_199_254_740_992),
+            schema: .object([
+                "minimum": .integer(9_007_199_254_740_993)
+            ]))
+    }
+    try ToolArgumentSchema.validate(
+        .array([.integer(2), .integer(4)]),
+        schema: .object([
+            "type": .string("array"), "minItems": .integer(2), "uniqueItems": .bool(true),
+            "items": .object(["type": .string("integer"), "multipleOf": .integer(2)]),
+        ]))
+    for value: ToolJSON in [
+        .array([.integer(2), .integer(2)]), .array([.integer(2), .integer(3)]),
+    ] {
+        #expect(throws: ToolProtocolError.self) {
+            try ToolArgumentSchema.validate(
+                value,
+                schema: .object([
+                    "uniqueItems": .bool(true), "items": .object(["multipleOf": .integer(2)]),
+                ]))
+        }
+    }
+    let union: ToolJSON = .object([
+        "oneOf": .array([
+            .object(["type": .string("string"), "minLength": .integer(2)]),
+            .object(["type": .string("null")]),
+        ])
+    ])
+    try ToolArgumentSchema.validate(.null, schema: union)
+    try ToolArgumentSchema.validate(.string("e\u{301}"), schema: union)
+    #expect(throws: ToolProtocolError.self) {
+        try ToolArgumentSchema.validate(.bool(true), schema: union)
+    }
+    #expect(throws: ToolProtocolError.self) {
+        try ToolArgumentSchema.validate(.string("a"), schema: union)
+    }
+}
+
+@Test func unsupportedSchemaRulesFailEvenInUnselectedBranches() throws {
+    for unsupported in ["$ref", "pattern", "format", "unevaluatedProperties", "contains"] {
+        let schema: ToolJSON = .object([
+            "anyOf": .array([
+                .bool(true), .object([unsupported: .string("unsupported fixture")]),
+            ])
+        ])
+        #expect(throws: ToolProtocolError.self) {
+            try ToolArgumentSchema.validate(.object([:]), schema: schema)
+        }
+    }
+}

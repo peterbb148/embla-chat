@@ -62,7 +62,7 @@ annotations are validated and encoded according to that revision. Invalid annota
 are excluded with visible warnings. Saved enabled names remain visible and can be disabled
 even if discovery fails or a server no longer lists them. A response is bounded to 128 KiB; discovery is limited
 to 64 tools and 16 cursor pages. Unsupported result types/capabilities, malformed responses,
-HTTP/protocol errors and actual tool errors fail clearly. SSE rejects malformed UTF-8
+HTTP/protocol errors and actual tool errors fail clearly. SSE accepts LF, CRLF and CR line endings and rejects malformed UTF-8
 instead of inserting replacement characters. JSON-RPC failures retain their
 code, message and data, including valid protocol errors carried by non-200 HTTP responses. Corrupt saved settings are not
 replaced by an empty tool-free configuration or overwritten automatically.
@@ -118,6 +118,15 @@ Function names map exactly to a captured server/tool catalog; they are not infer
 prose. String parameters use the checkpoint's plain-text convention; other parameter values
 must be JSON. Plain final answers need no JSON envelope. Unknown/multiple/incomplete calls,
 duplicate/missing required parameters and output-limited responses fail without dispatch.
+Arguments are validated before dispatch without coercion or numeric conversion. The supported
+JSON Schema 2020-12 subset includes types (including unions), enum/const, nested properties,
+required/additionalProperties, object/array/string size limits, items/uniqueItems, numeric
+bounds/multipleOf, and allOf/anyOf/oneOf/not. String length counts Unicode scalars. Schema
+nesting is limited to 32. Unsupported keywords (including references, pattern, format,
+conditional and unevaluated constraints), other dialects and malformed constraints fail
+clearly before execution; this is not a full JSON Schema validator. Annotation keywords
+title, description, default, examples, deprecated, readOnly, writeOnly, $comment and
+x-mcp-header do not modify arguments. No remote references are fetched.
 There is no repair, guessed identifier, retry-until-execution or substituted tool result.
 The loop uses greedy sampling, at most four registered-tool executions and five model passes.
 Exact token counting includes skill instructions, schemas, project memory, rolling summary
@@ -134,7 +143,8 @@ Time.Now call/answer cases in 32.136 s under the final automatic-call policy. Ea
 enabled registration but cleared live connections first, proving automatic reconnect on Send.
 There was no per-call confirmation. Each saved the exact returned timestamp and the real
 model used it in its answer. All three cases passed again after the credential/precision
-review fixes in 28.327 s, including returned `2026-11-16T07:50:52.033273+01:00`.
+review fixes in 28.327 s, then with strict schema validation and catalog refresh in
+27.626 s, including returned `2026-11-16T08:04:47.873300+01:00`.
 An independent selected-skill test passed in 15.927 s: the same greeting prompt produced
 `Hello! How can I help you today?` without the skill and an answer beginning `SKILL ACTIVE`
 with the copied standard skill. These are complete functional test durations, not iPhone
@@ -148,8 +158,8 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 126 presentation
-and 29 core tests; five actual-model cases are opt-in and skipped by default. All ten
+from opt-in actual-model/public-server tests. The current suite reports 127 presentation
+and 32 core tests; five actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
 created. App-only UI screenshots are retained in the result bundle. Final hosted checks,

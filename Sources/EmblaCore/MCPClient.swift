@@ -207,15 +207,21 @@ public actor MCPClient {
         var line = Data()
         var event: [String] = []
         var size = 0
+        var afterCarriageReturn = false
         for try await byte in bytes {
             try Task.checkCancellation()
             size += 1
             guard size <= Self.limit else { throw MCPFailure.limit }
-            if byte != 10 { line.append(byte); continue }
+            if afterCarriageReturn {
+                afterCarriageReturn = false
+                if byte == 10 { continue }
+            }
+            if byte != 10 && byte != 13 { line.append(byte); continue }
+            afterCarriageReturn = byte == 13
             guard let decoded = String(data: line, encoding: .utf8) else {
                 throw MCPFailure.invalidResponse
             }
-            let text = decoded.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+            let text = decoded
             line.removeAll(keepingCapacity: true)
             if text.isEmpty {
                 if !event.isEmpty {

@@ -81,6 +81,8 @@ public final class ToolWorkspace {
 
     public func reloadSkills(using cloud: ConversationCloudSync) {
         skillTask?.cancel()
+        skillTask = nil
+        loadingSkills = false
         selectedSkill = nil
         skills = []
         skillSourceKey = nil
@@ -250,6 +252,7 @@ public final class ToolWorkspace {
                 discovered[id] = result.tools
                 clients[id] = client
                 warnings = result.warnings
+                revision = UUID()
             } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
         }
     }

@@ -37,7 +37,7 @@ import Testing
 
     @Test func mcpNativeClientDiscoversAndCallsUsingJSONAndSSE() async throws {
         let fixture = try HTTPFixture(); defer { fixture.stop() }
-        for path in ["json", "sse"] {
+        for path in ["json", "sse", "sse-cr"] {
             let client = try fixture.client(path)
             let discovery = try await client.discover()
             let tool = try #require(discovery.tools.first)

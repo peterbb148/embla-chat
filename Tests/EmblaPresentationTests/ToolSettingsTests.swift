@@ -95,3 +95,17 @@ private final class MemoryCredentialFixture: MCPCredentialStoring, @unchecked Se
     #expect(reopened.error == nil && reopened.servers == [server])
     #expect(reopened.connecting == nil && reopened.discovered.isEmpty)
 }
+
+@Test @MainActor func cancellingSkillReloadBeforeUnapprovedCloudSourceClearsLoading() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workspace = ToolWorkspace(store: SkillStore(localRoot: root))
+    let cloud = ConversationCloudSync()
+    workspace.reloadSkills(using: cloud)
+    #expect(workspace.loadingSkills)
+    cloud.restore(enabled: true, bookmark: nil, base: nil, consentVersion: 0)
+    workspace.reloadSkills(using: cloud)
+    await workspace.waitUntilIdle()
+    #expect(!workspace.loadingSkills && workspace.skills.isEmpty && workspace.selectedSkill == nil)
+    #expect(workspace.error != nil && workspace.skillSourceKey == nil)
+}

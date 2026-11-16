@@ -139,19 +139,7 @@ public enum ModelToolResponse: Sendable, Equatable {
         try consume("</tool_call>")
         whitespace()
         guard remainder.isEmpty else { throw ToolProtocolError.invalidResponse }
-        if case .array(let required) = tool.inputSchema["required"] {
-            guard required.allSatisfy({ $0.string.map { arguments[$0] != nil } == true }) else {
-                throw ToolProtocolError.invalidResponse
-            }
-        }
-        if tool.inputSchema["additionalProperties"] == .bool(false) {
-            guard
-                Set(arguments.keys).isSubset(
-                    of: Set(tool.inputSchema["properties"]?.object?.keys.map { $0 } ?? []))
-            else {
-                throw ToolProtocolError.invalidResponse
-            }
-        }
+        try ToolArgumentSchema.validate(.object(arguments), schema: tool.inputSchema)
         return .call(server: tool.server, name: tool.name, arguments: arguments)
     }
 
@@ -217,13 +205,19 @@ public struct ModelToolSpecification: Codable, Sendable, Equatable {
 }
 
 public enum ToolProtocolError: Error, LocalizedError, Sendable {
-    case invalidResponse, loopLimit
+    case invalidResponse, invalidArguments, loopLimit
+    case unsupportedSchema(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return
                 "The model did not produce a complete valid tool request or answer. No request was inferred."
+        case .invalidArguments:
+            return "The tool arguments or schema are invalid. No tool was executed."
+        case .unsupportedSchema(let keyword):
+            return
+                "The tool schema uses an unsupported constraint (\(keyword)). No tool was executed."
         case .loopLimit:
             return
                 "The model reached the four-call limit. No further tool was executed; completed results remain in the chat."

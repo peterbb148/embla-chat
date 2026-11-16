@@ -66,7 +66,7 @@ class Handler(BaseHTTPRequestHandler):
         response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
         if self.path == "/wrong-id":
             response["id"] = "not-the-request-id"
-        if self.path in {"/sse", "/slow", "/invalid-utf8"}:
+        if self.path in {"/sse", "/sse-cr", "/slow", "/invalid-utf8"}:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Connection", "close")
@@ -85,7 +85,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.dumps(response).encode()
                 if self.path == "/invalid-utf8":
                     payload = payload.replace(b'"fixture-bad-utf8"', b'"\xff"')
-                self.wfile.write(b"data: " + payload + b"\r\n\r\n")
+                ending = b"\r\r" if self.path == "/sse-cr" else b"\r\n\r\n"
+                self.wfile.write(b"data: " + payload + ending)
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass  # Expected native request cancellation, not a fabricated result.
