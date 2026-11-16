@@ -212,8 +212,10 @@ public actor MCPClient {
             size += 1
             guard size <= Self.limit else { throw MCPFailure.limit }
             if byte != 10 { line.append(byte); continue }
-            let text = String(decoding: line, as: UTF8.self)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+            guard let decoded = String(data: line, encoding: .utf8) else {
+                throw MCPFailure.invalidResponse
+            }
+            let text = decoded.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
             line.removeAll(keepingCapacity: true)
             if text.isEmpty {
                 if !event.isEmpty {

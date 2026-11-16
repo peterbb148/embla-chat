@@ -52,7 +52,7 @@ import Testing
 
     @Test func mcpNativeClientRejectsWrongIDsAuthenticationRedirectsAndToolErrors() async throws {
         let fixture = try HTTPFixture(); defer { fixture.stop() }
-        for path in ["wrong-id", "auth", "redirect"] {
+        for path in ["wrong-id", "auth", "redirect", "invalid-utf8"] {
             let client = try fixture.client(path)
             await #expect(throws: MCPFailure.self) { try await client.discover() }
         }

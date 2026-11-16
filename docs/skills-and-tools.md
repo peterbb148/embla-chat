@@ -62,7 +62,8 @@ annotations are validated and encoded according to that revision. Invalid annota
 are excluded with visible warnings. Saved enabled names remain visible and can be disabled
 even if discovery fails or a server no longer lists them. A response is bounded to 128 KiB; discovery is limited
 to 64 tools and 16 cursor pages. Unsupported result types/capabilities, malformed responses,
-HTTP/protocol errors and actual tool errors fail clearly. JSON-RPC failures retain their
+HTTP/protocol errors and actual tool errors fail clearly. SSE rejects malformed UTF-8
+instead of inserting replacement characters. JSON-RPC failures retain their
 code, message and data, including valid protocol errors carried by non-200 HTTP responses. Corrupt saved settings are not
 replaced by an empty tool-free configuration or overwritten automatically.
 
@@ -131,8 +132,9 @@ Those rejected probes are not treated as successful native-format reliability ev
 The application's actual orchestration/registration/persistence path passed three English/Danish
 Time.Now call/answer cases in 32.136 s under the final automatic-call policy. Each retained
 enabled registration but cleared live connections first, proving automatic reconnect on Send.
-There was no per-call confirmation. Each saved the exact returned timestamp, including
-`2026-11-16T07:18:26.238973+01:00`, and the real model used it in its answer.
+There was no per-call confirmation. Each saved the exact returned timestamp and the real
+model used it in its answer. All three cases passed again after the credential/precision
+review fixes in 28.327 s, including returned `2026-11-16T07:50:52.033273+01:00`.
 An independent selected-skill test passed in 15.927 s: the same greeting prompt produced
 `Hello! How can I help you today?` without the skill and an answer beginning `SKILL ACTIVE`
 with the copied standard skill. These are complete functional test durations, not iPhone
