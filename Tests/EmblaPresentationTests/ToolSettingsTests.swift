@@ -109,3 +109,91 @@ private final class MemoryCredentialFixture: MCPCredentialStoring, @unchecked Se
     #expect(!workspace.loadingSkills && workspace.skills.isEmpty && workspace.selectedSkill == nil)
     #expect(workspace.error != nil && workspace.skillSourceKey == nil)
 }
+
+
+/// Typed discovery fixtures exercise persistence/authorization, not a replacement network client.
+private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
+    try names.map {
+        try MCPTool(
+            name: $0, description: "Synthetic discovery fixture.",
+            inputSchema: .object(["type": .string("object"), "properties": .object([:])]))
+    }
+}
+
+@Test @MainActor func initialDiscoveryEnablesAllOnceAndPreservesLaterChoicesAcrossRestart() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("servers.json")
+    let server = MCPServer(name: "New fixture", endpoint: URL(string: "https://example.invalid/mcp")!)
+    let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    try workspace.saveServer(server)
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == true)
+    #expect(workspace.servers.first?.enabledTools.isEmpty == true)
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["one", "two"]), serverID: server.id)
+    #expect(workspace.servers.first?.enabledTools == Set(["one", "two"]))
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
+    try workspace.setEnabled(false, tool: "one", serverID: server.id)
+    let reopened = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    try reopened.acceptDiscoveredTools(
+        discoveredFixtureTools(["one", "two", "three"]), serverID: server.id)
+    #expect(reopened.servers.first?.enabledTools == Set(["two"]))
+    // The editor reconstructs a value with initializer defaults; saving must not reset consent.
+    try reopened.saveServer(
+        MCPServer(id: server.id, name: "Renamed fixture", endpoint: server.endpoint,
+                  enabledTools: ["two"]))
+    try reopened.acceptDiscoveredTools(
+        discoveredFixtureTools(["one", "two", "three"]), serverID: server.id)
+    #expect(reopened.servers.first?.enabledTools == Set(["two"]))
+    #expect(reopened.servers.first?.enableToolsOnFirstDiscovery == false)
+    #expect(ToolWorkspace(configuration: file).servers.first?.enabledTools == Set(["two"]))
+}
+
+@Test @MainActor func legacyRegistrationsAndEndpointEditsNeverGainImplicitPermissions() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("servers.json")
+    let id = UUID()
+    let legacy: [[String: Any]] = [[
+        "id": id.uuidString, "name": "Legacy fixture",
+        "endpoint": "https://example.invalid/mcp", "enabledTools": ["one"],
+    ]]
+    try JSONSerialization.data(withJSONObject: legacy).write(to: file)
+    let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["one", "two"]), serverID: id)
+    #expect(workspace.servers.first?.enabledTools == Set(["one"]))
+    try workspace.saveServer(
+        MCPServer(id: id, name: "Changed endpoint", endpoint: URL(string: "https://new.invalid/mcp")!,
+                  enabledTools: ["one"]))
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["three"]), serverID: id)
+    #expect(workspace.servers.first?.enabledTools.isEmpty == true)
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
+}
+
+@Test @MainActor func failedInitialGrantDoesNotPublishOrConsumeThePendingDiscovery() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+    let file = root.appendingPathComponent("servers.json")
+    let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    let server = MCPServer(name: "New fixture", endpoint: URL(string: "https://example.invalid/mcp")!)
+    try workspace.saveServer(server)
+    let original = try Data(contentsOf: file)
+    try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+    #expect(throws: (any Error).self) {
+        try workspace.acceptDiscoveredTools(discoveredFixtureTools(["one"]), serverID: server.id)
+    }
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == true)
+    #expect(workspace.servers.first?.enabledTools.isEmpty == true)
+    #expect(workspace.discovered[server.id] == nil)
+    #expect(try Data(contentsOf: file) == original)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["one"]), serverID: server.id)
+    #expect(workspace.servers.first?.enabledTools == Set(["one"]))
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
+}

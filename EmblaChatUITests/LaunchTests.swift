@@ -283,7 +283,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
-    func testSkillsAndMCPConfigurationStayExplicitAndDoNotConnectAutomatically() throws {
+    func testSkillsAndMCPManagementAreInSettings() throws {
         let app = try launchCleanChat()
         XCTAssertFalse(app.buttons["Choose skill"].exists)
         app.buttons["Chat history"].tap()
@@ -295,19 +295,21 @@ final class LaunchTests: XCTestCase {
         app.buttons["Reload skills"].tap()
         app.navigationBars["Skills"].buttons["Settings"].tap()
         app.buttons["MCP Servers"].tap()
-        reveal(app.buttons["Add Time.Now example"], in: app)
-        app.buttons["Add Time.Now example"].tap()
+        reveal(app.buttons["Add MCP server"], in: app)
+        app.buttons["Add MCP server"].tap()
         let name = app.textFields["mcp-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap()
         name.typeText(" UI fixture " + UUID().uuidString.prefix(8))
+        XCTAssertEqual(
+            app.textFields["mcp-endpoint"].value as? String, "https://example.invalid/mcp")
         app.buttons["Save server"].tap()
         let connect = app.buttons["Connect and discover tools"]
         reveal(connect, in: app)
         XCTAssertTrue(connect.waitForExistence(timeout: 5))
         XCTAssertFalse(app.switches["get_current_time"].exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Explicit MCP endpoint configuration without connection or credentials"
+        screenshot.name = "MCP registration uses a synthetic invalid endpoint without credentials"
         screenshot.lifetime = .keepAlways
         add(screenshot)
         reveal(app.buttons["Delete server…"], in: app)

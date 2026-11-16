@@ -24,7 +24,10 @@ func realProductionToolLoopUsesRegisteredPublicTimeAndPersistsTheReturnedFact() 
     await workspace.waitUntilIdle()
     #expect(workspace.revision != pendingCatalogRevision)
     try #require(workspace.error == nil)
-    try workspace.setEnabled(true, tool: "get_current_time", serverID: server.id)
+    #expect(
+        workspace.servers.first?.enabledTools
+            == Set(["get_current_time", "list_timezones", "lookup_ip_time"]))
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
     let manifest = try ModelManifest.bundled()
     let store = ConversationStore(root: temporary.appendingPathComponent("Chats"))
     let tokenizer = EmblaPromptTokenizer()
@@ -132,9 +135,10 @@ func realNaturalQuestionsSelectRelevantToolsWithoutNamingThem() async throws {
     workspace.discover(server.id)
     await workspace.waitUntilIdle()
     try #require(workspace.error == nil)
-    for name in ["get_current_time", "list_timezones", "lookup_ip_time"] {
-        try workspace.setEnabled(true, tool: name, serverID: server.id)
-    }
+    #expect(
+        workspace.servers.first?.enabledTools
+            == Set(["get_current_time", "list_timezones", "lookup_ip_time"]))
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
     let manifest = try ModelManifest.bundled()
     let store = ConversationStore(root: temporary.appendingPathComponent("Chats"))
     let tokenizer = EmblaPromptTokenizer()

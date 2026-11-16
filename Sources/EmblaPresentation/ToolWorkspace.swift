@@ -3,7 +3,7 @@ import Observation
 
 import EmblaCore
 
-/// Device-only MCP configuration and explicit skill selection. No server is enabled by default.
+/// Device-only MCP configuration and explicit skill selection. No server is registered implicitly.
 @MainActor @Observable
 public final class ToolWorkspace {
     public private(set) var skills: [SkillEntry] = []
@@ -149,17 +149,23 @@ public final class ToolWorkspace {
         if let setupError {
             throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)
         }
-        let expected = revision
+        var expected = revision
         _ = try await validateSkill(using: cloud)
         guard revision == expected else { throw SkillFailure.changed }
-        for server in servers where !server.enabledTools.isEmpty && clients[server.id] == nil {
+        for server in servers where
+            (!server.enabledTools.isEmpty || server.enableToolsOnFirstDiscovery)
+                && clients[server.id] == nil
+        {
             try Task.checkCancellation()
             let client = try MCPClient(
                 server: server, bearerToken: credentials.read(MCPCredentialID(server: server)))
             let result = try await client.discover()
             try Task.checkCancellation()
             guard revision == expected else { throw SkillFailure.changed }
-            discovered[server.id] = result.tools
+            if try acceptDiscoveredTools(result.tools, serverID: server.id) {
+                revision = UUID()
+                expected = revision
+            }
             clients[server.id] = client
             warnings = result.warnings
         }
@@ -193,7 +199,14 @@ public final class ToolWorkspace {
         discovered[server.id] = nil
         revision = UUID()
         let previous = servers.first(where: { $0.id == server.id })
-        if let previous, previous.endpoint != server.endpoint { server.enabledTools = [] }
+        if let previous {
+            if previous.endpoint != server.endpoint {
+                server.enabledTools = []
+                server.enableToolsOnFirstDiscovery = false
+            } else {
+                server.enableToolsOnFirstDiscovery = previous.enableToolsOnFirstDiscovery
+            }
+        }
         if let newToken { try credentials.write(newToken, id: MCPCredentialID(server: server)) }
         if let index = updated.firstIndex(where: { $0.id == server.id }) {
             updated[index] = server
@@ -215,6 +228,12 @@ public final class ToolWorkspace {
             throw SkillFailure.invalid("MCP settings storage is unavailable.")
         }
         try credentials.deleteAll(id)
+        if connecting == id {
+            connectTask?.cancel()
+            connectRequestID = UUID()
+            connectTask = nil
+            connecting = nil
+        }
         let updated = servers.filter { $0.id != id }
         try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
         servers = updated
@@ -249,12 +268,31 @@ public final class ToolWorkspace {
                 let result = try await client.discover()
                 try Task.checkCancellation()
                 guard revision == current else { throw SkillFailure.changed }
-                discovered[id] = result.tools
+                _ = try acceptDiscoveredTools(result.tools, serverID: id)
                 clients[id] = client
                 warnings = result.warnings
                 revision = UUID()
             } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
         }
+    }
+
+    /// Commit the initial grant before publishing schemas. Later discovery preserves user choices.
+    @discardableResult
+    func acceptDiscoveredTools(_ tools: [MCPTool], serverID: UUID) throws -> Bool {
+        guard let index = servers.firstIndex(where: { $0.id == serverID }) else {
+            throw SkillFailure.changed
+        }
+        let initial = servers[index].enableToolsOnFirstDiscovery
+        if initial {
+            guard let configuration else { throw SkillFailure.unavailable }
+            var updated = servers
+            updated[index].enabledTools = Set(tools.map(\.name))
+            updated[index].enableToolsOnFirstDiscovery = false
+            try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
+            servers = updated
+        }
+        discovered[serverID] = tools
+        return initial
     }
 
     public func setEnabled(_ enabled: Bool, tool: String, serverID: UUID) throws {
@@ -267,6 +305,7 @@ public final class ToolWorkspace {
             }
         }
         var updated = servers
+        updated[index].enableToolsOnFirstDiscovery = false
         if enabled {
             updated[index].enabledTools.insert(tool)
         } else {
