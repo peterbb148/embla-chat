@@ -114,8 +114,10 @@ private func registryPage(_ records: [[String: Any]], cursor: String? = nil) thr
         let page = try await client.page(search: search, cursor: next)
         #expect(page.servers.count == 1 && page.nextCursor == nil)
         let observed = try #require(RegistryWireFixture.observed(request))
-        let items = try #require(URLComponents(url: observed.url!, resolvingAgainstBaseURL: false))
-            .queryItems ?? []
+        let components = try #require(
+            URLComponents(url: observed.url!, resolvingAgainstBaseURL: false))
+        #expect(components.percentEncodedQuery?.contains("+") == false)
+        let items = components.queryItems ?? []
         let values = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value) })
         #expect(values["version"] == "latest")
         #expect(values["search"] == search)

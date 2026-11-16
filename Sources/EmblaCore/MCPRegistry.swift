@@ -74,6 +74,9 @@ public actor MCPRegistryClient {
         if !search.isEmpty { items.append(URLQueryItem(name: "search", value: search)) }
         if let cursor { items.append(URLQueryItem(name: "cursor", value: cursor)) }
         components.queryItems = items
+        // Form-style server query parsers interpret a literal plus as a space.
+        components.percentEncodedQuery = components.percentEncodedQuery?
+            .replacingOccurrences(of: "+", with: "%2B")
         var request = URLRequest(url: components.url!)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
