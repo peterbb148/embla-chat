@@ -44,6 +44,30 @@ both lockfiles; its own and included LibYAML notices are bundled in the shared r
 
 See [the copied-skill example](../examples/skills/concise-writing/SKILL.md).
 
+## Finding and adding servers
+
+Open **Settings → MCP Servers → Browse registry**. Search server names, inspect a listing's
+publisher name, catalog version and connection address, then choose **Add server**. The
+registration form fills its name and endpoint; provide a bearer token if required and save.
+Successful MCP discovery enables all its tools. All enabled servers remain available to
+every chat; the proposed per-chat composer picker is deferred in #65.
+
+The browser reads the [official MCP Registry API](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/official-registry-api.md)
+anonymously, using active/latest records and opaque pagination cursors. **Load more**
+keeps the same name search and version filter. Search text goes to that registry; chats,
+model prompts and saved server credentials do not. Closing the browser cancels its request.
+A failed request displays its actual error and an explicit Retry action.
+
+Only HTTPS Streamable HTTP endpoints compatible with the current client are shown.
+Local packages/processes, legacy transports, URL variables, query credentials and custom
+headers are excluded. Standard bearer-token configuration is supported, including listings
+that declare it required. A listing can still require unsupported browser OAuth or be
+unavailable; actual connection/authentication errors remain visible. The catalog's
+[namespace verification](https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/remote-servers.mdx)
+does not prove ownership of its remote URL. Records keep their own name/version identity,
+including when multiple publishers list the same URL. Catalog reads are limited to 2 MiB
+per page. Manual URL registration and the separate Time.Now example remain available.
+
 ## MCP configuration and network boundary
 
 Settings → MCP Servers configures explicit endpoints and optional bearer tokens. Saving a
@@ -201,8 +225,8 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 134 presentation
-and 36 core tests; six actual-model cases are opt-in and skipped by default. All ten
+from opt-in actual-model/public-server tests. The current suite reports 135 presentation
+and 40 core tests; seven actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
 created. App-only UI screenshots are retained in the result bundle. Final hosted checks,
@@ -220,3 +244,14 @@ compared with the actual saved server result, allowing ordinary 12/24-hour forma
 A further ordinary follow-up obtains a fresh result in that same chat.
 The prior system-only prompt failed this existing-chat case; the refreshed current-request
 capability context addresses it. Exact run results are recorded in #57 and its PR.
+
+
+### Registry and multiple-server regression (#61)
+
+The opt-in regression reads the actual official Context7 listing and uses its remote
+endpoint through the same registration/discovery path, alongside Time.Now. Every discovered
+tool is enabled, and both servers remain available for ordinary time and Python-documentation
+library-ID questions. Answers are compared with actual returned clock values and library
+identifiers, and saved transcripts are checked. Synthetic catalog fixtures separately cover
+latest/active filtering, unsupported connections, publisher identity, opaque pagination,
+HTTP errors and malformed responses. Exact live run/review/merge evidence belongs in #61.
