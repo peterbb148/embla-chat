@@ -42,8 +42,7 @@ runs the chat/settings UI tests. Simulator
 cleanup runs on exit. Local signing credentials and model weights are not needed.
 
 UI tests check that model controls are in Settings, tapping the composer displays
-a software keyboard, Send requires a verified model, and New Chat confirmation preserves
-or clears a draft. They do not load
+a software keyboard, Send requires a verified model, and New Chat starts immediately while preserving the previous chat and draft in history. They do not load
 model weights, compile runtime Metal kernels at execution, or prove physical-device
 inference. The unsigned device build checks compilation/linking for actual iOS,
 including copied SwiftPM resources, but does not prove installation or inference.
@@ -130,7 +129,7 @@ See [inference API](inference-api.md) for session ownership and device evidence 
 
 EmblaPresentation owns the active transcript, checkpoints it to local storage, and serializes real model
 requests. The main view shows user messages, assistant responses, expandable reasoning,
-a bottom-anchored multiline composer, Send/Stop and confirmed New Chat. Model download,
+a bottom-anchored multiline composer, Send/Stop and immediate New Chat. Model download,
 verification, storage deletion and last-response measurements are in Settings. Opening
 Settings does not reset the conversation or start another readiness check.
 

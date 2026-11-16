@@ -14,14 +14,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed)
         if app.buttons["New Chat"].isEnabled {
             app.buttons["New Chat"].tap()
-            let confirmation = app.alerts["Start a new chat?"]
-            XCTAssertTrue(confirmation.waitForExistence(timeout: 10))
-            let start = confirmation.buttons["Start new chat"]
-            let ready = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "hittable == true"), object: start)
-            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
-            start.tap()
-            XCTAssertTrue(confirmation.waitForNonExistence(timeout: 10))
+            XCTAssertFalse(app.alerts["Start a new chat?"].exists)
             let cleared = XCTNSPredicateExpectation(
                 predicate: NSPredicate(
                     format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
@@ -76,7 +69,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
-    func testNewChatRequiresConfirmation() throws {
+    func testNewChatStartsImmediatelyFromToolbarAndSidebar() throws {
         let app = try launchCleanChat()
         let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
@@ -84,16 +77,21 @@ final class LaunchTests: XCTestCase {
         composer.typeText("Draft message")
         app.buttons["Hide keyboard"].tap()
         app.buttons["New Chat"].tap()
-        app.buttons["Cancel"].tap()
-        XCTAssertEqual(composer.value as? String, "Draft message")
-        app.buttons["New Chat"].tap()
-        app.buttons["Start new chat"].tap()
+        XCTAssertFalse(app.alerts["Start a new chat?"].exists)
         let cleared = NSPredicate(
             format: "enabled == true AND (value == %@ OR value == %@)", "", "Message")
         expectation(for: cleared, evaluatedWith: composer)
         waitForExpectations(timeout: 10)
         XCTAssertFalse(app.buttons["New Chat"].isEnabled)
         XCTAssertFalse(app.staticTexts["answer"].exists)
+        composer.tap()
+        composer.typeText("Sidebar draft")
+        app.buttons["Chat history"].tap()
+        app.buttons["sidebar-new-chat"].tap()
+        XCTAssertFalse(app.alerts["Start a new chat?"].exists)
+        expectation(for: cleared, evaluatedWith: composer)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.buttons["New Chat"].isEnabled)
     }
 
     @MainActor
@@ -159,10 +157,7 @@ final class LaunchTests: XCTestCase {
         composer.typeText(first)
         app.buttons["Hide keyboard"].tap()
         app.buttons["New Chat"].tap()
-        let confirmation = app.alerts["Start a new chat?"]
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
-        confirmation.buttons["Start new chat"].tap()
-        XCTAssertTrue(confirmation.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.alerts["Start a new chat?"].exists)
         let empty = XCTNSPredicateExpectation(
             predicate: NSPredicate(
                 format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
