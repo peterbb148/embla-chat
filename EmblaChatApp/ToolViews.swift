@@ -294,6 +294,11 @@ private struct MCPRegistryView: View {
         var attempt = 0
     }
 
+    private var shortSearch: Bool {
+        let search = request.search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !search.isEmpty && search.unicodeScalars.count < 3
+    }
+
     var body: some View {
         List {
             Section {
@@ -322,16 +327,19 @@ private struct MCPRegistryView: View {
                     }
                     .accessibilityIdentifier("registry-" + server.name)
                 }
-                if loading { ProgressView("Loading servers…") }
-                if let error {
+                if shortSearch {
+                    Text("Type at least 3 characters to search server names.")
+                        .accessibilityIdentifier("registry-search-hint")
+                } else if loading { ProgressView("Loading servers…") }
+                if !shortSearch, let error {
                     Text(error).foregroundStyle(.red).accessibilityIdentifier("registry-error")
                     Button("Retry") { request.attempt += 1 }
-                } else if !loading && servers.isEmpty {
+                } else if !shortSearch && !loading && servers.isEmpty {
                     Text(nextCursor == nil
                          ? "No supported remote servers found."
                          : "No supported connections on this page. Load more or search by name.")
                 }
-                if nextCursor != nil && error == nil {
+                if !shortSearch && nextCursor != nil && error == nil {
                     Button("Load more") { request.cursor = nextCursor }
                         .disabled(loading)
                 }
@@ -351,6 +359,11 @@ private struct MCPRegistryView: View {
 
     @MainActor private func load(_ current: Request) async {
         guard !Task.isCancelled, request == current, completedRequest != current else { return }
+        let search = current.search.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !search.isEmpty && search.unicodeScalars.count < 3 {
+            servers = []; nextCursor = nil; error = nil; loading = false
+            return
+        }
         loading = true
         error = nil
         if current.cursor == nil { servers = []; nextCursor = nil }
@@ -360,8 +373,7 @@ private struct MCPRegistryView: View {
                 try await Task.sleep(for: .milliseconds(300))
             }
             let page = try await client.page(
-                search: current.search.trimmingCharacters(in: .whitespacesAndNewlines),
-                cursor: current.cursor)
+                search: search, cursor: current.cursor)
             try Task.checkCancellation()
             guard request == current else { return }
             if current.cursor != nil {

@@ -54,7 +54,9 @@ every chat; the proposed per-chat composer picker is deferred in #65.
 
 The browser reads the [official MCP Registry API](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/api/official-registry-api.md)
 anonymously, using active/latest records and opaque pagination cursors. **Load more**
-keeps the same name search and version filter. Search text goes to that registry; chats,
+keeps the same name search and version filter. Nonempty searches need at least three
+Unicode characters after trimming; shorter input shows a hint without requesting the API.
+Search text goes to that registry; chats,
 model prompts and saved server credentials do not. Closing the browser cancels its request.
 A failed request displays its actual error and an explicit Retry action.
 

@@ -299,6 +299,12 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Server registry"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.searchFields.firstMatch.exists)
         XCTAssertTrue(app.descendants(matching: .any)["registry-source"].exists)
+        app.searchFields.firstMatch.tap()
+        app.searchFields.firstMatch.typeText("ab")
+        XCTAssertTrue(app.staticTexts["registry-search-hint"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Retry"].exists)
+        app.buttons.matching(
+            NSPredicate(format: "label IN %@", ["Close", "Cancel"])).firstMatch.tap()
         app.navigationBars["Server registry"].buttons["MCP Servers"].tap()
         reveal(app.buttons["Add MCP server"], in: app)
         app.buttons["Add MCP server"].tap()
