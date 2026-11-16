@@ -66,7 +66,10 @@ public enum ToolJSON: Codable, Sendable, Equatable {
     public func text() throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        // The runtime recognizes added tokens even inside JSON strings. Keep literal '<'
+        // out of serialized tool data while preserving the value on JSON decoding.
         return String(decoding: try encoder.encode(self), as: UTF8.self)
+            .replacingOccurrences(of: "<", with: "\\u003c")
     }
 }
 

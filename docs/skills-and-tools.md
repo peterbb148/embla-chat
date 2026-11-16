@@ -112,7 +112,10 @@ Europe/Copenhagen
 JSON integer arguments/results retain signed/unsigned 64-bit values exactly, including IDs
 beyond the exact Double range. Out-of-range integers fail rather than round; fractional
 values use Foundation Decimal’s supported precision. MCP integer parameter headers retain
-the specification’s narrower safe-integer bound.
+the specification’s narrower safe-integer bound. Serialized tool JSON escapes literal `<`
+with a JSON Unicode escape so server text cannot introduce runtime message boundaries or
+close the tool envelope. JSON decoding still recovers the original data. Header discovery
+walks schema-valued keywords only; default/const/enum/examples remain instance data.
 
 Function names map exactly to a captured server/tool catalog; they are not inferred from
 prose. String parameters use the checkpoint's plain-text convention; other parameter values
@@ -159,7 +162,7 @@ credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
 from opt-in actual-model/public-server tests. The current suite reports 127 presentation
-and 32 core tests; five actual-model cases are opt-in and skipped by default. All ten
+and 34 core tests; five actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
 created. App-only UI screenshots are retained in the result bundle. Final hosted checks,

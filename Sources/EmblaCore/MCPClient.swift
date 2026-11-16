@@ -281,34 +281,49 @@ struct MCPParameterHeader: Sendable, Equatable {
 
     static func parse(_ schema: ToolJSON) throws -> [Self] {
         var result: [Self] = []
-        func walk(_ value: ToolJSON, path: [String]?, schemaNode: Bool) throws {
-            if case .array(let values) = value {
-                for value in values { try walk(value, path: nil, schemaNode: false) }
-            }
+        func walk(_ value: ToolJSON, path: [String]?) throws {
             guard let object = value.object else { return }
             if let marker = object["x-mcp-header"] {
                 guard let name = marker.string, !name.isEmpty,
                     name.utf8.allSatisfy({
                         (48...57).contains($0) || (65...90).contains($0)
                             || (97...122).contains($0) || "!#$%&'*+-.^_`|~".utf8.contains($0)
-                    }), let path, !path.isEmpty, schemaNode,
+                    }), let path, !path.isEmpty,
                     let type = object["type"]?.string,
                     ["integer", "string", "boolean"].contains(type),
                     !result.contains(where: { $0.name.lowercased() == name.lowercased() })
                 else { throw MCPFailure.invalidHeaders }
                 result.append(Self(name: name, path: path, type: type))
             }
-            for (key, child) in object where key != "x-mcp-header" {
-                if key == "properties", schemaNode, let properties = child.object {
-                    for (name, property) in properties {
-                        try walk(property, path: path.map { $0 + [name] }, schemaNode: true)
+            // Only schema-valued keywords contain annotations. default/const/enum/examples
+            // hold instance data, even when that data happens to contain "x-mcp-header".
+            for (key, child) in object {
+                switch key {
+                case "properties":
+                    for (name, property) in child.object ?? [:] {
+                        try walk(property, path: path.map { $0 + [name] })
                     }
-                } else {
-                    try walk(child, path: nil, schemaNode: false)
+                case "$defs", "definitions", "patternProperties", "dependentSchemas":
+                    for schema in child.object?.values ?? Dictionary<String, ToolJSON>().values {
+                        try walk(schema, path: nil)
+                    }
+                case "allOf", "anyOf", "oneOf", "prefixItems":
+                    if case .array(let schemas) = child {
+                        for schema in schemas { try walk(schema, path: nil) }
+                    }
+                case "items", "additionalItems", "additionalProperties", "contains",
+                    "propertyNames",
+                    "not", "if", "then", "else", "unevaluatedItems", "unevaluatedProperties":
+                    if case .array(let schemas) = child {
+                        for schema in schemas { try walk(schema, path: nil) }
+                    } else {
+                        try walk(child, path: nil)
+                    }
+                default: break
                 }
             }
         }
-        try walk(schema, path: [], schemaNode: true)
+        try walk(schema, path: [])
         return result
     }
 
