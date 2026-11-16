@@ -133,11 +133,29 @@ public actor MCPClient {
             params: [
                 "name": .string(tool.name), "arguments": .object(arguments),
             ], headers: headers)
+        guard case .array(let content) = result["content"],
+            content.allSatisfy(Self.validContent),
+            result["isError"] == nil || result["isError"] == .bool(false)
+                || result["isError"] == .bool(true)
+        else { throw MCPFailure.invalidResponse }
         guard result["isError"] != .bool(true) else { throw MCPFailure.toolError(result) }
-        guard result["content"] != nil || result["structuredContent"] != nil else {
-            throw MCPFailure.invalidResponse
-        }
         return result
+    }
+
+    /// Reject malformed wire content rather than feeding a success-shaped result to the model.
+    private static func validContent(_ value: ToolJSON) -> Bool {
+        switch value["type"]?.string {
+        case "text": return value["text"]?.string != nil
+        case "image", "audio":
+            return value["data"]?.string != nil && value["mimeType"]?.string != nil
+        case "resource_link":
+            return value["uri"]?.string != nil && value["name"]?.string != nil
+        case "resource":
+            return value["resource"]?["uri"]?.string != nil
+                && (value["resource"]?["text"]?.string != nil
+                    || value["resource"]?["blob"]?.string != nil)
+        default: return false
+        }
     }
 
     private func request(
@@ -248,6 +266,9 @@ public actor MCPClient {
             throw MCPFailure.invalidResponse
         }
         if let error = message["error"] {
+            guard message["result"] == nil, error["message"]?.string != nil,
+                case .integer = error["code"]
+            else { throw MCPFailure.invalidResponse }
             throw MCPFailure.rpc(error)
         }
         guard let result = message["result"], result["resultType"] == .string("complete") else {

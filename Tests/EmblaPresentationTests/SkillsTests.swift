@@ -91,3 +91,23 @@ private let sampleSkill = """
     #expect(context.first?.content.contains("Selected skill and exact tool schema") == true)
     #expect(context.first?.content.contains("Project fact") == true)
 }
+
+@Test func symlinkedSkillsRootCannotExposeFilesOutsideTheSelectedStorage() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let outside = root.appendingPathComponent("Outside")
+    let skill = outside.appendingPathComponent("sample-skill")
+    try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+    try Data(sampleSkill.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
+    let link = root.appendingPathComponent("EmblaChat/Skills")
+    try FileManager.default.createDirectory(
+        at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+    #expect(throws: SkillFailure.self) { try SkillStore.validateRoot(link) }
+    let store = SkillStore(localRoot: link)
+    await #expect(throws: (any Error).self) { try await store.entries(.device) }
+    let document = try SkillDocument.decode(Data(sampleSkill.utf8), directoryName: "sample-skill")
+    await #expect(throws: (any Error).self) {
+        try await store.resource("SKILL.md", skill: document, source: .device)
+    }
+}

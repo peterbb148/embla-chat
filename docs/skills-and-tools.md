@@ -34,7 +34,8 @@ access, binary/image resources and installing dependencies are unsupported. The 
 not claim those capabilities because files happen to be present. Each skill/resource is
 limited to 64 KiB, metadata to 16 KiB and the top-level library to 256 entries; oversized
 input fails rather than being silently truncated. Symbolic links and path traversal are
-rejected. The normal exact tokenizer/context limit still applies. Yams 6.2.2 is locked to its verified commit in
+rejected, including a symlinked top-level Skills storage folder in either source. The normal
+exact tokenizer/context limit still applies. Yams 6.2.2 is locked to its verified commit in
 both lockfiles; its own and included LibYAML notices are bundled in the shared resources.
 
 See [the copied-skill example](../examples/skills/concise-writing/SKILL.md).
@@ -62,7 +63,9 @@ annotations are validated and encoded according to that revision. Invalid annota
 are excluded with visible warnings. Saved enabled names remain visible and can be disabled
 even if discovery fails or a server no longer lists them. A response is bounded to 128 KiB; discovery is limited
 to 64 tools and 16 cursor pages. Unsupported result types/capabilities, malformed responses,
-HTTP/protocol errors and actual tool errors fail clearly. SSE accepts LF, CRLF and CR line endings and rejects malformed UTF-8
+HTTP/protocol errors and actual tool errors fail clearly. Completed tool results require a
+content-block array with typed payloads and a boolean isError flag when present; malformed
+results do not continue the model loop. SSE accepts LF, CRLF and CR line endings and rejects malformed UTF-8
 instead of inserting replacement characters. JSON-RPC failures retain their
 code, message and data, including valid protocol errors carried by non-200 HTTP responses. Corrupt saved settings are not
 replaced by an empty tool-free configuration or overwritten automatically.
@@ -161,7 +164,7 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 127 presentation
+from opt-in actual-model/public-server tests. The current suite reports 128 presentation
 and 34 core tests; five actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was

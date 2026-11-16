@@ -63,6 +63,15 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {"jsonrpc": "2.0", "id": request["id"],
                                "error": {"code": -32601, "message": "Fixture method not found"}})
             return
+        if request["method"] == "tools/call":
+            if self.path == "/missing-content":
+                result.pop("content")
+            elif self.path == "/bad-content":
+                result["content"] = "not content blocks"
+            elif self.path == "/bad-text":
+                result["content"] = [{"type": "text", "text": 42}]
+            elif self.path == "/bad-error-flag":
+                result["isError"] = "true"
         response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
         if self.path == "/wrong-id":
             response["id"] = "not-the-request-id"

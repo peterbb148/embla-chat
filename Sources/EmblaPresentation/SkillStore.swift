@@ -92,12 +92,22 @@ actor SkillStore {
         return try result.get()
     }
 
+    /// Apply before either source is enumerated, including the Skills folder under a cloud root.
+    static func validateRoot(_ root: URL) throws {
+        let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
+            throw SkillFailure.invalid(
+                "The Skills storage root must be a real folder, not a symbolic link.")
+        }
+    }
+
     private func withRoot<T>(_ source: QuickActionSource, _ action: (URL) throws -> T) throws -> T {
         try Task.checkCancellation()
         switch source {
         case .device:
             try FileManager.default.createDirectory(
                 at: localRoot, withIntermediateDirectories: true)
+            try Self.validateRoot(localRoot)
             var root = localRoot
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
@@ -117,11 +127,14 @@ actor SkillStore {
                 throw CloudConversationError.permission
             }
             defer { root.stopAccessingSecurityScopedResource() }
+            try Self.validateRoot(root)
             let values = try root.resourceValues(forKeys: [.isDirectoryKey, .isUbiquitousItemKey])
             guard root.lastPathComponent == "EmblaChat", values.isDirectory == true,
                 values.isUbiquitousItem == true
             else { throw CloudConversationError.notICloudFolder }
-            return try action(root.appendingPathComponent("Skills", isDirectory: true))
+            let skills = root.appendingPathComponent("Skills", isDirectory: true)
+            try Self.validateRoot(skills)
+            return try action(skills)
         }
     }
 }
