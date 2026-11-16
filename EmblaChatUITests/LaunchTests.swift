@@ -285,13 +285,15 @@ final class LaunchTests: XCTestCase {
     @MainActor
     func testSkillsAndMCPConfigurationStayExplicitAndDoNotConnectAutomatically() throws {
         let app = try launchCleanChat()
-        app.buttons["Choose skill"].tap()
+        XCTAssertFalse(app.buttons["Choose skill"].exists)
+        app.buttons["Chat history"].tap()
+        app.buttons["Settings"].tap()
+        app.buttons["Manage skills"].tap()
         XCTAssertTrue(app.buttons["Reload skills"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["selected-skill"].exists)
         XCTAssertEqual(app.staticTexts["selected-skill"].label, "None")
-        app.buttons["Done"].tap()
-        app.buttons["Chat history"].tap()
-        app.buttons["Settings"].tap()
+        app.buttons["Reload skills"].tap()
+        app.navigationBars["Skills"].buttons["Settings"].tap()
         app.buttons["MCP Servers"].tap()
         app.buttons["Add Time.Now example"].tap()
         let name = app.textFields["mcp-name"]
