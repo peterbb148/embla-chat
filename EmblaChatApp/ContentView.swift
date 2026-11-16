@@ -362,7 +362,6 @@ struct ContentView: View {
                 .frame(width: min(geometry.size.width * 0.86, 360))
                 .frame(maxHeight: .infinity)
                 .background(Color(uiColor: .systemBackground))
-                .accessibilityIdentifier("chat-sidebar")
             }
         }
     }

@@ -87,9 +87,7 @@ final class LaunchTests: XCTestCase {
         composer.tap()
         composer.typeText("Sidebar draft")
         app.buttons["Chat history"].tap()
-        app.buttons.matching(
-            NSPredicate(format: "identifier == %@ AND label == %@", "chat-sidebar", "New Chat")
-        ).firstMatch.tap()
+        app.buttons["sidebar-new-chat"].tap()
         XCTAssertFalse(app.alerts["Start a new chat?"].exists)
         expectation(for: cleared, evaluatedWith: composer)
         waitForExpectations(timeout: 10)
