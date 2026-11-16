@@ -191,25 +191,35 @@ private struct MCPServerEditor: View {
                     Button("Connect and discover tools") { model.tools.discover(initial.id) }
                         .disabled(model.tools.connecting != nil)
                     if model.tools.connecting == initial.id { ProgressView("Discovering tools…") }
-                    ForEach(model.tools.discovered[initial.id] ?? []) { tool in
+                    ForEach(model.tools.visibleToolNames(for: initial.id), id: \.self) { toolName in
                         Toggle(
                             isOn: Binding(
                                 get: {
                                     model.tools.servers.first(where: { $0.id == initial.id })?
-                                        .enabledTools.contains(tool.name) == true
+                                        .enabledTools.contains(toolName) == true
                                 },
                                 set: { enabled in
                                     do {
                                         try model.tools.setEnabled(
-                                            enabled, tool: tool.name, serverID: initial.id)
+                                            enabled, tool: toolName, serverID: initial.id)
                                         model.toolConfigurationChanged()
                                     } catch { self.error = error.localizedDescription }
                                 }
                             )
                         ) {
                             VStack(alignment: .leading) {
-                                Text(tool.name)
-                                Text(tool.description).font(.caption).foregroundStyle(.secondary)
+                                Text(toolName)
+                                if let tool = model.tools.discovered[initial.id]?.first(where: {
+                                    $0.name == toolName
+                                }) {
+                                    Text(tool.description).font(.caption).foregroundStyle(
+                                        .secondary)
+                                } else {
+                                    Text(
+                                        "Schema unavailable. Disable this saved permission if the tool is no longer needed."
+                                    )
+                                    .font(.caption).foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }

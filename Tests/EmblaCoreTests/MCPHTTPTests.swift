@@ -65,6 +65,24 @@ import Testing
         } catch MCPFailure.toolError(let result) {
             #expect(try result.text().contains("Synthetic failure detail"))
         }
+        let rpc = try fixture.client("rpc-error")
+        do {
+            _ = try await rpc.discover()
+            Issue.record("Expected actual JSON-RPC error")
+        } catch MCPFailure.rpc(let detail) {
+            #expect(detail["code"] == .integer(-32602))
+            #expect(detail["message"] == .string("Synthetic invalid timezone"))
+            #expect(detail["data"]?["field"] == .string("timezone"))
+        }
+        let httpRPC = try fixture.client("rpc-error-http")
+        do {
+            _ = try await httpRPC.discover()
+            Issue.record("Expected HTTP/protocol error with actual details")
+        } catch MCPFailure.httpRPC(let status, let detail) {
+            #expect(status == 400)
+            #expect(detail["message"] == .string("Synthetic invalid timezone"))
+            #expect(detail["data"]?["reason"] == .string("Fixture detail"))
+        }
     }
 
     @Test(.timeLimit(.minutes(1))) func mcpNativeClientCancellationClosesThePendingSSERequest()

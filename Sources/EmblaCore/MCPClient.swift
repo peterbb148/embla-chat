@@ -172,11 +172,28 @@ public actor MCPClient {
         let (bytes, response) = try await session.bytes(for: request)
         defer { bytes.task.cancel() }
         guard let response = response as? HTTPURLResponse else { throw MCPFailure.invalidResponse }
-        if response.statusCode == 401 || response.statusCode == 403 {
-            throw MCPFailure.authentication
-        }
-        guard response.statusCode == 200 else { throw MCPFailure.http(response.statusCode) }
         let type = response.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+        if response.statusCode != 200 {
+            if type.hasPrefix("application/json") {
+                var data = Data()
+                for try await byte in bytes {
+                    try Task.checkCancellation()
+                    guard data.count < Self.limit else { throw MCPFailure.limit }
+                    data.append(byte)
+                }
+                if let message = try? JSONDecoder().decode(ToolJSON.self, from: data),
+                    message["jsonrpc"] == .string("2.0"),
+                    message["id"] == .string(id) || message["id"] == .null,
+                    let error = message["error"], error.object != nil
+                {
+                    throw MCPFailure.httpRPC(response.statusCode, error)
+                }
+            }
+            if response.statusCode == 401 || response.statusCode == 403 {
+                throw MCPFailure.authentication
+            }
+            throw MCPFailure.http(response.statusCode)
+        }
         if type.hasPrefix("application/json") {
             var data = Data()
             for try await byte in bytes {
@@ -223,7 +240,7 @@ public actor MCPClient {
             throw MCPFailure.invalidResponse
         }
         if let error = message["error"] {
-            throw MCPFailure.rpc(error["code"] ?? .null)
+            throw MCPFailure.rpc(error)
         }
         guard let result = message["result"], result["resultType"] == .string("complete") else {
             throw MCPFailure.invalidResponse
@@ -295,19 +312,31 @@ struct MCPParameterHeader: Sendable, Equatable {
         case ("string", .string(let string)): return string
         case ("boolean", .bool(let bool)): return bool ? "true" : "false"
         case ("integer", .number(let number)):
-            guard number.isFinite, number.rounded() == number,
-                abs(number) <= 9_007_199_254_740_991
+            var original = number
+            var integral = Decimal()
+            NSDecimalRound(&integral, &original, 0, .plain)
+            guard !number.isNaN, integral == number,
+                abs(number) <= Decimal(9_007_199_254_740_991)
             else { throw MCPFailure.invalidHeaders }
-            return String(format: "%.0f", locale: Locale(identifier: "en_US_POSIX"), number)
+            return NSDecimalNumber(decimal: number).stringValue
+        case ("integer", .integer(let number)):
+            guard (-9_007_199_254_740_991...9_007_199_254_740_991).contains(number) else {
+                throw MCPFailure.invalidHeaders
+            }
+            return String(number)
+        case ("integer", .unsignedInteger(let number)):
+            guard number <= 9_007_199_254_740_991 else { throw MCPFailure.invalidHeaders }
+            return String(number)
         default: throw MCPFailure.invalidHeaders
         }
     }
 }
 
 public enum MCPFailure: Error, LocalizedError, Sendable {
-    case endpoint, credential, authentication, toolsUnavailable, invalidResponse, invalidHeaders,
+    case endpoint, credential, credentialUnavailable, authentication, toolsUnavailable,
+        invalidResponse, invalidHeaders,
         limit
-    case http(Int), rpc(ToolJSON), toolError(ToolJSON)
+    case http(Int), rpc(ToolJSON), httpRPC(Int, ToolJSON), toolError(ToolJSON)
 
     public var errorDescription: String? {
         switch self {
@@ -315,6 +344,9 @@ public enum MCPFailure: Error, LocalizedError, Sendable {
             return
                 "Use an HTTPS MCP endpoint without credentials, query or fragment. HTTP is allowed only on loopback for local testing."
         case .credential: return "The bearer credential contains invalid header characters."
+        case .credentialUnavailable:
+            return
+                "The device Keychain could not read or update this server's token. Unlock the device and check its credential in Settings."
         case .authentication:
             return
                 "The MCP server requires authorization. Check its token in Settings; browser OAuth sign-in is not supported."
@@ -329,6 +361,9 @@ public enum MCPFailure: Error, LocalizedError, Sendable {
             return "The MCP server returned HTTP \(code). No result was substituted."
         case .rpc(let code):
             return "The MCP server returned a protocol error (\((try? code.text()) ?? "unknown"))."
+        case .httpRPC(let status, let error):
+            return
+                "The MCP server returned HTTP \(status): \((try? error.text()) ?? "unreadable protocol error")."
         case .toolError:
             return
                 "The MCP tool reported an execution error. Its returned details are retained in the transcript."

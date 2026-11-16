@@ -3,6 +3,35 @@ import Testing
 
 @testable import EmblaCore
 
+@Test func toolJSONPreservesLargeIntegerIDsAndRejectsUnsupportedIntegerRanges() throws {
+    for raw in [
+        "9007199254740993", "9223372036854775807", "18446744073709551615", "-9223372036854775808",
+    ] {
+        let data = Data(raw.utf8)
+        let value = try JSONDecoder().decode(ToolJSON.self, from: data)
+        #expect(try value.text() == raw)
+    }
+    for raw in ["18446744073709551616", "-9223372036854775809"] {
+        #expect(throws: (any Error).self) {
+            try JSONDecoder().decode(ToolJSON.self, from: Data(raw.utf8))
+        }
+    }
+    let decimal = try JSONDecoder().decode(ToolJSON.self, from: Data("1234.567890123456789".utf8))
+    #expect(try decimal.text() == "1234.567890123456789")
+    let spec = ModelToolSpecification(
+        server: "test", name: "record", description: "Fixture",
+        inputSchema: .object([
+            "type": .string("object"),
+            "properties": .object(["id": .object(["type": .string("integer")])]),
+        ]))
+    let call =
+        "<tool_call>\n<function=test__record>\n<parameter=id>\n9007199254740993\n</parameter>\n</function>\n</tool_call>"
+    #expect(
+        try ModelToolResponse.parse(call, finishReason: "stop", tools: [spec])
+            == .call(
+                server: "test", name: "record", arguments: ["id": .integer(9_007_199_254_740_993)]))
+}
+
 @Test func strictToolProtocolUsesNativeCallsAndRejectsPartialOrUnknownRequests() throws {
     let tool = ModelToolSpecification(
         server: "weather", name: "now", description: "Weather",

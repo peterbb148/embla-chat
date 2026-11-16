@@ -3,7 +3,7 @@ import Foundation
 /// JSON data carried by tool schemas, arguments and results; never executable source.
 public enum ToolJSON: Codable, Sendable, Equatable {
     case object([String: ToolJSON]), array([ToolJSON]), string(String)
-    case number(Double), bool(Bool), null
+    case integer(Int64), unsignedInteger(UInt64), number(Decimal), bool(Bool), null
 
     public init(from decoder: any Decoder) throws {
         let value = try decoder.singleValueContainer()
@@ -13,7 +13,19 @@ public enum ToolJSON: Codable, Sendable, Equatable {
             self = .bool(x)
         } else if let x = try? value.decode(String.self) {
             self = .string(x)
-        } else if let x = try? value.decode(Double.self) {
+        } else if let x = try? value.decode(Int64.self) {
+            self = .integer(x)
+        } else if let x = try? value.decode(UInt64.self) {
+            self = .unsignedInteger(x)
+        } else if let x = try? value.decode(Decimal.self) {
+            var original = x
+            var integral = Decimal()
+            NSDecimalRound(&integral, &original, 0, .plain)
+            guard !x.isNaN, x != integral else {
+                throw DecodingError.dataCorruptedError(
+                    in: value,
+                    debugDescription: "JSON integer exceeds the supported exact 64-bit range.")
+            }
             self = .number(x)
         } else if let x = try? value.decode([String: ToolJSON].self) {
             self = .object(x)
@@ -29,6 +41,8 @@ public enum ToolJSON: Codable, Sendable, Equatable {
         case .array(let x): try value.encode(x)
         case .string(let x): try value.encode(x)
         case .number(let x): try value.encode(x)
+        case .integer(let x): try value.encode(x)
+        case .unsignedInteger(let x): try value.encode(x)
         case .bool(let x): try value.encode(x)
         case .null: try value.encodeNil()
         }

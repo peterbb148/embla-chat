@@ -35,6 +35,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        if self.path in {"/rpc-error", "/rpc-error-http"}:
+            status = 400 if self.path == "/rpc-error-http" else 200
+            self.respond(status, {"jsonrpc": "2.0", "id": request["id"], "error": {
+                "code": -32602, "message": "Synthetic invalid timezone",
+                "data": {"field": "timezone", "reason": "Fixture detail"},
+            }})
+            return
         if request["method"] == "server/discover":
             result = {"capabilities": {"tools": {}}, "resultType": "complete"}
         elif request["method"] == "tools/list":

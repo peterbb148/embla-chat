@@ -49,16 +49,22 @@ Redirects are rejected, and the client has no cookie jar or shared credential st
 Credentials/query strings in endpoints are not supported. Name, endpoint and selected
 tool names are stored in excluded-from-backup device settings, separately from chat and
 skill files. Tokens use non-synchronizing, When-Unlocked-This-Device-Only Keychain items;
-they never enter a model prompt or portable document.
+the app does not add credentials to model prompts or portable documents. Credentials are
+bound to the exact endpoint as well as the registration ID, preventing a failed settings
+save from supplying a replacement endpoint’s token to the previous destination. Removing
+a registration clears its endpoint-specific Keychain entries.
 
 The first implementation explicitly supports
 [MCP 2026-07-28 Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http),
 with per-request version/capability metadata and mirrored headers, `server/discover`, paged
 `tools/list`, `tools/call`, JSON responses and request-scoped SSE. Parameter-header schema
 annotations are validated and encoded according to that revision. Invalid annotated tools
-are excluded with visible warnings. A response is bounded to 128 KiB; discovery is limited
+are excluded with visible warnings. Saved enabled names remain visible and can be disabled
+even if discovery fails or a server no longer lists them. A response is bounded to 128 KiB; discovery is limited
 to 64 tools and 16 cursor pages. Unsupported result types/capabilities, malformed responses,
-HTTP/protocol errors and actual tool errors fail clearly.
+HTTP/protocol errors and actual tool errors fail clearly. JSON-RPC failures retain their
+code, message and data, including valid protocol errors carried by non-200 HTTP responses. Corrupt saved settings are not
+replaced by an empty tool-free configuration or overwritten automatically.
 
 The official Swift SDK currently documents an older protocol revision; it is not assumed
 to implement the changed 2026 stateless protocol. This client implements the explicitly
@@ -102,6 +108,11 @@ Europe/Copenhagen
 </tool_call>
 ```
 
+JSON integer arguments/results retain signed/unsigned 64-bit values exactly, including IDs
+beyond the exact Double range. Out-of-range integers fail rather than round; fractional
+values use Foundation Decimal’s supported precision. MCP integer parameter headers retain
+the specification’s narrower safe-integer bound.
+
 Function names map exactly to a captured server/tool catalog; they are not inferred from
 prose. String parameters use the checkpoint's plain-text convention; other parameter values
 must be JSON. Plain final answers need no JSON envelope. Unknown/multiple/incomplete calls,
@@ -135,8 +146,8 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 122 presentation
-and 28 core tests; five actual-model cases are opt-in and skipped by default. All ten
+from opt-in actual-model/public-server tests. The current suite reports 126 presentation
+and 29 core tests; five actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
 created. App-only UI screenshots are retained in the result bundle. Final hosted checks,
