@@ -138,7 +138,7 @@ struct MCPSettingsView: View {
                 }
             }
         }
-        .navigationTitle("MCP servers")
+        .navigationTitle("MCP Servers")
         .disabled(model.busy)
         .sheet(item: $newServer) { server in
             NavigationStack { MCPServerEditor(model: model, initial: server) }

@@ -621,8 +621,8 @@ private struct ModelSettingsView: View {
                         QuickActionSettingsView(actions: actions, cloud: model.cloud)
                     }
                 }
-                Section("Skills and tools") {
-                    NavigationLink("MCP servers") { MCPSettingsView(model: model) }
+                Section("MCP Servers") {
+                    NavigationLink("MCP Servers") { MCPSettingsView(model: model) }
                     Text("Choose skills with the sparkle button beside the composer.")
                         .font(.caption).foregroundStyle(.secondary)
                 }

@@ -1,5 +1,6 @@
 # Skills and MCP tools
 
+Open **Settings → MCP Servers** to manage server connections.
 Embla keeps model inference on-device. A user-selected skill supplies instructions to the
 local model; registered, enabled MCP tools can send arguments to a configured server.
 These are distinct permissions. Copying a skill never installs software, starts a server or
