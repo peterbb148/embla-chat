@@ -282,6 +282,7 @@ private struct MCPRegistryView: View {
     let model: LocalInferenceModel
     @State private var client = MCPRegistryClient()
     @State private var request = Request()
+    @State private var completedRequest: Request?
     @State private var servers: [MCPRegistryServer] = []
     @State private var nextCursor: String?
     @State private var loading = true
@@ -349,7 +350,7 @@ private struct MCPRegistryView: View {
     }
 
     @MainActor private func load(_ current: Request) async {
-        guard !Task.isCancelled, request == current else { return }
+        guard !Task.isCancelled, request == current, completedRequest != current else { return }
         loading = true
         error = nil
         if current.cursor == nil { servers = []; nextCursor = nil }
@@ -373,6 +374,7 @@ private struct MCPRegistryView: View {
                 servers = page.servers
             }
             nextCursor = page.nextCursor
+            completedRequest = current
         } catch {
             guard !Task.isCancelled, request == current else { return }
             self.error = error.localizedDescription

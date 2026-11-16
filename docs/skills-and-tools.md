@@ -255,3 +255,5 @@ library-ID questions. Answers are compared with actual returned clock values and
 identifiers, and saved transcripts are checked. Synthetic catalog fixtures separately cover
 latest/active filtering, unsupported connections, publisher identity, opaque pagination,
 HTTP errors and malformed responses. Exact live run/review/merge evidence belongs in #61.
+The clock reply also added an incorrect unrequested weekday; #70 tracks investigation of
+that answer-quality defect. Requested-field validation is not proof of every generated fact.
