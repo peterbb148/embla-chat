@@ -72,6 +72,8 @@ class Handler(BaseHTTPRequestHandler):
                 result["content"] = [{"type": "text", "text": 42}]
             elif self.path == "/bad-error-flag":
                 result["isError"] = "true"
+            elif self.path == "/numeric-overflow":
+                result["structuredContent"]["number"] = "fixture-excess-precision"
         response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
         if self.path == "/wrong-id":
             response["id"] = "not-the-request-id"
@@ -105,6 +107,9 @@ class Handler(BaseHTTPRequestHandler):
     def respond(self, status, value):
         """Write a complete JSON response, closing each synthetic request."""
         data = json.dumps(value).encode()
+        if self.path == "/numeric-overflow":
+            data = data.replace(b'"fixture-excess-precision"',
+                                b'0.1234567890123456789012345678901234567890123456789012345')
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))

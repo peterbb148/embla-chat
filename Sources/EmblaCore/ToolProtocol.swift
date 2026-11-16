@@ -48,6 +48,81 @@ public enum ToolJSON: Codable, Sendable, Equatable {
         }
     }
 
+    /// Decode untrusted wire JSON, rejecting fractional precision loss before using any value.
+    public static func decode(_ data: Data) throws -> Self {
+        let bytes = Array(data)
+        guard String(data: data, encoding: .utf8) != nil, !bytes.contains(0) else {
+            throw ToolProtocolError.invalidResponse
+        }
+        let value: Self
+        do { value = try JSONDecoder().decode(Self.self, from: data) } catch {
+            throw ToolProtocolError.invalidResponse
+        }
+        var index = 0
+        var quoted = false
+        var escaped = false
+        while index < bytes.count {
+            let byte = bytes[index]
+            if quoted {
+                if escaped {
+                    escaped = false
+                } else if byte == 92 {
+                    escaped = true
+                } else if byte == 34 {
+                    quoted = false
+                }
+                index += 1
+            } else if byte == 34 {
+                quoted = true
+                index += 1
+            } else if byte == 45 || (48...57).contains(byte) {
+                let start = index
+                while index < bytes.count,
+                    (48...57).contains(bytes[index])
+                        || [45, 43, 46, 69, 101].contains(bytes[index])
+                { index += 1 }
+                let raw = String(decoding: bytes[start..<index], as: UTF8.self)
+                guard let number = Decimal(string: raw, locale: Locale(identifier: "en_US_POSIX")),
+                    !number.isNaN, let original = canonicalNumber(raw),
+                    original == canonicalNumber(NSDecimalNumber(decimal: number).stringValue)
+                else { throw ToolProtocolError.unsupportedNumber }
+            } else {
+                index += 1
+            }
+        }
+        return value
+    }
+
+    /// Compare numeric lexemes by exact digits/exponent, without floating-point conversion.
+    private static func canonicalNumber(_ raw: String) -> String? {
+        let components = raw.lowercased().split(separator: "e", omittingEmptySubsequences: false)
+        guard (1...2).contains(components.count) else { return nil }
+        let exponent: Int
+        if components.count == 2 {
+            guard let parsed = Int(components[1]) else { return nil }
+            exponent = parsed
+        } else {
+            exponent = 0
+        }
+        let negative = components[0].hasPrefix("-")
+        let mantissa = negative ? components[0].dropFirst() : components[0][...]
+        let parts = mantissa.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...2).contains(parts.count) else { return nil }
+        var digits = Array(parts.joined().utf8.drop(while: { $0 == 48 }))
+        guard !digits.isEmpty else { return "0" }
+        let (initial, overflow) = exponent.subtractingReportingOverflow(
+            parts.count == 2 ? parts[1].count : 0)
+        guard !overflow else { return nil }
+        var scale = initial
+        while digits.last == 48 {
+            digits.removeLast()
+            let (next, overflow) = scale.addingReportingOverflow(1)
+            guard !overflow else { return nil }
+            scale = next
+        }
+        return (negative ? "-" : "") + String(decoding: digits, as: UTF8.self) + "e" + String(scale)
+    }
+
     public subscript(_ key: String) -> ToolJSON? {
         guard case .object(let values) = self else { return nil }
         return values[key]
@@ -130,10 +205,7 @@ public enum ModelToolResponse: Sendable, Equatable {
             if tool.inputSchema["properties"]?[name]?["type"] == .string("string") {
                 arguments[name] = .string(raw)
             } else {
-                guard let data = raw.data(using: .utf8),
-                    let value = try? JSONDecoder().decode(ToolJSON.self, from: data)
-                else { throw ToolProtocolError.invalidResponse }
-                arguments[name] = value
+                arguments[name] = try ToolJSON.decode(Data(raw.utf8))
             }
             whitespace()
         }
@@ -208,7 +280,7 @@ public struct ModelToolSpecification: Codable, Sendable, Equatable {
 }
 
 public enum ToolProtocolError: Error, LocalizedError, Sendable {
-    case invalidResponse, invalidArguments, loopLimit
+    case invalidResponse, invalidArguments, unsupportedNumber, loopLimit
     case unsupportedSchema(String)
 
     public var errorDescription: String? {
@@ -216,6 +288,8 @@ public enum ToolProtocolError: Error, LocalizedError, Sendable {
         case .invalidResponse:
             return
                 "The model did not produce a complete valid tool request or answer. No request was inferred."
+        case .unsupportedNumber:
+            return "A tool JSON number exceeds the supported exact precision. No value was rounded."
         case .invalidArguments:
             return "The tool arguments or schema are invalid. No tool was executed."
         case .unsupportedSchema(let keyword):

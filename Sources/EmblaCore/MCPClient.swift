@@ -199,7 +199,7 @@ public actor MCPClient {
                     guard data.count < Self.limit else { throw MCPFailure.limit }
                     data.append(byte)
                 }
-                if let message = try? JSONDecoder().decode(ToolJSON.self, from: data),
+                if let message = try? Self.decode(data),
                     message["jsonrpc"] == .string("2.0"),
                     message["id"] == .string(id) || message["id"] == .null,
                     let error = message["error"], error.object != nil
@@ -244,7 +244,7 @@ public actor MCPClient {
             if text.isEmpty {
                 if !event.isEmpty {
                     let data = Data(event.joined(separator: "\n").utf8)
-                    let message = try JSONDecoder().decode(ToolJSON.self, from: data)
+                    let message = try Self.decode(data)
                     if message["id"] != nil { return try Self.result(data, id: id) }
                     guard message["jsonrpc"] == .string("2.0"),
                         message["method"]?.string?.hasPrefix("notifications/") == true
@@ -260,8 +260,12 @@ public actor MCPClient {
         throw MCPFailure.invalidResponse
     }
 
+    private static func decode(_ data: Data) throws -> ToolJSON {
+        do { return try ToolJSON.decode(data) } catch { throw MCPFailure.invalidResponse }
+    }
+
     private static func result(_ data: Data, id: String) throws -> ToolJSON {
-        let message = try JSONDecoder().decode(ToolJSON.self, from: data)
+        let message = try Self.decode(data)
         guard message["jsonrpc"] == .string("2.0"), message["id"] == .string(id) else {
             throw MCPFailure.invalidResponse
         }

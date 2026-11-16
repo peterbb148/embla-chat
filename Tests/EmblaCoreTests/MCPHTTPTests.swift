@@ -56,7 +56,9 @@ import Testing
             let client = try fixture.client(path)
             await #expect(throws: MCPFailure.self) { try await client.discover() }
         }
-        for path in ["missing-content", "bad-content", "bad-text", "bad-error-flag"] {
+        for path in [
+            "missing-content", "bad-content", "bad-text", "bad-error-flag", "numeric-overflow",
+        ] {
             let client = try fixture.client(path)
             let tool = try #require(try await client.discover().tools.first)
             await #expect(throws: MCPFailure.self) {

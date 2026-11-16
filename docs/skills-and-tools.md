@@ -103,7 +103,8 @@ provides a trained function/parameter format. The pinned Swift runtime only expo
 roles, so Embla adapts that format in the leading system context and wraps actual results
 in `tool_response` user turns. It does not claim the upstream Swift API has native tool roles.
 Tool-enabled turns buffer output until the complete call or answer validates; ordinary
-tool-free chat retains streaming. A model request looks like:
+tool-free chat retains streaming. Stopping before validation discards the unfinished answer/call
+buffer; completed tool requests/results have already been saved. A model request looks like:
 
 ```text
 <tool_call>
@@ -117,7 +118,9 @@ Europe/Copenhagen
 
 JSON integer arguments/results retain signed/unsigned 64-bit values exactly, including IDs
 beyond the exact Double range. Out-of-range integers fail rather than round; fractional
-values use Foundation Decimal’s supported precision. MCP integer parameter headers retain
+values use Foundation Decimal’s supported precision. Untrusted JSON is checked against
+its original numeric lexemes; fractions that would round or underflow are rejected at the
+model/network boundary. Quoted digits remain ordinary string data. MCP integer parameter headers retain
 the specification’s narrower safe-integer bound. Serialized tool JSON escapes literal `<`
 with a JSON Unicode escape so server text cannot introduce runtime message boundaries or
 close the tool envelope. JSON decoding still recovers the original data. Header discovery
@@ -168,7 +171,7 @@ credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
 from opt-in actual-model/public-server tests. The current suite reports 129 presentation
-and 34 core tests; five actual-model cases are opt-in and skipped by default. All ten
+and 35 core tests; five actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
 created. App-only UI screenshots are retained in the result bundle. Final hosted checks,

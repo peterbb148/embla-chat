@@ -268,3 +268,25 @@ import Testing
         }
     }
 }
+
+@Test func untrustedToolJSONRejectsFractionalRoundingWithoutChangingQuotedDigits() throws {
+    for raw in ["0.1", "1.2300e-2", "-2.5e-9", "1234.567890123456789", "18446744073709551615"] {
+        _ = try ToolJSON.decode(Data(raw.utf8))
+    }
+    let tooPrecise = "0.1234567890123456789012345678901234567890123456789012345"
+    for raw in [tooPrecise, "{\"nested\":[" + tooPrecise + "]}"] {
+        #expect(throws: ToolProtocolError.self) { try ToolJSON.decode(Data(raw.utf8)) }
+    }
+    let quoted: ToolJSON = .object(["text": .string("\\\"" + tooPrecise + "\\\"\n" + tooPrecise)])
+    #expect(try ToolJSON.decode(JSONEncoder().encode(quoted)) == quoted)
+    let tool = ModelToolSpecification(
+        server: "fixture", name: "number", description: "",
+        inputSchema: .object([
+            "properties": .object(["value": .object(["type": .string("number")])])
+        ]))
+    let call =
+        "<tool_call>\n<function=fixture__number>\n<parameter=value>\n\(tooPrecise)\n</parameter>\n</function>\n</tool_call>"
+    #expect(throws: ToolProtocolError.self) {
+        try ModelToolResponse.parse(call, finishReason: "stop", tools: [tool])
+    }
+}
