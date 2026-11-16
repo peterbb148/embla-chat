@@ -193,6 +193,25 @@ import Testing
                 ]))
         }
     }
+    let tool = ModelToolSpecification(
+        server: "fixture", name: "union", description: "",
+        inputSchema: .object([
+            "properties": .object([
+                "value": .object(["type": .array([.string("string"), .string("null")])])
+            ])
+        ]))
+    func unionCall(_ raw: String) -> String {
+        "<tool_call>\n<function=fixture__union>\n<parameter=value>\n\(raw)\n</parameter>\n</function>\n</tool_call>"
+    }
+    #expect(
+        try ModelToolResponse.parse(unionCall("\"null\""), finishReason: "stop", tools: [tool])
+            == .call(server: "fixture", name: "union", arguments: ["value": .string("null")]))
+    #expect(
+        try ModelToolResponse.parse(unionCall("null"), finishReason: "stop", tools: [tool])
+            == .call(server: "fixture", name: "union", arguments: ["value": .null]))
+    #expect(throws: ToolProtocolError.self) {
+        try ModelToolResponse.parse(unionCall("unquoted"), finishReason: "stop", tools: [tool])
+    }
     let union: ToolJSON = .object([
         "oneOf": .array([
             .object(["type": .string("string"), "minLength": .integer(2)]),

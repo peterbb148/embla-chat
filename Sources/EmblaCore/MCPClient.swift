@@ -226,6 +226,7 @@ public actor MCPClient {
         var event: [String] = []
         var size = 0
         var afterCarriageReturn = false
+        var firstLine = true
         for try await byte in bytes {
             try Task.checkCancellation()
             size += 1
@@ -239,7 +240,11 @@ public actor MCPClient {
             guard let decoded = String(data: line, encoding: .utf8) else {
                 throw MCPFailure.invalidResponse
             }
-            let text = decoded
+            var text = decoded
+            if firstLine {
+                firstLine = false
+                if text.hasPrefix("\u{FEFF}") { text.removeFirst() }
+            }
             line.removeAll(keepingCapacity: true)
             if text.isEmpty {
                 if !event.isEmpty {

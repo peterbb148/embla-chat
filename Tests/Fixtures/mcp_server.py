@@ -77,14 +77,17 @@ class Handler(BaseHTTPRequestHandler):
         response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
         if self.path == "/wrong-id":
             response["id"] = "not-the-request-id"
-        if self.path in {"/sse", "/sse-cr", "/slow", "/invalid-utf8"}:
+        if self.path in {"/sse", "/sse-cr", "/sse-bom", "/slow", "/invalid-utf8"}:
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
             try:
-                self.wfile.write(b": fixture keep-alive\r\n\r\n")
+                if self.path == "/sse-bom":
+                    self.wfile.write(b"\xef\xbb\xbf")
+                else:
+                    self.wfile.write(b": fixture keep-alive\r\n\r\n")
                 self.wfile.flush()
                 if self.path == "/slow":
                     for _ in range(50):

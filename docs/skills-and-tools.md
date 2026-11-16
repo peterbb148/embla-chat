@@ -68,7 +68,7 @@ even if discovery fails or a server no longer lists them. A response is bounded 
 to 64 tools and 16 cursor pages. Unsupported result types/capabilities, malformed responses,
 HTTP/protocol errors and actual tool errors fail clearly. Completed tool results require a
 content-block array with typed payloads and a boolean isError flag when present; malformed
-results do not continue the model loop. SSE accepts LF, CRLF and CR line endings and rejects malformed UTF-8
+results do not continue the model loop. SSE accepts LF, CRLF and CR line endings, ignores one leading UTF-8 byte-order mark, and rejects malformed UTF-8
 instead of inserting replacement characters. JSON-RPC failures retain their
 code, message and data, including valid protocol errors carried by non-200 HTTP responses. Corrupt saved settings are not
 replaced by an empty tool-free configuration or overwritten automatically.
@@ -128,8 +128,10 @@ close the tool envelope. JSON decoding still recovers the original data. Header 
 walks schema-valued keywords only; default/const/enum/examples remain instance data.
 
 Function names map exactly to a captured server/tool catalog; they are not inferred from
-prose. String parameters use the checkpoint's plain-text convention; other parameter values
-must be JSON. Plain final answers need no JSON envelope. Unknown/multiple/incomplete calls,
+prose. Parameters declared exactly type string use the checkpoint's plain-text convention;
+all other parameter values, including union types, must be JSON. A string in a union must
+therefore be quoted (for example `"null"` differs from JSON `null`); the parser never guesses
+a string from invalid JSON. Plain final answers need no JSON envelope. Unknown/multiple/incomplete calls,
 duplicate/missing required parameters and output-limited responses fail without dispatch.
 Arguments are validated before dispatch without coercion or numeric conversion. The supported
 JSON Schema 2020-12 subset includes types (including unions), enum/const, nested properties,
