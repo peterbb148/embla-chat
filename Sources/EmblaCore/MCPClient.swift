@@ -6,14 +6,35 @@ public struct MCPServer: Codable, Sendable, Equatable, Identifiable {
     public var name: String
     public var endpoint: URL
     public var enabledTools: Set<String>
+    /// New registrations grant their first discovered catalog once; saved choices then persist.
+    public var enableToolsOnFirstDiscovery: Bool
     /// Short, stable catalog identifier; matching is exact, never inferred from a model reply.
     public var modelID: String { "mcp_" + id.uuidString.prefix(8).lowercased() }
 
-    public init(id: UUID = UUID(), name: String, endpoint: URL, enabledTools: Set<String> = []) {
+    public init(
+        id: UUID = UUID(), name: String, endpoint: URL, enabledTools: Set<String> = [],
+        enableToolsOnFirstDiscovery: Bool = true
+    ) {
         self.id = id
         self.name = name
         self.endpoint = endpoint
         self.enabledTools = enabledTools
+        self.enableToolsOnFirstDiscovery = enableToolsOnFirstDiscovery
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, endpoint, enabledTools, enableToolsOnFirstDiscovery
+    }
+
+    /// Existing installations retain their exact saved permissions rather than granting new ones.
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        endpoint = try values.decode(URL.self, forKey: .endpoint)
+        enabledTools = try values.decode(Set<String>.self, forKey: .enabledTools)
+        enableToolsOnFirstDiscovery =
+            try values.decodeIfPresent(Bool.self, forKey: .enableToolsOnFirstDiscovery) ?? false
     }
 
     public func validate() throws {

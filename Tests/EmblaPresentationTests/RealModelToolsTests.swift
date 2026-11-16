@@ -24,7 +24,10 @@ func realProductionToolLoopUsesRegisteredPublicTimeAndPersistsTheReturnedFact() 
     await workspace.waitUntilIdle()
     #expect(workspace.revision != pendingCatalogRevision)
     try #require(workspace.error == nil)
-    try workspace.setEnabled(true, tool: "get_current_time", serverID: server.id)
+    #expect(
+        workspace.servers.first?.enabledTools
+            == Set(["get_current_time", "list_timezones", "lookup_ip_time"]))
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
     let manifest = try ModelManifest.bundled()
     let store = ConversationStore(root: temporary.appendingPathComponent("Chats"))
     let tokenizer = EmblaPromptTokenizer()
@@ -132,9 +135,10 @@ func realNaturalQuestionsSelectRelevantToolsWithoutNamingThem() async throws {
     workspace.discover(server.id)
     await workspace.waitUntilIdle()
     try #require(workspace.error == nil)
-    for name in ["get_current_time", "list_timezones", "lookup_ip_time"] {
-        try workspace.setEnabled(true, tool: name, serverID: server.id)
-    }
+    #expect(
+        workspace.servers.first?.enabledTools
+            == Set(["get_current_time", "list_timezones", "lookup_ip_time"]))
+    #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
     let manifest = try ModelManifest.bundled()
     let store = ConversationStore(root: temporary.appendingPathComponent("Chats"))
     let tokenizer = EmblaPromptTokenizer()
@@ -227,6 +231,18 @@ func realNaturalQuestionsSelectRelevantToolsWithoutNamingThem() async throws {
     #expect(model.error == nil && refreshedCalls.count == calls.count + 1)
     #expect(refreshedCalls.last?.toolName == "get_current_time")
     if let call = refreshedCalls.last {
+        try assertReturnedClockTimeAppears(in: model.answer, call: call)
+    }
+    // A Send immediately after Save must not race the Settings discovery task.
+    workspace.pause()
+    workspace.discover(server.id)
+    try #require(workspace.connecting == server.id)
+    model.prompt = "What time is it in Copenhagen?"
+    model.run(); await model.waitUntilIdle()
+    let overlappingCalls = model.messages.filter { $0.toolName != nil }
+    print("SEND DURING DISCOVERY: error: \(model.error ?? "none"); answer: \(model.answer)")
+    #expect(model.error == nil && overlappingCalls.count == refreshedCalls.count + 1)
+    if let call = overlappingCalls.last {
         try assertReturnedClockTimeAppears(in: model.answer, call: call)
     }
 }

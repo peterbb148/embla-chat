@@ -46,10 +46,15 @@ See [the copied-skill example](../examples/skills/concise-writing/SKILL.md).
 
 ## MCP configuration and network boundary
 
-Settings → MCP servers configures explicit endpoints and optional bearer tokens. Save a
-server, connect/discover, then enable the desired tools. Enabled registrations reconnect on
-Send after backgrounding/restart; discovery and calls do not run merely at app launch. No server or tool is enabled by
-default. The endpoint must use HTTPS; loopback HTTP is allowed for local developer tests.
+Settings → MCP Servers configures explicit endpoints and optional bearer tokens. Saving a
+new server connects and discovers its tools, then enables all discovered tools automatically.
+Turn individual tools off afterward if needed. This initial grant is saved once; reconnects,
+refreshes and restarts preserve those choices, and older registrations keep their exact
+permissions. A changed endpoint still clears permissions. Enabled registrations (and new
+registrations awaiting their first successful discovery) reconnect on Send after restart.
+Discovery and calls do not run merely at app launch. No server is registered implicitly.
+Sending while Settings is still discovering takes ownership of connection setup under the
+Send task, so setup cannot race the submitted message and cancellation remains effective. The endpoint must use HTTPS; loopback HTTP is allowed for local developer tests.
 Redirects are rejected, and the client has no cookie jar or shared credential store.
 Credentials/query strings in endpoints are not supported. Name, endpoint and selected
 tool names are stored in excluded-from-backup device settings, separately from chat and
@@ -83,7 +88,8 @@ show an authorization error; a pasted bearer token must be obtained by the user 
 the server's supported process. It is not a substitute browser OAuth implementation.
 
 Each model-generated request is checked against the currently registered/enabled catalog.
-Enabling a registered tool grants standing authorization for automatic calls; there is no
+Adding a server grants standing authorization for its first discovered tools; manual enabling
+likewise authorizes automatic calls; there is no
 per-call approval dialog. Selecting a skill similarly authorizes supporting-file reads
 inside it. Settings describe this policy and the endpoint. Exact argument/destination
 snapshots are recorded before execution, and a changed configuration invalidates dispatch.
@@ -195,7 +201,7 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 131 presentation
+from opt-in actual-model/public-server tests. The current suite reports 134 presentation
 and 36 core tests; six actual-model cases are opt-in and skipped by default. All ten
 production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was

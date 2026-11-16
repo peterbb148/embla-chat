@@ -57,7 +57,9 @@ struct SkillsView: View {
                                     Section("Declared tools") {
                                         Text(allowed)
                                         Text(
-                                            "This metadata does not grant permissions. Enable MCP tools separately; enabled tools can run automatically."
+                                            "This metadata does not grant permissions. "
+                                                + "Register MCP servers separately; enabled "
+                                                + "tools can run automatically."
                                         )
                                         .foregroundStyle(.secondary)
                                     }
@@ -97,7 +99,11 @@ struct MCPSettingsView: View {
         List {
             Section {
                 Text(
-                    "MCP tools use the network while inference stays on this device. Enabling a registered tool authorizes automatic calls without another confirmation. The server receives arguments and connection metadata; arguments may include chat-derived information."
+                    "MCP tools use the network while inference stays on this device. "
+                        + "Adding a server enables all its discovered tools and authorizes "
+                        + "automatic calls without another confirmation. You can turn "
+                        + "individual tools off afterward. The server receives arguments and "
+                        + "connection metadata; arguments may include chat-derived information."
                 )
                 .font(.callout)
                 Text(
@@ -115,7 +121,7 @@ struct MCPSettingsView: View {
                 }
                 Button("Add MCP server") {
                     newServer = MCPServer(
-                        name: "", endpoint: URL(string: "https://example.com/mcp")!)
+                        name: "", endpoint: URL(string: "https://example.invalid/mcp")!)
                 }
                 Button("Add Time.Now example") {
                     newServer = MCPServer(
@@ -167,6 +173,7 @@ private struct MCPServerEditor: View {
                 Button("Save server") {
                     do {
                         guard let url = URL(string: endpoint) else { throw MCPFailure.endpoint }
+                        let isNew = !model.tools.servers.contains(where: { $0.id == initial.id })
                         let current =
                             model.tools.servers.first(where: { $0.id == initial.id }) ?? initial
                         try model.tools.saveServer(
@@ -177,8 +184,11 @@ private struct MCPServerEditor: View {
                         token = ""
                         error = nil
                         model.toolConfigurationChanged()
+                        if isNew { model.tools.discover(initial.id) }
                     } catch { self.error = error.localizedDescription }
                 }
+                Text("New servers connect after saving and enable all discovered tools.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let saved = model.tools.servers.first(where: { $0.id == initial.id }) {
                 Section("Connection and tools") {
@@ -219,7 +229,9 @@ private struct MCPServerEditor: View {
                         }
                     }
                     Text(
-                        "Enable the tools you want to authorize. They run without per-call confirmation and reconnect automatically when you send a message."
+                        "All tools are enabled after a new server connects. Turn off any "
+                            + "you do not want to use. Saved choices survive reconnects and "
+                            + "restarts; enabled tools run without per-call confirmation."
                     )
                     .font(.caption).foregroundStyle(.secondary)
                 }
