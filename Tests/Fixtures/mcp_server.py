@@ -59,6 +59,8 @@ class Handler(BaseHTTPRequestHandler):
                 "data": {"field": "timezone", "reason": "Fixture detail"},
             }})
             return
+        if self.path == "/paged-discovery":
+            time.sleep(0.08)
         if (self.path == "/delayed-tool" and request["method"] == "tools/call") or (
             self.path == "/delayed-discovery" and request["method"] == "server/discover"
         ):
@@ -95,6 +97,11 @@ class Handler(BaseHTTPRequestHandler):
                 result["isError"] = "true"
             elif self.path == "/numeric-overflow":
                 result["structuredContent"]["number"] = "fixture-excess-precision"
+        if self.path == "/paged-discovery" and request["method"] == "tools/list":
+            if params.get("cursor") is None:
+                result["nextCursor"] = "second-page"
+            else:
+                result["tools"][0]["name"] = "echo-second-page"
         response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
         if self.path == "/wrong-id":
             response["id"] = "not-the-request-id"

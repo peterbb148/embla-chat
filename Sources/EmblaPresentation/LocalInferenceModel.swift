@@ -123,6 +123,7 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var operationID: UUID?
     @ObservationIgnored private var pendingUnload = false
     @ObservationIgnored private var networkInterruption: String?
+    @ObservationIgnored private var savingToolSummary = false
     @ObservationIgnored private var appliedNetworkAdmission: Bool?
     @ObservationIgnored private var pendingClear = false
     @ObservationIgnored private var pendingSelection: UUID?
@@ -273,10 +274,18 @@ public final class LocalInferenceModel {
     }
 
     private func conversationMessages() -> [ConversationMessage] {
-        messages.map {
-            ConversationMessage(
-                role: $0.role, content: $0.inferenceContent,
-                reasoning: $0.reasoning.isEmpty ? nil : $0.reasoning)
+        projectedTranscript(count: messages.count)
+    }
+
+    private func projectedTranscript(count: Int, summaries: [Int: String] = [:])
+        -> [ConversationMessage]
+    {
+        messages.prefix(count).enumerated().map { index, stored in
+            var message = stored
+            if let summary = summaries[index] { message.toolResultSummary = summary }
+            return ConversationMessage(
+                role: message.role, content: message.inferenceContent,
+                reasoning: message.reasoning.isEmpty ? nil : message.reasoning)
         }
     }
 
@@ -347,7 +356,7 @@ public final class LocalInferenceModel {
         }
         appliedNetworkAdmission = admitted
         do { try tools.network.check() } catch {
-            if running && tools.requestHasNetworkDependency {
+            if (running || savingToolSummary) && tools.requestHasNetworkDependency {
                 networkInterruption = error.localizedDescription
                 stop()
             }
@@ -502,11 +511,10 @@ public final class LocalInferenceModel {
         try tools.validateRequestNetwork()
         try Task.checkCancellation()
         let configuration = tools.revision
-        try await summarizeSavedToolResults(question: input)
-        try tools.validateRequestConfiguration(configuration, using: cloud)
         let transcript = Array(conversationMessages().dropLast())
         let context = try await prepareContext(transcript: transcript)
         try Task.checkCancellation()
+        try tools.validateRequestConfiguration(configuration, using: cloud)
         if !(try tools.specifications(using: cloud)).isEmpty {
             try await generateWithTools(context: context, responseIndex: responseIndex)
             return
@@ -552,8 +560,14 @@ public final class LocalInferenceModel {
         context initialContext: [ConversationMessage], responseIndex: Int
     ) async throws {
         var context = initialContext
+        let baseCount = responseIndex
         var responseIndex = responseIndex
+        var results: [ActiveToolResult] = []
         let configuration = tools.revision
+        let instructions = try tools.instructions(using: cloud)
+        let requestContext = try tools.requestContext(using: cloud)
+        let memory = try projectContext()
+        let question = messages.prefix(baseCount).last(where: { $0.role == .user })?.text ?? ""
         for step in 0...4 {
             try Task.checkCancellation()
             try tools.validateRequestNetwork()
@@ -642,34 +656,34 @@ public final class LocalInferenceModel {
                 messages[responseIndex].state = .complete
                 try await saveChatNow()
                 try Task.checkCancellation()
-                let call = ConversationMessage(role: .assistant, content: output, reasoning: "")
-                func continuation(_ resultData: String) -> [ConversationMessage] {
-                    context + [
-                        call,
-                        ConversationMessage(
-                            role: .user, content: "<tool_response>\n" + resultData + "\n</tool_response>")
-                    ]
-                }
-                var next = continuation(data)
-                if try await session.tokenCount(messages: next) > toolInputLimit {
-                    let empty = try summarizedToolData(request: request, summary: "")
-                    let available = toolInputLimit - (try await session.tokenCount(
-                        messages: continuation(empty)))
-                    guard available >= 128 else { throw ToolSummaryError.noRoom }
-                    let summary = try await summarizeToolResult(
-                        source: messages[responseIndex].text,
-                        question: messages.last(where: { $0.role == .user })?.text ?? "",
-                        outputTokens: min(compactionPolicy.summaryTokens, available))
-                    let reduced = try summarizedToolData(request: request, summary: summary)
-                    next = continuation(reduced)
-                    guard try await session.tokenCount(messages: next) <= toolInputLimit else {
-                        throw ToolSummaryError.doesNotFit
-                    }
-                    try await saveToolSummary(summary, at: responseIndex)
-                }
+                results.append(ActiveToolResult(
+                    index: responseIndex, request: request,
+                    call: ConversationMessage(role: .assistant, content: output, reasoning: ""),
+                    rawData: data))
+                let completed = results
+                context = try await fitToolResults(
+                    indices: toolResultIndices(before: messages.count), question: question,
+                    inputLimit: toolInputLimit,
+                    build: { summaries in
+                        var planned = self.compactionPolicy.context(
+                            transcript: self.projectedTranscript(count: baseCount, summaries: summaries),
+                            state: self.compaction, projectMemory: memory, instructions: instructions,
+                            requestContext: requestContext)
+                        for result in completed {
+                            let summary = summaries[result.index]
+                                ?? self.messages[result.index].toolResultSummary
+                            let data = try summary.map {
+                                try self.summarizedToolData(request: result.request, summary: $0)
+                            } ?? result.rawData
+                            planned.append(result.call)
+                            planned.append(ConversationMessage(
+                                role: .user,
+                                content: "<tool_response>\n" + data + "\n</tool_response>"))
+                        }
+                        return planned
+                    })
                 try Task.checkCancellation()
                 try tools.validateRequestConfiguration(configuration, using: cloud)
-                context = next
                 responseIndex = messages.count
                 messages.append(ChatMessage(role: .assistant, text: "", state: .streaming))
             }
@@ -689,46 +703,65 @@ public final class LocalInferenceModel {
         ]).text()
     }
 
-    /// Recovers a previously saved oversized result after Stop, failure or restart, without a call.
-    private func summarizeSavedToolResults(question: String) async throws {
-        let instructions = try tools.instructions(using: cloud)
-        let requestContext = try tools.requestContext(using: cloud)
-        let memory = try projectContext()
-        while true {
-            let context = compactionPolicy.context(
-                transcript: Array(conversationMessages().dropLast()), state: compaction,
-                projectMemory: memory, instructions: instructions, requestContext: requestContext)
-            guard try await session.tokenCount(messages: context) > toolInputLimit else { return }
-            var candidate: Int?
-            var largest = compactionPolicy.summaryTokens
-            for index in messages.indices where index >= compaction.summarizedMessageCount {
-                let message = messages[index]
-                guard message.role == .assistant, message.toolName != nil,
-                    message.state == .complete, message.toolResultSummary == nil else { continue }
-                let count = try await session.tokenCount(messages: [
-                    ConversationMessage(role: .user, content: message.text)
-                ])
-                if count > largest { largest = count; candidate = index }
-            }
-            guard let index = candidate else { return }
-            let summary = try await summarizeToolResult(
-                source: messages[index].text, question: question,
-                outputTokens: compactionPolicy.summaryTokens)
-            var projected = messages[index]
-            projected.toolResultSummary = summary
-            let count = try await session.tokenCount(messages: [
-                ConversationMessage(role: .user, content: projected.inferenceContent)
-            ])
-            guard count < largest else { throw ToolSummaryError.doesNotFit }
-            try await saveToolSummary(summary, at: index)
+    private struct ActiveToolResult {
+        let index: Int
+        let request: ToolInvocation
+        let call: ConversationMessage
+        let rawData: String
+    }
+
+    private func toolResultIndices(before end: Int, startingAt start: Int? = nil) -> [Int] {
+        messages.indices.filter { index in
+            index >= (start ?? compaction.summarizedMessageCount) && index < end
+                && messages[index].role == .assistant && messages[index].toolName != nil
+                && messages[index].state == .complete
         }
+    }
+
+    /// Budgets all reducible results together, including earlier raw results and existing notes.
+    private func fitToolResults(
+        indices: [Int], question: String, inputLimit: Int,
+        build: ([Int: String]) throws -> [ConversationMessage]
+    ) async throws -> [ConversationMessage] {
+        try Task.checkCancellation()
+        let original = try build([:])
+        let count = try await session.tokenCount(messages: original)
+        if count <= inputLimit { return original }
+        var candidates: [(index: Int, contribution: Int)] = []
+        for index in indices {
+            try Task.checkCancellation()
+            let without = try await session.tokenCount(messages: build([index: ""]))
+            let contribution = count - without
+            if contribution > 128 { candidates.append((index, contribution)) }
+        }
+        guard !candidates.isEmpty else { throw ToolSummaryError.noRoom }
+        let empty = Dictionary(uniqueKeysWithValues: candidates.map { ($0.index, "") })
+        let fixed = try await session.tokenCount(messages: build(empty))
+        let available = inputLimit - fixed
+        guard available / candidates.count >= 128 else { throw ToolSummaryError.noRoom }
+        let share = min(compactionPolicy.summaryTokens, available / candidates.count)
+        var summaries: [Int: String] = [:]
+        for candidate in candidates {
+            try Task.checkCancellation()
+            summaries[candidate.index] = try await summarizeToolResult(
+                source: messages[candidate.index].text, question: question,
+                outputTokens: min(share, candidate.contribution - 1))
+        }
+        try Task.checkCancellation()
+        let reduced = try build(summaries)
+        guard try await session.tokenCount(messages: reduced) <= inputLimit else {
+            throw ToolSummaryError.doesNotFit
+        }
+        try await saveToolSummaries(summaries)
+        return reduced
     }
 
     private func summarizeToolResult(source: String, question: String, outputTokens: Int)
         async throws -> String
     {
+        let wasCompacting = compacting
         compacting = true
-        defer { compacting = false }
+        defer { compacting = wasCompacting }
         let session = session
         return try await ToolResultSummarizer().summarize(
             source: source, question: question, outputTokens: outputTokens,
@@ -774,10 +807,12 @@ public final class LocalInferenceModel {
     }
 
     /// Publishing follows the atomic save; Stop/navigation are honored before continuing.
-    private func saveToolSummary(_ summary: String, at index: Int) async throws {
+    private func saveToolSummaries(_ summaries: [Int: String]) async throws {
         try Task.checkCancellation()
         var updated = messages
-        updated[index].toolResultSummary = summary
+        for (index, summary) in summaries { updated[index].toolResultSummary = summary }
+        savingToolSummary = true
+        defer { savingToolSummary = false }
         replacingContext = true
         let wasRunning = running
         running = false
@@ -795,6 +830,7 @@ public final class LocalInferenceModel {
             throw error
         }
         try Task.checkCancellation()
+        if let networkInterruption { throw PresentationFailure(message: networkInterruption) }
         guard usageActive, !pendingClear, !pendingUnload else { throw CancellationError() }
     }
 
@@ -811,26 +847,57 @@ public final class LocalInferenceModel {
 
     /// Summarizes through the same serial session and atomically replaces only inference context.
     private func prepareContext(
-        transcript: [ConversationMessage], draft: String? = nil, force: Bool = false
-    ) async throws
-        -> [ConversationMessage]
-    {
+        transcript original: [ConversationMessage], draft: String? = nil, force: Bool = false
+    ) async throws -> [ConversationMessage] {
         let memory = try projectContext()
         let instructions = try tools.instructions(using: cloud)
         let requestContext = try tools.requestContext(using: cloud)
+        let transcriptCount = original.count
+        let question = draft.flatMap { $0.isEmpty ? nil : $0 }
+            ?? messages.prefix(transcriptCount).last(where: { $0.role == .user })?.text ?? ""
+        var transcript = original
         let context = compactionPolicy.context(
             transcript: transcript, state: compaction, draft: draft, projectMemory: memory,
             instructions: instructions, requestContext: requestContext)
         let inputCount = try await session.tokenCount(messages: context)
         if !force && inputCount <= compactionPolicy.triggerTokens { return context }
-        let planning =
+        func planning(_ transcript: [ConversationMessage]) -> [ConversationMessage] {
             transcript + (draft.map { [ConversationMessage(role: .user, content: $0)] } ?? [])
-        let plan: CompactionPlan
+        }
+        var plan: CompactionPlan
         do {
-            plan = try compactionPolicy.plan(transcript: planning, state: compaction)
+            plan = try compactionPolicy.plan(transcript: planning(transcript), state: compaction)
         } catch CompactionError.insufficientHistory {
-            if !force && inputCount <= toolInputLimit { return context }
-            throw CompactionError.insufficientHistory
+            if force { throw CompactionError.insufficientHistory }
+            let indices = toolResultIndices(before: transcriptCount)
+            if indices.isEmpty {
+                guard inputCount <= toolInputLimit else { throw CompactionError.insufficientHistory }
+                return context
+            }
+            return try await fitToolResults(
+                indices: indices, question: question, inputLimit: toolInputLimit,
+                build: { summaries in
+                    self.compactionPolicy.context(
+                        transcript: self.projectedTranscript(count: transcriptCount, summaries: summaries),
+                        state: self.compaction, draft: draft, projectMemory: memory,
+                        instructions: instructions, requestContext: requestContext)
+                })
+        }
+        let summaryInputLimit = compactionPolicy.contextSize - compactionPolicy.summaryTokens - 257
+        if try await session.tokenCount(messages: plan.messages) > summaryInputLimit {
+            let indices = toolResultIndices(before: plan.boundary)
+            if !indices.isEmpty {
+                _ = try await fitToolResults(
+                    indices: indices, question: question, inputLimit: summaryInputLimit,
+                    build: { summaries in
+                        try self.compactionPolicy.plan(
+                            transcript: planning(self.projectedTranscript(
+                                count: transcriptCount, summaries: summaries)), state: self.compaction
+                        ).messages
+                    })
+                transcript = projectedTranscript(count: transcriptCount)
+                plan = try compactionPolicy.plan(transcript: planning(transcript), state: compaction)
+            }
         }
         compacting = true
         status = "Compacting earlier messages…"
@@ -864,12 +931,20 @@ public final class LocalInferenceModel {
         try Task.checkCancellation()
         let candidate = try compactionPolicy.candidate(
             text: summary, finishReason: finishReason, plan: plan)
-        let compacted = compactionPolicy.context(
+        var compacted = compactionPolicy.context(
             transcript: transcript, state: candidate, draft: draft, projectMemory: memory,
             instructions: instructions, requestContext: requestContext)
-        let count = try await session.tokenCount(messages: compacted)
-        guard count + compactionPolicy.responseTokens < compactionPolicy.contextSize else {
-            throw CompactionError.summaryDoesNotFit
+        if try await session.tokenCount(messages: compacted) > toolInputLimit {
+            let indices = toolResultIndices(before: transcriptCount, startingAt: plan.boundary)
+            guard !indices.isEmpty else { throw CompactionError.summaryDoesNotFit }
+            compacted = try await fitToolResults(
+                indices: indices, question: question, inputLimit: toolInputLimit,
+                build: { summaries in
+                    self.compactionPolicy.context(
+                        transcript: self.projectedTranscript(count: transcriptCount, summaries: summaries),
+                        state: candidate, draft: draft, projectMemory: memory,
+                        instructions: instructions, requestContext: requestContext)
+                })
         }
         try Task.checkCancellation()
         if force {

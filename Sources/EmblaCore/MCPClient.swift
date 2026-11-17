@@ -142,7 +142,8 @@ public actor MCPClient {
     }
 
     public func discover() async throws -> MCPDiscovery {
-        let information = try await request("server/discover")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(timeouts.discovery))
+        let information = try await request("server/discover", deadline: deadline)
         guard information["capabilities"]?["tools"]?.object != nil else {
             throw MCPFailure.toolsUnavailable
         }
@@ -154,7 +155,7 @@ public actor MCPClient {
         repeat {
             var params: [String: ToolJSON] = [:]
             if let cursor { params["cursor"] = .string(cursor) }
-            let page = try await request("tools/list", params: params)
+            let page = try await request("tools/list", params: params, deadline: deadline)
             guard case .array(let entries) = page["tools"] else {
                 throw MCPFailure.invalidResponse
             }
@@ -221,20 +222,34 @@ public actor MCPClient {
     }
 
     private func request(
-        _ method: String, params: [String: ToolJSON] = [:], headers: [String: String] = [:]
+        _ method: String, params: [String: ToolJSON] = [:], headers: [String: String] = [:],
+        deadline sharedDeadline: ContinuousClock.Instant? = nil
     ) async throws -> ToolJSON {
-        let timeout = method == "tools/call" ? timeouts.toolCall : timeouts.discovery
-        return try await withThrowingTaskGroup(of: ToolJSON.self) { group in
-            group.addTask {
-                try await self.performRequest(method, params: params, headers: headers, timeout: timeout)
+        try Task.checkCancellation()
+        let now = ContinuousClock.now
+        let duration = method == "tools/call" ? timeouts.toolCall : timeouts.discovery
+        let deadline = sharedDeadline ?? now.advanced(by: .seconds(duration))
+        guard deadline > now else { throw MCPFailure.requestTimedOut }
+        let remaining = now.duration(to: deadline).components
+        let timeout = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
+        do {
+            return try await withThrowingTaskGroup(of: ToolJSON.self) { group in
+                group.addTask {
+                    try await self.performRequest(
+                        method, params: params, headers: headers, timeout: timeout)
+                }
+                group.addTask {
+                    try await ContinuousClock().sleep(until: deadline)
+                    throw MCPFailure.requestTimedOut
+                }
+                defer { group.cancelAll() }
+                guard let result = try await group.next() else { throw CancellationError() }
+                return result
             }
-            group.addTask {
-                try await Task.sleep(for: .seconds(timeout))
-                throw MCPFailure.requestTimedOut
-            }
-            defer { group.cancelAll() }
-            guard let result = try await group.next() else { throw CancellationError() }
-            return result
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            if (error as? URLError)?.code == .timedOut { throw MCPFailure.requestTimedOut }
+            throw error
         }
     }
 

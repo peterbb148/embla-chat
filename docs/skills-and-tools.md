@@ -216,7 +216,8 @@ instructions, schemas, project memory, rolling summary and the growing exchange.
 
 ### Long-running calls and large results (#86, #87)
 
-Discovery has a 60-second absolute deadline. A tool call has a 20-minute absolute deadline,
+Discovery shares one 60-second absolute deadline across server information and every tool
+catalog page. A tool call has a 20-minute absolute deadline,
 including response headers and the entire JSON/SSE body. Keep-alives do not extend it. The
 longer call budget accommodates research servers; Tavily’s official implementation polls
 pro/auto research for up to 15 minutes ([primary source](https://github.com/tavily-ai/tavily-mcp/blob/70d4d47f9b96539ca143c940bd3562578923d56f/src/index.ts#L788-L810)). Embla waits for the supported synchronous MCP reply;
@@ -227,14 +228,18 @@ and requires explicit retry; cancellation cannot undo remote work already starte
 Before a tool continuation, the actual tokenizer counts the full proposed prompt with a
 512-token answer reserve and 256-token headroom. If it is too large, the same local model
 summarizes the complete tool result as quoted, untrusted data. Every source character is
-processed in measured chunks; each chunk also fits its summary output reserve. Notes are
+processed in measured chunks; each chunk also fits its summary output reserve. Tokenizer
+probes grow from a bounded starting fragment and check cancellation between probes. Notes are
 carried forward across chunks, preserving relevant facts, exact identifiers, URLs and
 uncertainty. Summaries can omit details. A visible transcript notice identifies the reduction;
 the complete original result remains visible, copyable and saved.
 
 A new tool continuation accepts only a nonempty, normally stopped summary that fits its
-exact budget. Recovery of saved results commits shorter notes before ordinary history
-compaction; the full continuation must still fit before generation can start. Work is
+exact budget. The budget includes earlier results in the same tool turn and retained saved
+results, including ones smaller than the maximum summary output. History compaction checks
+its own prompt and output reserve before generation, separately from the reply budget.
+Related result projections are saved together; the full continuation must still fit before
+generation can start. Work is
 bounded to 32 chunks and at most 1536 output tokens per chunk; a continuation needs at least
 128 available summary tokens. No room, an incomplete summary, a chunk limit or a failed
 projection save is an explicit error. There is no silent text truncation or substitute
@@ -242,7 +247,8 @@ answer. Saved raw output remains available after Stop/failure/restart. A later S
 locally summarize a large completed result without re-executing it; ordinary enabled-server
 setup may still perform discovery. Committed summaries also drive subsequent context counts,
 conversation compaction and optional cloud sync. Internal summary runs do not enter the
-chat’s decode-speed average.
+chat’s decode-speed average. A network/privacy interruption during the atomic save remains
+latched even after connectivity returns: the committed notes survive, but continuation stops.
 
 See [validation and simulator scope](development.md#tool-result-continuation-validation).
 

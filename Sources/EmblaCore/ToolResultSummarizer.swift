@@ -30,7 +30,9 @@ public struct ToolResultSummarizer: Sendable {
     ) async throws -> String {
         let inputLimit = contextSize - outputTokens - headroom - 1
         guard outputTokens > 0, inputLimit > 0 else { throw ToolSummaryError.noRoom }
+        try Task.checkCancellation()
         let characters = Array(source)
+        try Task.checkCancellation()
         guard !characters.isEmpty else { throw ToolSummaryError.incomplete }
         var offset = 0
         var summary = ""
@@ -38,16 +40,33 @@ public struct ToolResultSummarizer: Sendable {
         while offset < characters.count {
             try Task.checkCancellation()
             guard chunk < maximumChunks else { throw ToolSummaryError.tooManyChunks }
-            var lower = 1
-            var upper = characters.count - offset
+            let remaining = characters.count - offset
+            var probe = min(256, remaining)
             var fits = 0
-            // Token counts can differ from character counts. Every chosen prompt is measured;
-            // character boundaries only select slices, never estimate their token budget.
+            var upper = remaining
+            // Grow bounded probes before searching the first over-budget bracket. A huge
+            // remaining source is never the starting tokenizer input.
+            while true {
+                try Task.checkCancellation()
+                let fragment = String(characters[offset..<(offset + probe)])
+                let prompt = try messages(question: question, notes: summary, fragment: fragment)
+                let tokens = try await count(prompt)
+                try Task.checkCancellation()
+                if tokens > inputLimit { upper = probe - 1; break }
+                fits = probe
+                if probe == remaining { break }
+                probe = min(remaining, probe * 2)
+            }
+            var lower = fits + 1
+            if fits == remaining { upper = fits }
             while lower <= upper {
+                try Task.checkCancellation()
                 let length = lower + (upper - lower) / 2
                 let fragment = String(characters[offset..<(offset + length)])
                 let prompt = try messages(question: question, notes: summary, fragment: fragment)
-                if try await count(prompt) <= inputLimit {
+                let tokens = try await count(prompt)
+                try Task.checkCancellation()
+                if tokens <= inputLimit {
                     fits = length
                     lower = length + 1
                 } else {
@@ -57,7 +76,9 @@ public struct ToolResultSummarizer: Sendable {
             guard fits > 0 else { throw ToolSummaryError.noRoom }
             let fragment = String(characters[offset..<(offset + fits)])
             let prompt = try messages(question: question, notes: summary, fragment: fragment)
+            try Task.checkCancellation()
             guard try await count(prompt) <= inputLimit else { throw ToolSummaryError.noRoom }
+            try Task.checkCancellation()
             chunk += 1
             let result = try await generate(prompt, outputTokens, chunk)
             try Task.checkCancellation()

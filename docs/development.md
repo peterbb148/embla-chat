@@ -252,7 +252,10 @@ system path. See [offline privacy mode](offline-privacy.md) for the guarantee an
 
 Run `swift test --force-resolved-versions` for chunk budgets, complete source coverage,
 incomplete/cancelled summaries, atomic-save failures, background/navigation races, restart
-recovery, and actual loopback JSON/SSE deadline/cancellation checks. Character tokenizers and
+recovery, multiple large results in one turn, smaller saved results that exceed the remaining
+budget, and history-compaction input budgets. Actual loopback JSON/SSE checks cover deadline
+normalization and the shared discovery deadline. A privacy interruption during an atomic
+projection save must prevent continuation even after reconnect. Character tokenizers and
 scripted generation in those tests are explicit fixtures, not model-quality evidence.
 
 The opt-in real-model recovery test uses existing verified model storage; it never downloads
@@ -265,7 +268,7 @@ swift test --force-resolved-versions \
   --filter realModelRecoversAnOversizedSavedToolResultWithSourcesWithoutANetworkCall
 ```
 
-On 2026-11-17 that actual Mac model test passed in 68.089 seconds: 18,910 source tokens became
+On 2026-11-17 that actual Mac model test passed in 67.911 seconds: 18,910 source tokens became
 47 projected tokens, raw text was preserved, and the answer retained the exact BLUE PENGUIN
 fact and source URL. This synthetic saved-result case is real tokenizer/Metal/model evidence,
 not a live Tavily result or an iPhone/simulator performance claim.

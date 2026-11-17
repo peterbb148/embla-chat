@@ -61,6 +61,21 @@ import Testing
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func discoverySharesOneAbsoluteDeadlineAcrossInformationAndCatalogPages() async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let enough = try fixture.client(
+            "paged-discovery", timeouts: .init(discovery: 2, toolCall: 2))
+        #expect(try await enough.discover().tools.count == 2)
+        let short = try fixture.client(
+            "paged-discovery", timeouts: .init(discovery: 0.2, toolCall: 2))
+        do {
+            _ = try await short.discover()
+            Issue.record("Each 80 ms RPC fits alone, but the three-RPC discovery exceeds 200 ms")
+        } catch MCPFailure.requestTimedOut {
+        } catch { Issue.record("Unexpected discovery error: \(error)") }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func toolCallCanOutliveTheShortDiscoveryDeadlineWithoutReissuingIt() async throws {
         let fixture = try HTTPFixture(); defer { fixture.stop() }
         let client = try fixture.client(
@@ -82,8 +97,8 @@ import Testing
             _ = try await discovery.discover()
             Issue.record("Delayed discovery must respect its short absolute deadline")
         } catch MCPFailure.requestTimedOut {
-            // Explicit client deadline.
-        } catch { #expect((error as? URLError)?.code == .timedOut) }
+            // Both the explicit deadline and native URLSession expiry use this error.
+        } catch { Issue.record("Unexpected timeout error: \(error)") }
         #expect(try await fixture.counts()["/delayed-discovery"]?["server/discover"] == 1)
         for path in ["delayed-tool", "progress-tool"] {
             let client = try fixture.client(path, timeouts: .init(discovery: 1, toolCall: 0.2))
@@ -92,8 +107,8 @@ import Testing
                 _ = try await client.call(tool, arguments: ["text": .string("Must expire")])
                 Issue.record("Tool request must expire even while SSE keep-alives arrive")
             } catch MCPFailure.requestTimedOut {
-                // Explicit client deadline.
-            } catch { #expect((error as? URLError)?.code == .timedOut) }
+                // Both the explicit deadline and native URLSession expiry use this error.
+            } catch { Issue.record("Unexpected timeout error: \(error)") }
             #expect(try await fixture.counts()["/" + path]?["tools/call"] == 1)
             // Discovery still works; timing out one request must not invalidate the client session.
             _ = try await client.discover()
