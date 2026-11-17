@@ -169,11 +169,17 @@ actor SkillStore {
         let text: String
         do {
             text = try withRoot(source) { root, descriptor in
-                let current = try SkillDocument.decode(
-                    readFile(
+                let read = Result {
+                    try readFile(
                         "SKILL.md", folder: skill.name, root: root, descriptor: descriptor,
-                        source: source),
-                    directoryName: skill.name)
+                        source: source)
+                }
+                let current: SkillDocument
+                if case .cloud(let bookmark) = source {
+                    current = try observeSkill(read, name: skill.name, bookmark: bookmark)
+                } else {
+                    current = try SkillDocument.decode(read.get(), directoryName: skill.name)
+                }
                 guard current == skill else { throw SkillFailure.changed }
                 let data = try readFile(
                     path, folder: skill.name, root: root, descriptor: descriptor, source: source)
@@ -209,6 +215,27 @@ actor SkillStore {
         try cache.remove(
             "resource:" + skill.name + ":" + skill.fingerprint + ":" + path,
             bookmark: bookmark)
+    }
+
+    /// Every authoritative instruction read updates future offline state, including resource reads.
+    func observeSkill(_ read: Result<Data, Error>, name: String, bookmark: Data) throws
+        -> SkillDocument
+    {
+        let previous = try previousListingForRefresh(bookmark)
+        var updated = previous
+        updated.documents[name] = nil
+        updated.errors[name] = nil
+        let entry = updated.record(read, name: name, previous: previous)
+        try cache.write(JSONEncoder().encode(updated), name: "listing", bookmark: bookmark)
+        if let document = entry.document { return document }
+        // Re-throw the actual read/parse error, never the retained cache's successful document.
+        return try SkillDocument.decode(read.get(), directoryName: name)
+    }
+
+    /// Missing/replaced directory facts invalidate metadata; transient I/O remains recoverable.
+    nonisolated func observeSkillsDirectoryFailure(_ code: Int32, bookmark: Data) throws {
+        guard [ENOENT, ENOTDIR, ELOOP].contains(code) else { return }
+        try cache.write(JSONEncoder().encode(Listing()), name: "listing", bookmark: bookmark)
     }
 
     private func readFile(
@@ -354,7 +381,11 @@ actor SkillStore {
             else { throw CloudConversationError.notICloudFolder }
             let skills = openat(
                 descriptor, "Skills", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            guard skills >= 0 else { throw Self.readFailure(errno) }
+            guard skills >= 0 else {
+                let failure = errno
+                try observeSkillsDirectoryFailure(failure, bookmark: bookmark)
+                throw Self.readFailure(failure)
+            }
             defer { close(skills) }
             try network.check()
             return try action(root.appendingPathComponent("Skills", isDirectory: true), skills)

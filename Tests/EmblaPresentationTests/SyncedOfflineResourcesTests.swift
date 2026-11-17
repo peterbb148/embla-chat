@@ -403,3 +403,56 @@ extension QuickActionStore {
         try await store.resource("retained.txt", skill: skill, source: .cachedCloud(bookmark))
     }
 }
+
+@Test func resourceInstructionObservationsUpdateOrInvalidateFutureOfflineSkills() async throws {
+    let root = try snapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bookmark = Data("synthetic instruction observation".utf8)
+    let cacheRoot = root.appendingPathComponent("Cache")
+    let store = SkillStore(
+        localRoot: root.appendingPathComponent("OffSkills"), cacheRoot: cacheRoot)
+    let oldBytes = Data("---\nname: saved-skill\ndescription: Saved.\n---\nOld instructions.".utf8)
+    let old = try await store.observeSkill(
+        .success(oldBytes), name: "saved-skill", bookmark: bookmark)
+    let newBytes = Data(
+        "---\nname: saved-skill\ndescription: Saved.\n---\nChanged instructions.".utf8)
+    let changed = try await store.observeSkill(
+        .success(newBytes), name: "saved-skill", bookmark: bookmark)
+    #expect(old.fingerprint != changed.fingerprint)
+    #expect(try await store.entries(.cachedCloud(bookmark)).first?.document == changed)
+    await #expect(throws: SkillFailure.self) {
+        try await store.resource("reference.txt", skill: old, source: .cachedCloud(bookmark))
+    }
+    let invalid = Data("---\nname: [invalid YAML\n---\nBroken replacement.".utf8)
+    await #expect(throws: (any Error).self) {
+        try await store.observeSkill(.success(invalid), name: "saved-skill", bookmark: bookmark)
+    }
+    #expect(try await store.entries(.cachedCloud(bookmark)).first?.document == nil)
+    _ = try await store.observeSkill(.success(newBytes), name: "saved-skill", bookmark: bookmark)
+    await #expect(throws: CocoaError.self) {
+        try await store.observeSkill(
+            .failure(CocoaError(.fileReadNoSuchFile)), name: "saved-skill", bookmark: bookmark)
+    }
+    #expect(try await store.entries(.cachedCloud(bookmark)).first?.document == nil)
+}
+
+@Test func confirmedSkillsDirectoryReplacementInvalidatesOnlyThatFolderSnapshot() async throws {
+    let root = try snapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = SkillStore(
+        localRoot: root.appendingPathComponent("OffSkills"),
+        cacheRoot: root.appendingPathComponent("Cache"))
+    let bookmark = Data("synthetic removed Skills directory".utf8)
+    let other = Data("different folder".utf8)
+    let bytes = Data("---\nname: saved-skill\ndescription: Saved.\n---\nValid instructions.".utf8)
+    _ = try await store.observeSkill(.success(bytes), name: "saved-skill", bookmark: bookmark)
+    _ = try await store.observeSkill(.success(bytes), name: "saved-skill", bookmark: other)
+    try store.observeSkillsDirectoryFailure(EIO, bookmark: bookmark)
+    #expect(try await store.entries(.cachedCloud(bookmark)).first?.document != nil)
+    for code in [ENOENT, ENOTDIR, ELOOP] {
+        _ = try await store.observeSkill(.success(bytes), name: "saved-skill", bookmark: bookmark)
+        try store.observeSkillsDirectoryFailure(code, bookmark: bookmark)
+        #expect(try await store.entries(.cachedCloud(bookmark)).isEmpty)
+        #expect(try await store.entries(.cachedCloud(other)).first?.document != nil)
+    }
+}
