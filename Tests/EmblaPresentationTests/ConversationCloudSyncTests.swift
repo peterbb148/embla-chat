@@ -4,11 +4,8 @@ import Testing
 @testable import EmblaPresentation
 
 private func syncSnapshot(_ text: String) -> ConversationLibrary {
-    ConversationLibrary(chats: [
-        ConversationSnapshot(
-            conversationID: UUID(), messages: [ChatMessage(role: .user, text: text)],
-            compaction: .init())
-    ])
+    ConversationLibrary(chats: [ConversationSnapshot(
+        conversationID: UUID(), messages: [ChatMessage(role: .user, text: text)], compaction: .init())])
 }
 
 /// Explicit simulated provider for synchronization policy tests; never used by the app constructor.
@@ -131,9 +128,8 @@ func failedSyncBaseSaveRetriesBeforeSyncedAndPreservesRemoteOnlyEdits(mode: Stri
     let baseline = syncSnapshot("previous shared base")
     let local = syncSnapshot("local edit")
     let remote = syncSnapshot("remote edit")
-    let provider = SyncProviderFixture(
-        .init(
-            current: mode == "upload" ? baseline : remote, uploaded: true))
+    let provider = SyncProviderFixture(.init(
+        current: mode == "upload" ? baseline : remote, uploaded: true))
     let harness = SyncHarness(local: mode == "download" ? baseline : local, provider: provider)
     var saves = 0
     var durableBase: String?
@@ -159,8 +155,7 @@ func failedSyncBaseSaveRetriesBeforeSyncedAndPreservesRemoteOnlyEdits(mode: Stri
     #expect(harness.cloud.error == nil && harness.cloud.status == "Synced with iCloud Drive.")
     let laterEdit = syncSnapshot("edit made only on another device after synchronization")
     let reopened = SyncHarness(
-        local: harness.local,
-        provider: SyncProviderFixture(.init(current: laterEdit, uploaded: true)))
+        local: harness.local, provider: SyncProviderFixture(.init(current: laterEdit, uploaded: true)))
     reopened.start(base: try #require(durableBase))
     await reopened.cloud.waitUntilIdle()
     #expect(reopened.local == laterEdit && reopened.applications == 1)
@@ -222,8 +217,7 @@ func failedCloudReplacementKeepsVisibleIdentityAndRetryDownloadsWithoutConflict(
     let model = LocalInferenceModel(
         repository: nil, manifest: try ModelManifest.bundled(),
         session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
-        chatStore: ReplacementSaveFailureStore(
-            root: root, replacementID: remote.chats[0].conversationID),
+        chatStore: ReplacementSaveFailureStore(root: root, replacementID: remote.chats[0].conversationID),
         cloud: cloud)
     model.check()
     await model.waitUntilIdle()
@@ -291,20 +285,16 @@ func unresolvedCopiesBlockAutomaticWritesEvenWhenCurrentMatchesLocal() async thr
     let local = syncSnapshot("shared current chat")
     let first = syncSnapshot("first unresolved copy")
     let second = syncSnapshot("second unresolved copy")
-    let provider = SyncProviderFixture(
-        .init(
-            current: local, conflicts: [first, second, first], uploaded: true))
+    let provider = SyncProviderFixture(.init(
+        current: local, conflicts: [first, second, first], uploaded: true))
     let harness = SyncHarness(local: local, provider: provider)
     harness.start(base: try local.fingerprint())
     await harness.cloud.waitUntilIdle()
     #expect(await provider.writes == 0)
     #expect(harness.applications == 0)
-    #expect(
-        Set(harness.cloud.choices.map(\.id))
-            == Set(
-                try [local, first, second].map {
-                    try $0.fingerprint()
-                }))
+    #expect(Set(harness.cloud.choices.map(\.id)) == Set(try [local, first, second].map {
+        try $0.fingerprint()
+    }))
     #expect(harness.cloud.choices.count == 3)
     harness.cloud.pause()
 }
@@ -425,10 +415,8 @@ func remoteReadStartedBeforeNewChatCannotRestoreTheOldConversation() async throw
     harness.start(base: try baseline.fingerprint())
     defer { harness.cloud.disable() }
     try await provider.waitForRead()
-    let reset = ConversationLibrary(chats: [
-        ConversationSnapshot(
-            conversationID: UUID(), messages: [], compaction: .init())
-    ])
+    let reset = ConversationLibrary(chats: [ConversationSnapshot(
+        conversationID: UUID(), messages: [], compaction: .init())])
     harness.local = reset
     await provider.releaseRead()
     await harness.cloud.waitUntilIdle()
@@ -439,17 +427,13 @@ func remoteReadStartedBeforeNewChatCannotRestoreTheOldConversation() async throw
 
 @Test func bothLocalAndRemoteEditsRequireExplicitConflictResolution() throws {
     let baseline = syncSnapshot("baseline")
-    let local = CloudLocalConversation(
-        snapshot: syncSnapshot("local edit"), hasDraft: false, canReplace: true)
+    let local = CloudLocalConversation(snapshot: syncSnapshot("local edit"), hasDraft: false, canReplace: true)
     let remote = CloudConversationRead(current: syncSnapshot("remote edit"))
-    #expect(
-        try CloudSyncPolicy.action(local: local, remote: remote, base: baseline.fingerprint())
-            == .conflict)
+    #expect(try CloudSyncPolicy.action(local: local, remote: remote, base: baseline.fingerprint()) == .conflict)
     let unchanged = CloudLocalConversation(snapshot: baseline, hasDraft: false, canReplace: true)
-    #expect(
-        try CloudSyncPolicy.action(local: unchanged, remote: remote, base: baseline.fingerprint())
-            == .download)
+    #expect(try CloudSyncPolicy.action(local: unchanged, remote: remote, base: baseline.fingerprint()) == .download)
 }
+
 
 /// Uses real local archive files plus an explicit provider fixture; no model is required to restore.
 @Test @MainActor
@@ -485,8 +469,7 @@ func cloudRestorationIsSavedLocallyBeforeBeingShownInTheController() async throw
 }
 
 @Test @MainActor
-func controllerNewChatDuringCloudReadSynchronizesTheResetWithoutRestoringOldMessages() async throws
-{
+func controllerNewChatDuringCloudReadSynchronizesTheResetWithoutRestoringOldMessages() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let baseline = syncSnapshot("old chat that must stay cleared")
@@ -523,8 +506,7 @@ func controllerNewChatDuringCloudReadSynchronizesTheResetWithoutRestoringOldMess
 func disabledPreferenceWithAnOldFolderBookmarkNeverOpensTheProviderOnRestore() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    var archive = ConversationArchive(
-        sequence: 1, snapshot: syncSnapshot("private local message").chats[0])
+    var archive = ConversationArchive(sequence: 1, snapshot: syncSnapshot("private local message").chats[0])
     archive.cloudFolderBookmark = Data("previously granted permission".utf8)
     try await ConversationStore(root: root).save(archive)
     let provider = SyncProviderFixture()
@@ -541,6 +523,7 @@ func disabledPreferenceWithAnOldFolderBookmarkNeverOpensTheProviderOnRestore() a
     #expect(await provider.writes == 0)
     #expect(!cloud.enabled)
 }
+
 
 private actor SyncCheckpointGate {
     private var entered = false
@@ -662,8 +645,7 @@ func checkpointQueuedDuringFailedConsentCannotEnableCloudAfterReopening() async 
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = syncSnapshot("local conversation before consent")
-    try await ConversationStore(root: root).save(
-        ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
     let provider = SyncProviderFixture()
     let cloud = ConversationCloudSync(factory: { _ in provider })
     let store = PreferenceCheckpointStore(root: root, failEnabled: true)
@@ -708,8 +690,7 @@ func optInWaitsForDurableConsentAndPendingDisablePreventsProviderAccess(
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = syncSnapshot("private until consent is saved")
-    try await ConversationStore(root: root).save(
-        ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
     let provider = SyncProviderFixture()
     let cloud = ConversationCloudSync(factory: { _ in provider })
     let store = PreferenceCheckpointStore(root: root)
@@ -751,8 +732,7 @@ func failedOptInSaveStaysOffWithoutProviderAccessAndCanBeRetried() async throws 
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let snapshot = syncSnapshot("preserve this local chat")
-    try await ConversationStore(root: root).save(
-        ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
+    try await ConversationStore(root: root).save(ConversationArchive(sequence: 1, snapshot: snapshot.chats[0]))
     let provider = SyncProviderFixture()
     let cloud = ConversationCloudSync(factory: { _ in provider })
     let store = PreferenceCheckpointStore(root: root, failEnabled: true)
@@ -795,8 +775,7 @@ private actor ResetCheckpointStore: ConversationStoring {
     func load() async throws -> ConversationArchive? { try await store.load() }
     func save(_ archive: ConversationArchive) async throws {
         try await store.save(archive)
-        let hold =
-            heldConversationID.map { archive.snapshot.conversationID == $0 }
+        let hold = heldConversationID.map { archive.snapshot.conversationID == $0 }
             ?? archive.snapshot.messages.isEmpty
         if hold { await resetGate.blockOnce() }
     }
@@ -925,7 +904,7 @@ func cloudUploadCannotQueueOldMetadataWhileResetArchiveCompletionIsPending() asy
     try await provider.waitForWrite()
     model.newChat()
     try await store.resetGate.waitForEntry()
-    #expect(!cloud.syncing)  // The old upload is invalidated before the durable reset begins.
+    #expect(!cloud.syncing) // The old upload is invalidated before the durable reset begins.
     await provider.releaseWrite()
     if !cloud.syncing { await cloud.waitUntilIdle() }
     await store.resetGate.release()
@@ -1036,6 +1015,7 @@ func providerTransferFailureStaysAnErrorRatherThanPendingConfirmation() async th
     await harness.cloud.waitUntilIdle()
 }
 
+
 @Test @MainActor
 func newChatReevaluatesPendingConflictChoicesWithoutManualRefresh() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1096,8 +1076,7 @@ func globalOptInUploadsAllChatsButNeverAnyDrafts() async throws {
     try await cloud.enable(bookmark: Data("explicit fixture consent".utf8))
     await cloud.waitUntilIdle()
     let uploaded = try #require(await provider.document.current)
-    #expect(
-        Set(uploaded.chats.map(\.conversationID)) == [first.conversationID, active.conversationID])
+    #expect(Set(uploaded.chats.map(\.conversationID)) == [first.conversationID, active.conversationID])
     let bytes = String(decoding: try uploaded.encodedDocument(), as: UTF8.self)
     #expect(!bytes.contains("PRIVATE ACTIVE DRAFT") && !bytes.contains("PRIVATE HISTORY DRAFT"))
     let saved = try #require(try await ConversationStore(root: root).load())
@@ -1140,9 +1119,7 @@ func inactiveDraftPreventsAutomaticWholeLibraryReplacement() async throws {
 }
 
 @Test(arguments: [0, 1]) @MainActor
-func olderOnConsentPausesBeforeProviderAccessUntilExpandedScopeIsConfirmed(version: Int)
-    async throws
-{
+func olderOnConsentPausesBeforeProviderAccessUntilExpandedScopeIsConfirmed(version: Int) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let source = ChatMessage(role: .user, text: "Synthetic project fact")
@@ -1155,15 +1132,13 @@ func olderOnConsentPausesBeforeProviderAccessUntilExpandedScopeIsConfirmed(versi
     try await ConversationStore(root: root).save(old)
     let provider = SyncProviderFixture()
     let cloud = ConversationCloudSync(factory: { _ in provider })
-    let model = LocalInferenceModel(
-        repository: nil, manifest: try ModelManifest.bundled(),
+    let model = LocalInferenceModel(repository: nil, manifest: try ModelManifest.bundled(),
         session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
         chatStore: ConversationStore(root: root), cloud: cloud)
     model.check(); await model.waitUntilIdle()
     let projectID = try await model.createProject(name: "Local until scope confirmed")
     try await model.moveChat(snapshot.conversationID, to: projectID)
-    try await model.saveProjectMemory(
-        projectID: projectID, text: "Synthetic project fact",
+    try await model.saveProjectMemory(projectID: projectID, text: "Synthetic project fact",
         sourceChatID: snapshot.conversationID, sourceMessageID: source.id)
     await cloud.waitUntilIdle()
     #expect(cloud.enabled && cloud.requiresScopeConsent)
@@ -1174,32 +1149,23 @@ func olderOnConsentPausesBeforeProviderAccessUntilExpandedScopeIsConfirmed(versi
     try await cloud.enable(bookmark: Data("explicit chats-and-memory consent".utf8))
     await cloud.waitUntilIdle()
     #expect(!cloud.requiresScopeConsent)
-    #expect(
-        await provider.document.current?.projects.first?.memory.first?.text
-            == "Synthetic project fact")
+    #expect(await provider.document.current?.projects.first?.memory.first?.text
+        == "Synthetic project fact")
     #expect(try await ConversationStore(root: root).load()?.cloudConsentVersion == 2)
     cloud.disable(); await cloud.waitUntilIdle()
 }
 
 @Test(arguments: ["edit", "clear", "move"]) @MainActor
-func projectEditsRecomputePendingConflictChoicesWithoutManualRefresh(operation: String) async throws
-{
+func projectEditsRecomputePendingConflictChoicesWithoutManualRefresh(operation: String) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let source = ChatMessage(role: .user, text: "Synthetic conflict source")
     let chatID = UUID()
-    let project = ChatProject(
-        name: "A",
-        memory: [
-            ProjectMemoryEntry(
-                text: "Original note",
-                sourceConversationID: chatID, sourceMessageID: source.id)
-        ])
+    let project = ChatProject(name: "A", memory: [ProjectMemoryEntry(text: "Original note",
+        sourceConversationID: chatID, sourceMessageID: source.id)])
     let other = ChatProject(name: "B")
-    var archive = ConversationArchive(
-        sequence: 1,
-        snapshot: ConversationSnapshot(
-            conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
+    var archive = ConversationArchive(sequence: 1, snapshot: ConversationSnapshot(
+        conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
     archive.projects = [project, other]
     archive.cloudEnabled = true
     archive.cloudConsentVersion = 2
@@ -1209,8 +1175,7 @@ func projectEditsRecomputePendingConflictChoicesWithoutManualRefresh(operation: 
     let provider = SyncProviderFixture(.init(current: syncSnapshot("Other device edit")))
     let cloud = ConversationCloudSync(factory: { _ in provider })
     defer { cloud.pause() }
-    let model = LocalInferenceModel(
-        repository: nil, manifest: try ModelManifest.bundled(),
+    let model = LocalInferenceModel(repository: nil, manifest: try ModelManifest.bundled(),
         session: InferenceSession { _, _ in throw InferenceError.modelNotDownloaded },
         chatStore: ConversationStore(root: root), cloud: cloud)
     model.check(); await model.waitUntilIdle(); await cloud.waitUntilIdle()
@@ -1218,8 +1183,7 @@ func projectEditsRecomputePendingConflictChoicesWithoutManualRefresh(operation: 
     let reads = await provider.reads
     switch operation {
     case "edit":
-        try await model.editProjectMemory(
-            projectID: project.id,
+        try await model.editProjectMemory(projectID: project.id,
             entryID: project.memory[0].id, text: "Explicitly edited note")
     case "clear": try await model.removeProjectMemory(projectID: project.id)
     default: try await model.moveChat(chatID, to: other.id)
