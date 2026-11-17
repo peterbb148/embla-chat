@@ -111,6 +111,9 @@ public final class ConversationCloudSync {
             ? CloudConversationError.permission.localizedDescription : nil
         status = enabled ? "Waiting to synchronize…" : "iCloud is off."
         if error != nil { status = "iCloud folder access is unavailable." }
+        if enabled, !network.snapshot.allowsRequests, error == nil {
+            status = "iCloud is paused while network access is unavailable; the setting remains on."
+        }
         if requiresScopeConsent {
             status =
                 "iCloud paused. Confirm syncing chats, project memory, settings "

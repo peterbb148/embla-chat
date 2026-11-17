@@ -46,9 +46,8 @@ final class LaunchTests: XCTestCase {
     @MainActor
     private func verifyPrivacyIndicator(dark: Bool) throws {
         let app = XCUIApplication()
-        app.launchArguments = [
-            "--network-policy-fixture", "-AppleInterfaceStyle", dark ? "Dark" : "Light",
-        ]
+        app.launchArguments = ["--network-policy-fixture"]
+        if dark { app.launchArguments.append("--network-dark-appearance") }
         app.launch()
         let status = app.staticTexts["connectivity-status"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))

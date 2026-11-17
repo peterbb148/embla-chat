@@ -64,6 +64,7 @@ import EmblaCore
     // Invalid bookmark is intentional: any attempted provider access would fail the test.
     let cloud = ConversationCloudSync(network: policy)
     cloud.restore(enabled: true, bookmark: Data([1, 2, 3]), base: nil, consentVersion: 2)
+    #expect(cloud.status.contains("paused") && cloud.error == nil)
     cloud.connectivityChanged()
     #expect(cloud.enabled && !cloud.folderAccessReady && cloud.authorizedFolderBookmark == nil)
     let tools = ToolWorkspace(network: policy)

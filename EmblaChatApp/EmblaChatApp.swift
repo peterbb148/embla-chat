@@ -19,6 +19,11 @@ struct EmblaChatApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(network: network)
+                #if DEBUG
+                    .preferredColorScheme(
+                        ProcessInfo.processInfo.arguments.contains("--network-dark-appearance")
+                            ? .dark : nil)
+                #endif
         }
     }
 }
