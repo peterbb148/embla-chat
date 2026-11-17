@@ -541,6 +541,8 @@ public final class ToolWorkspace {
     func remoteCall(serverID: UUID, name: String, arguments: [String: ToolJSON]) async throws
         -> ToolJSON
     {
+        try Task.checkCancellation()
+        try requireSettingsReady()
         guard let server = servers.first(where: { $0.id == serverID }),
             server.enabledTools.contains(name), let client = clients[serverID],
             let tool = discovered[serverID]?.first(where: { $0.name == name })
@@ -684,6 +686,7 @@ extension ToolWorkspace {
     }
 
     private func revokeSettingsAccess() {
+        invalidateConnections()
         sharedAccess?.revoke()
         sharedAccess = nil
         shared = nil

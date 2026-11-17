@@ -290,6 +290,25 @@ private final class FailingSettingsFixture: SharedSettingsStoring, @unchecked Se
                         "text": .string("Shared key worked"),
                     ])
                 ]))
+        let cancelledCall = Task {
+            try await second.remoteCall(
+                serverID: server.id, name: "echo",
+                arguments: ["text": .string("Cancelled before dispatch")])
+        }
+        cancelledCall.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelledCall.value }
+        let beforeOff = second.revision
+        cloud.persist = {}
+        cloud.disable()
+        #expect(second.revision != beforeOff && second.discovered.isEmpty)
+        await #expect(throws: SharedSettingsError.self) {
+            try await second.remoteCall(
+                serverID: server.id, name: "echo",
+                arguments: ["text": .string("Must not leave the Off profile")])
+        }
+        cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
+        await first.reloadSettings(using: cloud)
+        await second.reloadSettings(using: cloud)
         // A restart can plan from schemas locally, with no live connection.
         let restarted = ToolWorkspace(
             configuration: secondRoot.appendingPathComponent("servers.json"),
