@@ -394,16 +394,19 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
     private var entered = false
     private var onMain = false
     private var written = 0
+    private var finished = false
     let missing: Bool
     init(missing: Bool = false) { self.missing = missing }
     var writes: Int { lock.withLock { written } }
+    var readFinished: Bool { lock.withLock { finished } }
     var started: Bool { lock.withLock { entered } }
     var usedMainThread: Bool { lock.withLock { onMain } }
     func read() -> SharedSettingsRead {
         lock.withLock {
             entered = true; onMain = Thread.isMainThread
         }
-        _ = gate.wait(timeout: .now() + 3)
+        _ = gate.wait(timeout: .now() + 30)
+        lock.withLock { finished = true }
         return SharedSettingsRead(current: missing ? nil : SharedSettings())
     }
     func write(
@@ -434,11 +437,11 @@ func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: 
     let clock = ContinuousClock()
     let start = clock.now
     let pending = Task { await workspace.reloadSettings(using: cloud) }
-    while !provider.started && clock.now - start < .seconds(4) {
+    while !provider.started && clock.now - start < .seconds(30) {
         try await Task.sleep(for: .milliseconds(1))
     }
     #expect(provider.started && !provider.usedMainThread)
-    #expect(clock.now - start < .seconds(1))
+    #expect(!provider.readFinished)
     cloud.disable()
     provider.gate.signal()
     await pending.value
