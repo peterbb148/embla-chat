@@ -22,6 +22,21 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     init(network: NetworkAccess = .shared) {
+        #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--tool-result-summary-fixture") {
+                guard let value = ProcessInfo.processInfo.environment["EMBLA_TOOL_SUMMARY_FIXTURE_ID"],
+                    let id = UUID(uuidString: value) else {
+                    fatalError("The isolated tool-summary UI fixture requires its test UUID.")
+                }
+                do {
+                    let fixture = try LocalInferenceModel.toolSummaryUIFixture(id: id, network: network)
+                    _model = State(initialValue: fixture.model)
+                    _quickActions = State(initialValue: fixture.actions)
+                    _connectivity = State(initialValue: AppConnectivity(access: network))
+                    return
+                } catch { fatalError("Could not load the isolated UI fixture: \(error)") }
+            }
+        #endif
         _model = State(initialValue: LocalInferenceModel(network: network))
         _quickActions = State(initialValue: QuickActionsModel(network: network))
         _connectivity = State(initialValue: AppConnectivity(access: network))
@@ -643,6 +658,11 @@ private struct ChatMessageRow: View, Equatable {
                         .tint(.secondary)
                         .foregroundStyle(.secondary)
                     }
+                }
+                if message.toolResultSummary != nil {
+                    Text("Summarized locally for model context. Full tool result retained below.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("tool-result-summary-notice")
                 }
                 if !message.text.isEmpty {
                     Group {

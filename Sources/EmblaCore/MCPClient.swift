@@ -104,9 +104,27 @@ public actor MCPClient {
     private let network: NetworkAccess
     private static let limit = 131_072
 
+    struct Timeouts: Sendable {
+        var discovery: TimeInterval = 60
+        var toolCall: TimeInterval = 20 * 60
+    }
+
+    private let timeouts: Timeouts
+
     public init(
         server: MCPServer, bearerToken: String? = nil, network: NetworkAccess = .shared
     ) throws {
+        try self.init(server: server, bearerToken: bearerToken, network: network, timeouts: Timeouts())
+    }
+
+    /// Internal timing injection keeps real HTTP deadline tests short; production uses fixed caps.
+    init(
+        server: MCPServer, bearerToken: String? = nil, network: NetworkAccess = .shared,
+        timeouts: Timeouts
+    ) throws {
+        precondition(timeouts.discovery.isFinite && timeouts.discovery > 0)
+        precondition(timeouts.toolCall.isFinite && timeouts.toolCall > 0)
+        self.timeouts = timeouts
         try server.validate()
         if let bearerToken, !bearerToken.utf8.allSatisfy({ (33...126).contains($0) }) {
             throw MCPFailure.credential
@@ -118,8 +136,8 @@ public actor MCPClient {
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
         configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
+        configuration.timeoutIntervalForRequest = max(timeouts.discovery, timeouts.toolCall)
+        configuration.timeoutIntervalForResource = max(timeouts.discovery, timeouts.toolCall)
         transport = NetworkTransport(configuration: configuration)
     }
 
@@ -205,6 +223,26 @@ public actor MCPClient {
     private func request(
         _ method: String, params: [String: ToolJSON] = [:], headers: [String: String] = [:]
     ) async throws -> ToolJSON {
+        let timeout = method == "tools/call" ? timeouts.toolCall : timeouts.discovery
+        return try await withThrowingTaskGroup(of: ToolJSON.self) { group in
+            group.addTask {
+                try await self.performRequest(method, params: params, headers: headers, timeout: timeout)
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw MCPFailure.requestTimedOut
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else { throw CancellationError() }
+            return result
+        }
+    }
+
+    /// The deadline covers headers and the complete JSON/SSE response, including keep-alives.
+    private func performRequest(
+        _ method: String, params: [String: ToolJSON], headers: [String: String],
+        timeout: TimeInterval
+    ) async throws -> ToolJSON {
         try Task.checkCancellation()
         let id = UUID().uuidString
         var params = params
@@ -221,6 +259,7 @@ public actor MCPClient {
         ])
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
+        request.timeoutInterval = timeout
         request.httpBody = try JSONEncoder().encode(message)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
@@ -430,7 +469,7 @@ struct MCPParameterHeader: Sendable, Equatable {
 public enum MCPFailure: Error, LocalizedError, Sendable {
     case endpoint, credential, credentialUnavailable, authentication, toolsUnavailable,
         invalidResponse, invalidHeaders,
-        limit
+        limit, requestTimedOut
     case http(Int), rpc(ToolJSON), httpRPC(Int, ToolJSON), toolError(ToolJSON)
 
     public var errorDescription: String? {
@@ -452,6 +491,8 @@ public enum MCPFailure: Error, LocalizedError, Sendable {
         case .invalidHeaders:
             return "The tool has an invalid MCP parameter-header declaration or value."
         case .limit: return "The server response exceeds the supported size or tool-list limit."
+        case .requestTimedOut:
+            return "The MCP request exceeded its time limit. Its outcome is unknown; retry explicitly if appropriate."
         case .http(let code):
             return "The MCP server returned HTTP \(code). No result was substituted."
         case .rpc(let code):

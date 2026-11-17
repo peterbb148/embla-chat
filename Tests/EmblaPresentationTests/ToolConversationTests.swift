@@ -13,23 +13,67 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     private var inputs: [[ConversationMessage]] = []
     private var holdFirst: Bool
     let replies: [String]
+    private let countCharacters: Bool
+    private var holdSummary: Bool
+    private var summaryCount = 0
+    private var summaryText: String
+    private var summaryFinish: String
+    private var generated: [(messages: [ConversationMessage], limit: Int)] = []
+    var summaryCalls: Int { lock.withLock { summaryCount } }
+    var generations: [(messages: [ConversationMessage], limit: Int)] { lock.withLock { generated } }
     var calls: Int { lock.withLock { position } }
     var contexts: [[ConversationMessage]] { lock.withLock { inputs } }
 
-    init(replies: [String], holdFirst: Bool = false) {
+    init(
+        replies: [String], holdFirst: Bool = false, countCharacters: Bool = false,
+        holdSummary: Bool = false, summaryText: String = "BLUE PENGUIN — https://example.com/fact",
+        summaryFinish: String = "stop"
+    ) {
         self.replies = replies
         self.holdFirst = holdFirst
+        self.countCharacters = countCharacters
+        self.holdSummary = holdSummary
+        self.summaryText = summaryText
+        self.summaryFinish = summaryFinish
+    }
+    func releaseSummary() { lock.withLock { holdSummary = false } }
+    func waitForSummary() async throws {
+        for _ in 0..<2_000 {
+            if summaryCalls > 0 { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw SkillFailure.invalid("Synthetic summary fixture did not start.")
     }
     func release() { lock.withLock { holdFirst = false } }
     func encode(_ messages: [ConversationMessage]) -> [Int] {
         lock.withLock { inputs.append(messages) }
-        return [1, 2]
+        return countCharacters
+            ? Array(repeating: 1, count: messages.reduce(0) { $0 + $1.content.count + 4 })
+            : [1, 2]
     }
     func reset() {}
     func generate(
         prompt: [Int], options: GenerationOptions,
         emit: @escaping @Sendable (GenerationDelta) -> Bool
     ) -> GenerationMetrics {
+        let summary = lock.withLock { () -> Bool in
+            let context = inputs.last ?? []
+            generated.append((context, options.maxTokens))
+            let isSummary = context.first?.content.hasPrefix("Summarize tool result data") == true
+            if isSummary { summaryCount += 1 }
+            return isSummary
+        }
+        if summary {
+            while lock.withLock({ holdSummary }) {
+                guard emit(.reasoning("Synthetic summary wait")) else { break }
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            let result = lock.withLock { (summaryText, summaryFinish) }
+            _ = emit(.answer(result.0))
+            return GenerationMetrics(
+                finishReason: result.1, promptTokens: 2, completionTokens: 100,
+                promptMilliseconds: 1, decodeMilliseconds: 1)
+        }
         let text = lock.withLock {
             let text = replies[min(position, replies.count - 1)]
             position += 1
@@ -63,8 +107,15 @@ private let readSkillRequest = """
     let model: LocalInferenceModel
     let workspace: ToolWorkspace
     let store: ConversationStore
+    let repository: ModelRepository
+    let summaryStore: ToolSummaryTestStore?
 
-    init(replies: [String], holdFirst: Bool = false) async throws {
+    init(
+        replies: [String], holdFirst: Bool = false, countCharacters: Bool = false,
+        resource: String = "BLUE PENGUIN", holdSummary: Bool = false,
+        summaryFinish: String = "stop", rejectSummarySaves: Bool = false,
+        pauseSummarySaves: Bool = false
+    ) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let data = Data("Synthetic tool-loop model".utf8)
         let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -82,17 +133,23 @@ private let readSkillRequest = """
                 .utf8
         )
         .write(to: skill.appendingPathComponent("SKILL.md"))
-        try Data("BLUE PENGUIN".utf8).write(to: skill.appendingPathComponent("references/fact.txt"))
+        try Data(resource.utf8).write(to: skill.appendingPathComponent("references/fact.txt"))
         workspace = ToolWorkspace(
             store: SkillStore(localRoot: root.appendingPathComponent("Skills")),
             configuration: root.appendingPathComponent("servers.json"))
-        backend = ToolBackendFixture(replies: replies, holdFirst: holdFirst)
+        backend = ToolBackendFixture(
+            replies: replies, holdFirst: holdFirst, countCharacters: countCharacters,
+            holdSummary: holdSummary, summaryFinish: summaryFinish)
         let backend = backend
         store = ConversationStore(root: root.appendingPathComponent("Chats"))
+        repository = ModelRepository(root: root.appendingPathComponent("Model"), manifest: manifest)
+        summaryStore = rejectSummarySaves || pauseSummarySaves
+            ? ToolSummaryTestStore(wrapped: store, reject: rejectSummarySaves) : nil
+        let target: any ConversationStoring
+        if let summaryStore { target = summaryStore } else { target = store }
         model = LocalInferenceModel(
-            repository: ModelRepository(
-                root: root.appendingPathComponent("Model"), manifest: manifest),
-            manifest: manifest, session: InferenceSession { _, _ in backend }, chatStore: store,
+            repository: repository,
+            manifest: manifest, session: InferenceSession { _, _ in backend }, chatStore: target,
             tools: workspace)
         model.check(); await model.waitUntilIdle()
         workspace.reloadSkills(using: model.cloud); await workspace.waitUntilIdle()
@@ -175,4 +232,163 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
     fixture.model.run(); await fixture.model.waitUntilIdle()
     #expect(fixture.backend.calls == 5 && fixture.model.error != nil)
     #expect(fixture.model.messages.filter { $0.toolName != nil }.count == 4)
+}
+
+
+private enum SummarySaveFixtureError: Error { case rejected }
+private actor ToolSummaryTestStore: ConversationStoring {
+    let wrapped: ConversationStore
+    let reject: Bool
+    private(set) var summaryWrites = 0
+    private var waiting = false
+    private var paused = true
+    private var continuation: CheckedContinuation<Void, Never>?
+    init(wrapped: ConversationStore, reject: Bool) { self.wrapped = wrapped; self.reject = reject }
+    func load() async throws -> ConversationArchive? { try await wrapped.load() }
+    func save(_ archive: ConversationArchive) async throws {
+        if archive.snapshot.messages.contains(where: { $0.toolResultSummary != nil }) {
+            summaryWrites += 1
+            if reject { throw SummarySaveFixtureError.rejected }
+            if paused {
+                waiting = true
+                await withCheckedContinuation { continuation = $0 }
+            }
+        }
+        try await wrapped.save(archive)
+    }
+    func waitForSummarySave() async throws {
+        for _ in 0..<2_000 {
+            if waiting { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        throw SkillFailure.invalid("Synthetic summary save did not start.")
+    }
+    func release() {
+        paused = false
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private let largeToolEvidence = String(
+    repeating: "Synthetic source material with exact identifiers and source URLs. ", count: 250)
+    + " BLUE PENGUIN https://example.com/fact"
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func oversizedToolResultUsesBoundedLocalChunksAndPersistsRawOutputAndSummary() async throws {
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest, "BLUE PENGUIN https://example.com/fact"],
+        countCharacters: true, resource: largeToolEvidence)
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the selected skill's fact and cite its source."
+    fixture.model.run(); await fixture.model.waitUntilIdle()
+    #expect(fixture.model.error == nil)
+    #expect(fixture.model.answer.contains("BLUE PENGUIN"))
+    #expect(fixture.backend.calls == 2 && fixture.backend.summaryCalls > 1)
+    let tool = try #require(fixture.model.messages.first(where: { $0.toolName != nil }))
+    #expect(tool.text.contains(largeToolEvidence))
+    #expect(tool.toolResultSummary?.contains("https://example.com/fact") == true)
+    #expect(tool.inferenceContent.contains("summarized locally"))
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages == fixture.model.messages)
+    #expect(fixture.model.averageDecodeTokensPerSecond == 1_000)
+    #expect(fixture.model.messages.filter { $0.generationMetrics != nil }.count == 2)
+    for generation in fixture.backend.generations {
+        let tokens = generation.messages.reduce(0) { $0 + $1.content.count + 4 }
+        #expect(tokens + generation.limit < 8_192)
+    }
+    #expect(fixture.backend.generations.last?.messages.last?.content.contains("result_summary") == true)
+    #expect(fixture.backend.generations.last?.messages.last?.content.contains(largeToolEvidence) == false)
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+func stoppedOrIncompleteToolSummaryRestartsFromSavedResultWithoutReadingTheToolAgain(_ stop: Bool)
+    async throws
+{
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest], countCharacters: true, resource: largeToolEvidence,
+        holdSummary: stop, summaryFinish: stop ? "stop" : "length")
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the fact."
+    fixture.model.run()
+    if stop {
+        try await fixture.backend.waitForSummary()
+        fixture.model.stop()
+        fixture.backend.releaseSummary()
+    }
+    await fixture.model.waitUntilIdle()
+    let original = try #require(try await fixture.store.load())
+    let raw = try #require(original.snapshot.messages.first(where: { $0.toolName != nil }))
+    #expect(raw.text.contains(largeToolEvidence) && raw.toolResultSummary == nil)
+    try FileManager.default.removeItem(
+        at: fixture.root.appendingPathComponent("Skills/example-skill/references/fact.txt"))
+    let backend = ToolBackendFixture(replies: ["BLUE PENGUIN"], countCharacters: true)
+    let reopened = LocalInferenceModel(
+        repository: fixture.repository, manifest: try #require(fixture.model.manifest),
+        session: InferenceSession { _, _ in backend }, chatStore: fixture.store, tools: fixture.workspace)
+    reopened.check(); await reopened.waitUntilIdle()
+    reopened.prompt = "Continue using the already returned result."
+    reopened.run(); await reopened.waitUntilIdle()
+    #expect(reopened.error == nil && reopened.answer == "BLUE PENGUIN")
+    #expect(backend.calls == 1 && backend.summaryCalls > 1)
+    #expect(reopened.messages.first(where: { $0.id == raw.id })?.text == raw.text)
+    #expect(reopened.messages.first(where: { $0.id == raw.id })?.toolResultSummary != nil)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func failedToolSummarySaveDoesNotPublishAnUncommittedProjection() async throws {
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest], countCharacters: true, resource: largeToolEvidence,
+        rejectSummarySaves: true)
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the fact."
+    fixture.model.run(); await fixture.model.waitUntilIdle()
+    #expect(fixture.model.error != nil)
+    let writer = try #require(fixture.summaryStore)
+    #expect(await writer.summaryWrites > 0)
+    #expect(fixture.model.messages.allSatisfy { $0.toolResultSummary == nil })
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages.allSatisfy { $0.toolResultSummary == nil })
+    #expect(saved.snapshot.messages.contains { $0.text.contains(largeToolEvidence) })
+}
+
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func backgroundDuringSummaryCommitCannotStartALateContinuation() async throws {
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest, "This continuation must never run"],
+        countCharacters: true, resource: largeToolEvidence, pauseSummarySaves: true)
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the fact."
+    fixture.model.run()
+    let writer = try #require(fixture.summaryStore)
+    try await writer.waitForSummarySave()
+    #expect(fixture.backend.calls == 1 && !fixture.model.canNavigateChats)
+    fixture.model.enteredBackground()
+    await writer.release()
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.backend.calls == 1)
+    #expect(!fixture.model.loaded && !fixture.model.busy)
+    #expect(fixture.model.messages.contains { $0.toolResultSummary != nil })
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func newChatDuringToolSummaryDrainsWorkerWithoutPublishingIntoTheNewChat() async throws {
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest, "This continuation must never run"],
+        countCharacters: true, resource: largeToolEvidence, holdSummary: true)
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the fact."
+    fixture.model.run()
+    try await fixture.backend.waitForSummary()
+    let originalID = fixture.model.conversationID
+    #expect(fixture.model.canNavigateChats)
+    fixture.model.newChat()
+    fixture.backend.releaseSummary()
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.backend.calls == 1)
+    #expect(fixture.model.messages.isEmpty && fixture.model.conversationID != originalID)
+    let saved = try #require(fixture.model.history.first(where: { $0.id == originalID }))
+    #expect(saved.snapshot.messages.allSatisfy { $0.toolResultSummary == nil })
+    #expect(saved.snapshot.messages.contains { $0.text.contains(largeToolEvidence) })
 }

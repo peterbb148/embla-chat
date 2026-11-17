@@ -210,9 +210,41 @@ clearly before execution; this is not a full JSON Schema validator. Annotation k
 title, description, default, examples, deprecated, readOnly, writeOnly, $comment and
 x-mcp-header do not modify arguments. No remote references are fetched.
 There is no repair, guessed identifier, retry-until-execution or substituted tool result.
-The loop uses greedy sampling, at most four registered-tool executions and five model passes.
-Exact token counting includes skill instructions, schemas, project memory, rolling summary
-and the growing exchange. Oversized context fails without dropping tool results.
+The loop uses greedy sampling, at most four registered-tool executions and five planning/answer
+passes. Internal local summaries are separately bounded. Exact token counting includes skill
+instructions, schemas, project memory, rolling summary and the growing exchange.
+
+### Long-running calls and large results (#86, #87)
+
+Discovery has a 60-second absolute deadline. A tool call has a 20-minute absolute deadline,
+including response headers and the entire JSON/SSE body. Keep-alives do not extend it. The
+longer call budget accommodates research servers; Tavily’s official implementation polls
+pro/auto research for up to 15 minutes ([primary source](https://github.com/tavily-ai/tavily-mcp/blob/70d4d47f9b96539ca143c940bd3562578923d56f/src/index.ts#L788-L810)). Embla waits for the supported synchronous MCP reply;
+it does not invent a separate polling protocol or substitute a faster tool. Stop, background
+and privacy cancellation still close the request. A timeout has an unknown remote outcome
+and requires explicit retry; cancellation cannot undo remote work already started.
+
+Before a tool continuation, the actual tokenizer counts the full proposed prompt with a
+512-token answer reserve and 256-token headroom. If it is too large, the same local model
+summarizes the complete tool result as quoted, untrusted data. Every source character is
+processed in measured chunks; each chunk also fits its summary output reserve. Notes are
+carried forward across chunks, preserving relevant facts, exact identifiers, URLs and
+uncertainty. Summaries can omit details. A visible transcript notice identifies the reduction;
+the complete original result remains visible, copyable and saved.
+
+A new tool continuation accepts only a nonempty, normally stopped summary that fits its
+exact budget. Recovery of saved results commits shorter notes before ordinary history
+compaction; the full continuation must still fit before generation can start. Work is
+bounded to 32 chunks and at most 1536 output tokens per chunk; a continuation needs at least
+128 available summary tokens. No room, an incomplete summary, a chunk limit or a failed
+projection save is an explicit error. There is no silent text truncation or substitute
+answer. Saved raw output remains available after Stop/failure/restart. A later Send can
+locally summarize a large completed result without re-executing it; ordinary enabled-server
+setup may still perform discovery. Committed summaries also drive subsequent context counts,
+conversation compaction and optional cloud sync. Internal summary runs do not enter the
+chat’s decode-speed average.
+
+See [validation and simulator scope](development.md#tool-result-continuation-validation).
 
 Initial real-host experiments used the unchanged pinned Embla weights/runtime on Apple M1.
 A custom JSON protocol produced both successes and malformed requests/final-answer shapes;

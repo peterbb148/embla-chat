@@ -236,3 +236,15 @@ validation. Metrics follow their source messages through history, compaction and
 cloud synchronization. Internal summary measurements are not attached to chat messages.
 Older app versions may discard the optional field when saving. See
 [Context usage](context-usage.md#average-generation-speed) for aggregation and exclusions.
+
+## Tool-result context summaries
+
+A completed assistant tool-result message may contain optional `toolResultSummary` local
+notes. Its `text` remains the full original request/result for viewing, copying and provenance.
+Only inference, context counting and later compaction use the marked notes. Validation
+requires a nonempty summary on an assistant message with a tool name and retained raw text.
+The additive field is optional in format 1; old chats still decode, and older apps may discard
+the new field when saving. Both raw output and committed notes follow the existing global
+cloud choice and survive history navigation/restart. Atomic projection failures retain the
+previous visible/stored message. Temporary partial chunk notes are not saved as completed
+summaries. Internal summary generations do not attach throughput metrics to chat messages.
