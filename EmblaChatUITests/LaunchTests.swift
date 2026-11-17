@@ -49,6 +49,7 @@ final class LaunchTests: XCTestCase {
         app.launchArguments = ["--network-policy-fixture"]
         if dark { app.launchArguments.append("--network-dark-appearance") }
         app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
         let status = app.staticTexts["connectivity-status"]
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertEqual(status.label, "Privacy mode — network paused")
@@ -85,6 +86,21 @@ final class LaunchTests: XCTestCase {
         app.buttons["test-connectivity"].tap()
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.label, "Privacy mode — network paused")
+        app.buttons["Hide keyboard"].tap()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let rotated = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                app.windows.firstMatch.frame.width > app.windows.firstMatch.frame.height
+            }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 10), .completed)
+        XCTAssertTrue(status.exists && app.buttons["Chat history"].isHittable)
+        let screen = XCUIScreen.main.screenshot()
+        XCTAssertGreaterThan(screen.image.size.width, screen.image.size.height)
+        let landscape = XCTAttachment(screenshot: screen)
+        landscape.name = "Privacy border in landscape"
+        landscape.lifetime = .keepAlways
+        add(landscape)
+
     }
 
     @MainActor

@@ -157,7 +157,9 @@ struct PrivacyBorder: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            let radius = max(safeAreaInsets.top, safeAreaInsets.bottom, 12)
+            let radius = max(
+                safeAreaInsets.top, safeAreaInsets.bottom,
+                safeAreaInsets.left, safeAreaInsets.right, 12)
             stroke.frame = bounds
             var visible = bounds
             if let keyboardFrame {

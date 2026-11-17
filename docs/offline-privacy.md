@@ -64,6 +64,8 @@ integration tests separately exercise cancellation and file boundaries. All 227 
 tests passed (180 presentation, 47 core). Review fixes cover on-demand connection upgrades
 and preserve a long-lived HTTP session per client, with independent per-task admission and
 cancellation. Two final simulator UI tests passed in light/dark appearance with chat, Settings and Context sheets, the keyboard
-boundary, and reconnect while the keyboard was already present. These are policy-injection checks,
+boundary, and reconnect while the keyboard was already present. Rotation checks passed;
+a full-screen landscape capture was inspected because app-element captures crop incorrectly
+with the extra indicator window in the local XCTest environment. These are policy-injection checks,
 not evidence that the simulator changed physical radios. Physical Wi-Fi/cellular/airplane-mode
 checks and actual personal-iCloud provider transfer remain outstanding (#78 and #45).
