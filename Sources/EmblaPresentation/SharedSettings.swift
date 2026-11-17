@@ -3,6 +3,18 @@ import Foundation
 
 import EmblaCore
 
+/// Revocation is synchronous on the UI actor even while storage is blocked in coordination.
+final class SettingsAccessLease: @unchecked Sendable {
+    private let lock = NSLock()
+    private var valid = true
+
+    func revoke() { lock.withLock { valid = false } }
+    func check() throws {
+        try Task.checkCancellation()
+        guard lock.withLock({ valid }) else { throw CancellationError() }
+    }
+}
+
 /// Portable credentials are deliberately readable in the user-selected iCloud folder.
 struct SharedCredential: Codable, Equatable, Sendable {
     var endpoint: URL
@@ -71,12 +83,15 @@ struct SharedSettings: Codable, Equatable, Sendable {
         }
     }
 
+    func normalized() -> SharedSettings {
+        var value = self
+        for index in value.servers.indices { value.servers[index].enabledTools.sort() }
+        return value
+    }
+
     func encoded() throws -> Data {
         try validate()
-        var normalized = self
-        for index in normalized.servers.indices {
-            normalized.servers[index].enabledTools.sort()
-        }
+        let normalized = normalized()
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
         let bytes = try encoder.encode(normalized)
@@ -100,7 +115,9 @@ struct SharedSettingsRead: Equatable, Sendable {
 protocol SharedSettingsStoring: Sendable {
     var identity: String { get }
     func read() throws -> SharedSettingsRead
-    func write(_ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool) throws
+    func write(
+        _ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool,
+        access: SettingsAccessLease) throws
 }
 
 struct SharedSettingsFile: SharedSettingsStoring {
@@ -111,11 +128,15 @@ struct SharedSettingsFile: SharedSettingsStoring {
         try withAccess { try CoordinatedSettingsFile.read($0) }
     }
 
-    func write(_ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool) throws {
+    func write(
+        _ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool,
+        access: SettingsAccessLease
+    ) throws {
+        try access.check()
         try withAccess {
             try CoordinatedSettingsFile.write(
                 value, at: $0, replacing: replacing,
-                resolve: resolve)
+                resolve: resolve, access: access)
         }
     }
 
@@ -164,8 +185,9 @@ enum CoordinatedSettingsFile {
 
     static func write(
         _ value: SharedSettings, at file: URL, replacing: SharedSettingsRead,
-        resolve: Bool = false
+        resolve: Bool = false, access: SettingsAccessLease
     ) throws {
+        try access.check()
         let bytes = try value.encoded()
         var result: Result<Void, Error>?
         var failure: NSError?
@@ -173,9 +195,11 @@ enum CoordinatedSettingsFile {
         {
             url in
             result = Result {
+                try access.check()
                 let (current, versions) = try contents(url)
                 guard current == replacing else { throw SharedSettingsError.changed }
                 guard resolve || versions.isEmpty else { throw SharedSettingsError.conflict }
+                try access.check()
                 try bytes.write(to: url, options: .atomic)
                 if resolve { for version in versions { version.isResolved = true } }
             }
@@ -193,7 +217,7 @@ enum CoordinatedSettingsFile {
         guard data.count <= 1_048_576 else { throw SharedSettingsError.invalid }
         let settings = try JSONDecoder().decode(SharedSettings.self, from: data)
         try settings.validate()
-        return settings
+        return settings.normalized()
     }
 
     private static func contents(_ file: URL) throws -> (SharedSettingsRead, [NSFileVersion]) {
@@ -226,21 +250,28 @@ private struct SettingsMigrationReceipt: Codable {
 /// Writes go directly to the selected shared document; no hidden offline write queue exists.
 actor SharedSettingsSession {
     let storage: any SharedSettingsStoring
+    let access: SettingsAccessLease
     nonisolated let receipt: URL
     private(set) var current: SharedSettings?
     private(set) var choices: [SharedSettings] = []
     private var read = SharedSettingsRead()
     private var local = SharedSettings()
 
-    init(storage: any SharedSettingsStoring, receipt: URL) {
+    init(
+        storage: any SharedSettingsStoring, receipt: URL,
+        access: SettingsAccessLease = SettingsAccessLease()
+    ) {
         self.storage = storage
         self.receipt = receipt
+        self.access = access
     }
 
     func refresh(local: SharedSettings) throws -> SharedSettings {
-        try Task.checkCancellation()
+        try access.check()
+        let local = local.normalized()
         self.local = local
         let remote = try storage.read()
+        try access.check()
         let saved: SettingsMigrationReceipt?
         if FileManager.default.fileExists(atPath: receipt.path) {
             saved = try JSONDecoder().decode(
@@ -264,7 +295,10 @@ actor SharedSettingsSession {
             throw SharedSettingsError.conflict
         }
         let value = remote.current ?? local
-        if remote.current == nil { try storage.write(value, replacing: remote, resolve: false) }
+        if remote.current == nil {
+            try storage.write(value, replacing: remote, resolve: false, access: access)
+        }
+        try access.check()
         try saveReceipt(local)
         read = SharedSettingsRead(current: value)
         current = value
@@ -272,21 +306,23 @@ actor SharedSettingsSession {
     }
 
     func commit(_ value: SharedSettings, replacing expected: SharedSettings) throws {
-        try Task.checkCancellation()
-        guard current == expected else { throw SharedSettingsError.changed }
+        try access.check()
+        let value = value.normalized()
+        guard current == expected.normalized() else { throw SharedSettingsError.changed }
         guard choices.isEmpty else { throw SharedSettingsError.conflict }
-        try storage.write(value, replacing: read, resolve: false)
+        try storage.write(value, replacing: read, resolve: false, access: access)
         current = value
         read = SharedSettingsRead(current: value)
     }
 
     func resolve(_ index: Int, expected: SharedSettings) throws -> SharedSettings {
-        try Task.checkCancellation()
-        guard choices.indices.contains(index), choices[index] == expected else {
+        try access.check()
+        guard choices.indices.contains(index), choices[index] == expected.normalized() else {
             throw SharedSettingsError.changed
         }
         let value = choices[index]
-        try storage.write(value, replacing: read, resolve: true)
+        try storage.write(value, replacing: read, resolve: true, access: access)
+        try access.check()
         try saveReceipt(local)
         read = SharedSettingsRead(current: value)
         current = value
@@ -303,9 +339,12 @@ actor SharedSettingsSession {
 }
 
 enum SharedSettingsError: Error, LocalizedError {
-    case invalid, credential, changed, conflict, unavailable
+    case invalid, credential, changed, conflict, unavailable, staleEditor
     var errorDescription: String? {
         switch self {
+        case .staleEditor:
+            return
+                "This server changed while the editor was open. Reload saved settings before saving."
         case .invalid:
             return "Invalid Settings/settings.json. Check its version, servers and skill."
         case .credential: return "Invalid MCP credential or credential endpoint does not match."

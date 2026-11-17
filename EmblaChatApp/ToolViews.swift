@@ -153,7 +153,7 @@ struct MCPSettingsView: View {
         .navigationTitle("MCP Servers")
         .disabled(model.busy || model.tools.settingsLoading || model.tools.settingsWriting)
         .sheet(item: $newServer) { server in
-            NavigationStack { MCPServerEditor(model: model, initial: server) }
+            NavigationStack { MCPServerEditor(model: model, initial: server, creating: true) }
         }
     }
 }
@@ -162,6 +162,10 @@ private struct MCPServerEditor: View {
     let model: LocalInferenceModel
     let initial: MCPServer
     var requiresBearerToken = false
+    var creating = false
+    @State private var baseline: MCPServerEditBaseline?
+    @State private var editorLoaded = false
+    @State private var hasSaved = false
     @State private var name = ""
     @State private var endpoint = ""
     @State private var token = ""
@@ -195,13 +199,18 @@ private struct MCPServerEditor: View {
                                 error = "This server requires a bearer token from its provider."
                                 return
                             }
+                            guard let baseline else {
+                                throw SkillFailure.invalid("Reload saved settings before saving.")
+                            }
                             let current =
                                 model.tools.servers.first(where: { $0.id == initial.id }) ?? initial
                             try await model.tools.saveServer(
                                 MCPServer(
                                     id: initial.id, name: name,
                                     endpoint: url, enabledTools: current.enabledTools),
-                                newToken: token.isEmpty ? nil : token)
+                                newToken: token.isEmpty ? nil : token, expected: baseline)
+                            self.baseline = try model.tools.captureServerEdit(initial.id)
+                            hasSaved = true
                             token = ""
                             error = nil
                             model.toolConfigurationChanged()
@@ -209,8 +218,11 @@ private struct MCPServerEditor: View {
                         } catch { self.error = error.localizedDescription }
                     }
                 }
-                Text("New servers connect after saving and enable all discovered tools.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Button("Reload saved settings") { reloadEditor(initialLoad: false) }
+                Text(
+                    "Reload discards unsaved form edits. New servers connect after saving and enable all discovered tools."
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
             if let saved = model.tools.servers.first(where: { $0.id == initial.id }) {
                 Section("Connection and tools") {
@@ -262,7 +274,9 @@ private struct MCPServerEditor: View {
                 Section {
                     Button("Remove saved token", role: .destructive) {
                         Task {
-                            do { try await model.tools.clearCredential(initial.id) } catch {
+                            do {
+                                try await model.tools.clearCredential(initial.id)
+                            } catch {
                                 self.error = error.localizedDescription
                             }
                         }
@@ -277,7 +291,12 @@ private struct MCPServerEditor: View {
         .navigationTitle(name.isEmpty ? "MCP server" : name)
         .disabled(model.busy || model.tools.settingsLoading || model.tools.settingsWriting)
         .onAppear {
-            name = initial.name; endpoint = initial.endpoint.absoluteString
+            if !editorLoaded {
+                editorLoaded = true
+                name = initial.name
+                endpoint = initial.endpoint.absoluteString
+                reloadEditor(initialLoad: true)
+            }
         }
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         .alert("Delete this MCP server?", isPresented: $confirmDelete) {
@@ -296,6 +315,37 @@ private struct MCPServerEditor: View {
                 "Removes its registration and key from the active settings profile. Existing chat records remain."
             )
         }
+    }
+
+    private func reloadEditor(initialLoad: Bool) {
+        do {
+            let saved = model.tools.servers.first { $0.id == initial.id }
+            let registration: MCPServer
+            if initialLoad {
+                var shown = initial
+                shown.lastDiscoveredTools = nil
+                var current = saved
+                current?.lastDiscoveredTools = nil
+                guard creating ? current == nil : current == shown else {
+                    throw SkillFailure.invalid("This server changed. Reload saved settings.")
+                }
+                registration = initial
+            } else if let saved {
+                registration = saved
+            } else {
+                guard creating && !hasSaved else {
+                    throw SkillFailure.invalid(
+                        "This server was removed. Close the editor to add a new registration.")
+                }
+                registration = initial
+            }
+            let captured = try model.tools.captureServerEdit(initial.id)
+            baseline = captured
+            name = registration.name
+            endpoint = registration.endpoint.absoluteString
+            token = ""
+            error = nil
+        } catch { self.error = error.localizedDescription }
     }
 }
 
@@ -469,7 +519,7 @@ private struct RegistryServerView: View {
             NavigationStack {
                 MCPServerEditor(
                     model: model, initial: selection.server,
-                    requiresBearerToken: selection.requiresBearerToken)
+                    requiresBearerToken: selection.requiresBearerToken, creating: true)
             }
         }
     }

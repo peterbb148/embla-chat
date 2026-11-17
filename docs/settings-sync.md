@@ -52,6 +52,10 @@ to remove that registration. No device-local key is substituted for a missing cl
 
 Enable iCloud and select the same folder on another installation. Once iCloud Drive has
 materialized the file, registrations, grants and credentials can be used without re-entry.
+An open editor retains a source/name/endpoint/key baseline. If another device changes
+those values, saving fails until you explicitly reload saved settings. Reload discards
+unsaved form fields; current permission toggles are preserved by name-only form saves.
+
 The app reports file availability/write completion, not a guarantee that another device
 has received it. Actual authentication/discovery errors remain visible.
 
@@ -67,7 +71,9 @@ Review the file if you need to combine configurations before choosing. No automa
 or last-writer-wins policy silently drops registrations.
 
 Reads and writes run on a storage actor so a stalled provider cannot block the UI or Off.
-Results are applied only to the same active source/revision. Writes compare the entire previously read document and conflict versions inside file
+Results are applied only to the same active source/revision. Off synchronously revokes
+pending storage access; reads that finish later cannot create a settings file or export
+local keys. Writers check revocation again inside coordination before mutation. Writes compare the entire previously read document and conflict versions inside file
 coordination. A stale save fails and asks for reload; it does not overwrite another device's
 edit. A deleted previously observed document prompts a choice between retained settings
 and an explicitly empty configuration. Invalid/oversized JSON or broken credential bindings

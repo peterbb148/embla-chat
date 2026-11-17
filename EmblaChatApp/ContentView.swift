@@ -382,6 +382,7 @@ struct ContentView: View {
                 guard let name = action.skill else { throw SkillFailure.changed }
                 try await model.tools.selectSkill(name, using: model.cloud)
             }
+            _ = try quickActions.validatedAction(action, using: model.cloud)
             guard model.conversationID == originalChat, model.prompt == originalDraft else {
                 throw QuickActionError.changed
             }

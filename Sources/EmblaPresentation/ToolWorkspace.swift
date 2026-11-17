@@ -3,6 +3,13 @@ import Observation
 
 import EmblaCore
 
+/// Opaque editor baseline: no raw credential is exposed to the view.
+public struct MCPServerEditBaseline: Equatable, Sendable {
+    fileprivate let serverID: UUID
+    fileprivate let source: String?
+    fileprivate let fingerprint: String?
+}
+
 /// MCP configuration follows the explicit global storage choice; discovery remains device-local.
 @MainActor @Observable
 public final class ToolWorkspace {
@@ -29,6 +36,7 @@ public final class ToolWorkspace {
     @ObservationIgnored private var sharedDocument: SharedSettings?
     @ObservationIgnored private var settingsChoiceDocuments: [SharedSettings] = []
     @ObservationIgnored private var shared: SharedSettingsSession?
+    @ObservationIgnored private var sharedAccess: SettingsAccessLease?
     @ObservationIgnored private var settingsFactory: (Data) -> any SharedSettingsStoring = {
         SharedSettingsFile(bookmark: $0)
     }
@@ -245,8 +253,18 @@ public final class ToolWorkspace {
         return .cloud(bookmark)
     }
 
-    public func saveServer(_ server: MCPServer, newToken: String? = nil) async throws {
+    public func saveServer(
+        _ input: MCPServer, newToken: String? = nil,
+        expected: MCPServerEditBaseline? = nil
+    ) async throws {
         try requireSettingsReady()
+        var server = input
+        if let expected, try captureServerEdit(server.id) != expected {
+            throw SharedSettingsError.staleEditor
+        }
+        if expected != nil, let current = servers.first(where: { $0.id == server.id }) {
+            server.enabledTools = current.enabledTools
+        }
         try server.validate()
         if sharedRequested {
             var updated = servers
@@ -274,7 +292,6 @@ public final class ToolWorkspace {
             throw SkillFailure.invalid("MCP settings storage is unavailable.")
         }
         var updated = servers
-        var server = server
         clients[server.id] = nil
         discovered[server.id] = nil
         revision = UUID()
@@ -448,6 +465,9 @@ public final class ToolWorkspace {
     }
 
     public func pause() {
+        sharedAccess?.revoke()
+        shared = nil
+        sharedAccess = nil
         settingsRequestID = UUID()
         settingsLoading = false
         skillTask?.cancel(); connectTask?.cancel()
@@ -533,6 +553,7 @@ public final class ToolWorkspace {
 extension ToolWorkspace {
     /// Source changes invalidate clients before any new folder or credential can be used.
     public func reloadSettings(using cloud: ConversationCloudSync) async {
+        cloud.settingsScopeWillChange = { [weak self] in self?.revokeSettingsAccess() }
         currentSourceKey = { [weak cloud] in
             cloud.map { QuickActionsModel.sourceKey(for: $0) } ?? "unavailable"
         }
@@ -544,7 +565,9 @@ extension ToolWorkspace {
         let changed = settingsSourceKey != key
         if changed {
             invalidateConnections()
+            sharedAccess?.revoke()
             shared = nil
+            sharedAccess = nil
             sharedDocument = nil
             servers = []
             preferredSkill = nil
@@ -560,10 +583,12 @@ extension ToolWorkspace {
                     !cloud.requiresScopeConsent
                 else { throw SharedSettingsError.unavailable }
                 if shared == nil {
+                    let access = SettingsAccessLease()
+                    sharedAccess = access
                     shared = SharedSettingsSession(
                         storage: settingsFactory(bookmark),
                         receipt: configuration.deletingLastPathComponent()
-                            .appendingPathComponent("shared-migration.json"))
+                            .appendingPathComponent("shared-migration.json"), access: access)
                 }
                 guard let shared else { throw SharedSettingsError.unavailable }
                 let document = try await shared.refresh(local: localSettings())
@@ -652,6 +677,14 @@ extension ToolWorkspace {
         }
     }
 
+    private func revokeSettingsAccess() {
+        sharedAccess?.revoke()
+        sharedAccess = nil
+        shared = nil
+        settingsRequestID = UUID()
+        settingsLoading = false
+    }
+
     private func invalidateConnections() {
         connectTask?.cancel()
         connectRequestID = UUID()
@@ -671,8 +704,11 @@ extension ToolWorkspace {
             throw SharedSettingsError.unavailable
         }
         if let settingsError { throw SkillFailure.invalid(settingsError) }
-        if sharedRequested && (sharedDocument == nil || !settingsChoices.isEmpty) {
-            throw SharedSettingsError.unavailable
+        if sharedRequested {
+            guard shared != nil, let sharedAccess, sharedDocument != nil,
+                settingsChoices.isEmpty
+            else { throw SharedSettingsError.unavailable }
+            try sharedAccess.check()
         }
     }
 
@@ -698,6 +734,23 @@ extension ToolWorkspace {
             }, selectedSkill: localPreferredSkill())
         try value.validate()
         return value
+    }
+
+    /// Only form-edited fields and authentication participate; live permission toggles are preserved.
+    public func captureServerEdit(_ id: UUID) throws -> MCPServerEditBaseline {
+        try requireSettingsReady()
+        let fingerprint: String?
+        if let server = servers.first(where: { $0.id == id }) {
+            var snapshot = SharedServer(server, token: try token(for: server))
+            snapshot.enabledTools = []
+            snapshot.enableToolsOnFirstDiscovery = false
+            fingerprint = try SharedSettings(servers: [snapshot]).fingerprint
+        } else {
+            fingerprint = nil
+        }
+        return MCPServerEditBaseline(
+            serverID: id, source: settingsSourceKey,
+            fingerprint: fingerprint)
     }
 
     func token(for server: MCPServer) throws -> String? {

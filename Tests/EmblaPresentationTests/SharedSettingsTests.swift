@@ -8,8 +8,12 @@ private struct SettingsFileFixture: SharedSettingsStoring {
     let file: URL
     var identity: String { file.path }
     func read() throws -> SharedSettingsRead { try CoordinatedSettingsFile.read(file) }
-    func write(_ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool) throws {
-        try CoordinatedSettingsFile.write(value, at: file, replacing: replacing, resolve: resolve)
+    func write(
+        _ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool,
+        access: SettingsAccessLease
+    ) throws {
+        try CoordinatedSettingsFile.write(
+            value, at: file, replacing: replacing, resolve: resolve, access: access)
     }
 }
 
@@ -179,7 +183,11 @@ private final class FailingSettingsFixture: SharedSettingsStoring, @unchecked Se
     var document = settingsDocument()
     var rejectWrites = false
     func read() -> SharedSettingsRead { SharedSettingsRead(current: document) }
-    func write(_ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool) throws {
+    func write(
+        _ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool,
+        access: SettingsAccessLease
+    ) throws {
+        try access.check()
         if rejectWrites { throw CocoaError(.fileWriteOutOfSpace) }
         guard replacing.current == document else { throw SharedSettingsError.changed }
         document = value
@@ -385,6 +393,10 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
     private let lock = NSLock()
     private var entered = false
     private var onMain = false
+    private var written = 0
+    let missing: Bool
+    init(missing: Bool = false) { self.missing = missing }
+    var writes: Int { lock.withLock { written } }
     var started: Bool { lock.withLock { entered } }
     var usedMainThread: Bool { lock.withLock { onMain } }
     func read() -> SharedSettingsRead {
@@ -392,19 +404,25 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
             entered = true; onMain = Thread.isMainThread
         }
         _ = gate.wait(timeout: .now() + 3)
-        return SharedSettingsRead(current: SharedSettings())
+        return SharedSettingsRead(current: missing ? nil : SharedSettings())
     }
-    func write(_ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool) throws {
+    func write(
+        _ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool,
+        access: SettingsAccessLease
+    ) throws {
+        try access.check()
+        lock.withLock { written += 1 }
         throw SharedSettingsError.changed
     }
 }
 
-@Test @MainActor func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult()
+@Test(arguments: [false, true]) @MainActor
+func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: Bool)
     async throws
 {
     let root = try settingsRoot()
     defer { try? FileManager.default.removeItem(at: root) }
-    let provider = BlockedSettingsFixture()
+    let provider = BlockedSettingsFixture(missing: missing)
     let workspace = ToolWorkspace(
         configuration: root.appendingPathComponent("servers.json"),
         credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
@@ -412,6 +430,7 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
     try await workspace.saveServer(local)
     let cloud = ConversationCloudSync()
     cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
+    cloud.persist = {}
     let clock = ContinuousClock()
     let start = clock.now
     let pending = Task { await workspace.reloadSettings(using: cloud) }
@@ -420,11 +439,11 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
     }
     #expect(provider.started && !provider.usedMainThread)
     #expect(clock.now - start < .seconds(1))
-    cloud.restore(enabled: false, bookmark: nil, base: nil)
-    await workspace.reloadSettings(using: cloud)
-    #expect(workspace.servers == [local] && workspace.settingsError == nil)
+    cloud.disable()
     provider.gate.signal()
     await pending.value
+    #expect(provider.writes == 0)
+    await workspace.reloadSettings(using: cloud)
     #expect(workspace.servers == [local] && workspace.settingsError == nil)
     #expect(!workspace.settingsLoading)
 }
@@ -446,4 +465,81 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
     try await workspace.selectSkill(nil, using: cloud)
     #expect(provider.document.selectedSkill == nil)
     #expect(try workspace.instructions(using: cloud).isEmpty)
+}
+
+@Test @MainActor func staleEditorCannotRestoreAnOldEndpointOrClearTheNewKeyAndGrants() async throws
+{
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provider = FailingSettingsFixture()
+    let workspace = ToolWorkspace(
+        configuration: root.appendingPathComponent("servers.json"),
+        credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
+    let cloud = ConversationCloudSync()
+    cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
+    await workspace.reloadSettings(using: cloud)
+    var oldForm = try #require(workspace.servers.first)
+    let baseline = try workspace.captureServerEdit(oldForm.id)
+    provider.document.servers[0].endpoint = URL(string: "https://new-endpoint.invalid/mcp")!
+    provider.document.servers[0].credential = SharedCredential(
+        endpoint: provider.document.servers[0].endpoint, bearerToken: "new-synthetic-key")
+    provider.document.servers[0].enabledTools = ["new_tool"]
+    let newer = provider.document
+    await workspace.reloadSettings(using: cloud)
+    oldForm.name = "Name edited in the stale form"
+    await #expect(throws: SharedSettingsError.self) {
+        try await workspace.saveServer(oldForm, expected: baseline)
+    }
+    #expect(provider.document == newer)
+    let fresh = try workspace.captureServerEdit(oldForm.id)
+    var updated = try #require(workspace.servers.first)
+    updated.name = "Fresh name edit"
+    try await workspace.saveServer(updated, expected: fresh)
+    #expect(provider.document.servers[0].credential?.bearerToken == "new-synthetic-key")
+    #expect(provider.document.servers[0].enabledTools == ["new_tool"])
+    let permissionsBaseline = try workspace.captureServerEdit(updated.id)
+    provider.document.servers[0].enabledTools = ["changed_permission"]
+    await workspace.reloadSettings(using: cloud)
+    updated.name = "Name edit preserves newer permissions"
+    try await workspace.saveServer(updated, expected: permissionsBaseline)
+    #expect(provider.document.servers[0].enabledTools == ["changed_permission"])
+    cloud.restore(enabled: false, bookmark: nil, base: nil)
+    await workspace.reloadSettings(using: cloud)
+    await #expect(throws: SharedSettingsError.self) {
+        try await workspace.saveServer(updated, expected: fresh)
+    }
+}
+
+@Test @MainActor func handEditedGrantOrderDoesNotCauseFalseConflictsAfterSkillEdits() async throws {
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = SettingsFileFixture(file: root.appendingPathComponent("settings.json"))
+    var unordered = settingsDocument()
+    unordered.servers[0].enabledTools = ["z", "a"]
+    try JSONEncoder().encode(unordered).write(to: store.file)
+    let session = SharedSettingsSession(
+        storage: store, receipt: root.appendingPathComponent("receipt.json"))
+    let loaded = try await session.refresh(local: SharedSettings())
+    #expect(loaded.servers[0].enabledTools == ["a", "z"])
+    var selected = loaded
+    selected.selectedSkill = "example-skill"
+    try await session.commit(selected, replacing: loaded)
+    var renamed = selected
+    renamed.servers[0].name = "Second edit without any intervening external change"
+    try await session.commit(renamed, replacing: selected)
+    #expect(try store.read().current == renamed)
+}
+
+@Test func revokedSettingsAccessCannotCreateACredentialFile() throws {
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("settings.json")
+    let access = SettingsAccessLease()
+    access.revoke()
+    #expect(throws: CancellationError.self) {
+        try CoordinatedSettingsFile.write(
+            settingsDocument(), at: file, replacing: .init(),
+            access: access)
+    }
+    #expect(!FileManager.default.fileExists(atPath: file.path))
 }

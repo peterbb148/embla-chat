@@ -45,6 +45,7 @@ public final class ConversationCloudSync {
     public private(set) var syncing = false
     public private(set) var resolving = false
     public private(set) var choices: [CloudChatChoice] = []
+    @ObservationIgnored var settingsScopeWillChange: (() -> Void)?
     @ObservationIgnored var bookmark: Data?
     @ObservationIgnored var baseFingerprint: String?
     @ObservationIgnored var current: (() -> CloudLocalConversation?)?
@@ -78,6 +79,7 @@ public final class ConversationCloudSync {
     }
 
     func restore(enabled: Bool, bookmark: Data?, base: String?, consentVersion: Int = 2) {
+        settingsScopeWillChange?()
         pause()
         configurationRevision = UUID()
         self.enabled = enabled
@@ -118,6 +120,7 @@ public final class ConversationCloudSync {
     }
 
     func enable(bookmark: Data) async throws {
+        settingsScopeWillChange?()
         pause()
         let configuration = UUID()
         configurationRevision = configuration
@@ -156,6 +159,7 @@ public final class ConversationCloudSync {
 
     /// Stops new app operations. Data already handed to iCloud Drive may still finish uploading.
     public func disable() {
+        settingsScopeWillChange?()
         pause()
         configurationRevision = UUID()
         let configuration = configurationRevision
