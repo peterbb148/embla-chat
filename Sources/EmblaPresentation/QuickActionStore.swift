@@ -20,7 +20,7 @@ actor QuickActionStore: QuickActionsStoring {
     let stateRoot: URL
 
     private let network: NetworkAccess
-    private var cache: SyncedResourceCache {
+    private nonisolated var cache: SyncedResourceCache {
         SyncedResourceCache(root: stateRoot.appendingPathComponent("CloudSnapshots"))
     }
 
@@ -30,7 +30,15 @@ actor QuickActionStore: QuickActionsStoring {
         self.stateRoot = stateRoot
     }
 
-    func read(_ source: QuickActionSource) throws -> QuickActionConfiguration {
+    nonisolated func read(_ source: QuickActionSource) async throws -> QuickActionConfiguration {
+        try Task.checkCancellation()
+        if case .cachedCloud(let bookmark) = source {
+            return try QuickActionConfiguration.decode(cache.read("actions", bookmark: bookmark))
+        }
+        return try await readProvider(source)
+    }
+
+    private func readProvider(_ source: QuickActionSource) throws -> QuickActionConfiguration {
         try Task.checkCancellation()
         switch source {
         case .device:

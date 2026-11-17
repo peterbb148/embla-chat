@@ -533,7 +533,7 @@ public final class LocalInferenceModel {
         for step in 0...4 {
             try Task.checkCancellation()
             try tools.validateRequestNetwork()
-            guard configuration == tools.revision else { throw SkillFailure.changed }
+            try tools.validateRequestConfiguration(configuration, using: cloud)
             let run = try await session.generate(
                 messages: context,
                 options: GenerationOptions(
@@ -595,7 +595,7 @@ public final class LocalInferenceModel {
                 messages[responseIndex].text = "Tool request:\n" + requestData
                 try await saveChatNow()
                 try Task.checkCancellation()
-                guard configuration == tools.revision else { throw SkillFailure.changed }
+                try tools.validateRequestConfiguration(configuration, using: cloud)
                 status =
                     request.local ? "Reading skill resource…" : "Calling \(request.destination)…"
                 let result: ToolJSON

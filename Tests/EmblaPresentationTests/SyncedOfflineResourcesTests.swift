@@ -141,15 +141,31 @@ private final class SnapshotSettingsFixture: SharedSettingsStoring, @unchecked S
     cloud.restore(enabled: true, bookmark: bookmark, base: nil)
     try await restarted.prepare(using: cloud)
     #expect(restarted.selectedSkill == skill)
+    let preparedRevision = restarted.revision
     policy.updatePath(.satisfied)
     policy.activateRequests(after: policy.snapshot.revision)
     cloud.connectivityChanged()
     await restarted.reloadSettings(using: cloud)
+    try restarted.validateRequestConfiguration(preparedRevision, using: cloud)
+    #expect(try restarted.specifications(using: cloud).map(\.name) == ["read_skill_file"])
+    #expect(try restarted.remoteTools(forRequest: true).isEmpty)
+    // A later live refresh can change its listing without changing the prepared turn.
+    try cache.write(
+        JSONEncoder().encode(["documents": [String: Data](), "errors": [:]]),
+        name: "listing", bookmark: bookmark)
+    let resumedInvocation = try restarted.invocation(
+        server: "skill", name: "read_skill_file", arguments: ["path": .string("reference.txt")])
+    #expect(
+        try await restarted.execute(resumedInvocation, using: cloud)
+            == .object(["text": .string("Previously loaded supporting file")]))
     #expect(factoryCalls.withLock { $0 } == 1 && provider.reads.withLock { $0 } == 2)
     // The shared preference still selects the original skill, not the session-only None.
     #expect(provider.document.selectedSkill == "saved-skill")
     policy.updatePath(.unsatisfied)
     cloud.restore(enabled: true, bookmark: Data("different authorized folder".utf8), base: nil)
+    await #expect(throws: SkillFailure.self) {
+        try await restarted.execute(invocation, using: cloud)
+    }
     try await restarted.prepare(using: cloud)
     #expect(restarted.servers.isEmpty && restarted.selectedSkill == nil)
     #expect(factoryCalls.withLock { $0 } == 1)
@@ -188,4 +204,117 @@ private final class SnapshotSettingsFixture: SharedSettingsStoring, @unchecked S
             try await store.resource(path, skill: changed, source: .cachedCloud(bookmark))
         }
     }
+}
+
+/// Models a synchronous provider operation that ignores Task cancellation until released.
+private final class ProviderActorBlock: @unchecked Sendable {
+    let entered = Mutex(false)
+    private let condition = NSCondition()
+    private var released = false
+    func hold() {
+        condition.lock()
+        entered.withLock { $0 = true }
+        while !released { condition.wait() }
+        condition.unlock()
+    }
+    func release() {
+        condition.lock(); released = true; condition.broadcast(); condition.unlock()
+    }
+}
+
+extension SkillStore {
+    fileprivate func holdProviderActor(_ gate: ProviderActorBlock) { gate.hold() }
+}
+extension QuickActionStore {
+    fileprivate func holdProviderActor(_ gate: ProviderActorBlock) { gate.hold() }
+}
+
+@MainActor private func waitForSnapshotCondition(_ condition: () -> Bool) async throws -> Bool {
+    for _ in 0..<1_000 {
+        if condition() { return true }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    return false
+}
+
+@Test @MainActor func cachedStoresDoNotWaitForUncancellableProviderActors() async throws {
+    let root = try snapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bookmark = Data("synthetic blocked provider grant".utf8)
+    let policy = NetworkAccess(initialState: .unsatisfied)
+    let cloud = ConversationCloudSync(network: policy)
+    cloud.restore(enabled: true, bookmark: bookmark, base: nil)
+    let skillData = Data(
+        "---\nname: cached-skill\ndescription: Cached.\n---\nOffline instructions.".utf8)
+    let skillCache = root.appendingPathComponent("SkillSnapshots")
+    try SyncedResourceCache(root: skillCache).write(
+        JSONEncoder().encode(SkillStore.Listing(documents: ["cached-skill": skillData])),
+        name: "listing", bookmark: bookmark)
+    try SyncedResourceCache(root: root.appendingPathComponent("CloudSnapshots")).write(
+        SharedSettings(selectedSkill: "cached-skill").encoded(), name: "settings",
+        bookmark: bookmark)
+    let store = SkillStore(
+        localRoot: root.appendingPathComponent("OffSkills"), network: policy, cacheRoot: skillCache)
+    let gate = ProviderActorBlock()
+    defer { gate.release() }
+    let blocked = Task.detached { await store.holdProviderActor(gate) }
+    try #require(await waitForSnapshotCondition { gate.entered.withLock { $0 } })
+    let tools = ToolWorkspace(
+        store: store, configuration: root.appendingPathComponent("servers.json"), network: policy)
+    var prepared = false
+    let preparation = Task {
+        try await tools.prepare(using: cloud); prepared = true
+    }
+    let preparedBeforeRelease = try await waitForSnapshotCondition { prepared }
+    gate.release()
+    await blocked.value
+    try await preparation.value
+    #expect(preparedBeforeRelease && tools.selectedSkill?.name == "cached-skill")
+
+    let state = root.appendingPathComponent("ActionState")
+    let action = QuickAction(id: "cached", label: "Cached", order: 0, prompt: "Offline action")
+    try SyncedResourceCache(root: state.appendingPathComponent("CloudSnapshots")).write(
+        QuickActionConfiguration(actions: [action]).encoded(), name: "actions", bookmark: bookmark)
+    let actionStore = QuickActionStore(
+        localRoot: root.appendingPathComponent("OffActions"), stateRoot: state, network: policy)
+    let actionGate = ProviderActorBlock()
+    defer { actionGate.release() }
+    let actionBlocked = Task.detached { await actionStore.holdProviderActor(actionGate) }
+    try #require(await waitForSnapshotCondition { actionGate.entered.withLock { $0 } })
+    let actions = QuickActionsModel(storage: actionStore)
+    actions.reload(using: cloud)
+    let loadedBeforeRelease = try await waitForSnapshotCondition {
+        !actions.loading && actions.actions == [action]
+    }
+    actionGate.release()
+    await actionBlocked.value
+    await actions.waitUntilIdle()
+    #expect(loadedBeforeRelease && actions.error == nil)
+}
+
+@Test func transientSkillReadErrorsRetainCacheButConfirmedChangesInvalidateIt() throws {
+    let bytes = Data("---\nname: saved-skill\ndescription: Cached.\n---\nOriginal.".utf8)
+    let original = try SkillDocument.decode(bytes, directoryName: "saved-skill")
+    let previous = SkillStore.Listing(documents: ["saved-skill": bytes])
+    var transient = SkillStore.Listing()
+    let online = transient.record(
+        .failure(CocoaError(.fileReadUnknown)), name: "saved-skill", previous: previous)
+    #expect(online.document == nil && online.error != nil)
+    #expect(try transient.entries().first?.document == original)
+    for failure in [CocoaError(.fileReadNoSuchFile), CocoaError(.fileNoSuchFile)] {
+        var deleted = SkillStore.Listing()
+        _ = deleted.record(.failure(failure), name: "saved-skill", previous: previous)
+        #expect(try deleted.entries().first?.document == nil && deleted.documents.isEmpty)
+    }
+    var malformed = SkillStore.Listing()
+    _ = malformed.record(
+        .success(Data("Invalid changed instructions".utf8)), name: "saved-skill", previous: previous
+    )
+    #expect(try malformed.entries().first?.document == nil && malformed.documents.isEmpty)
+    var changed = SkillStore.Listing()
+    let replacement = Data(
+        "---\nname: saved-skill\ndescription: Cached.\n---\nNew instructions.".utf8)
+    _ = changed.record(.success(replacement), name: "saved-skill", previous: previous)
+    #expect(try changed.entries().first?.document?.fingerprint != original.fingerprint)
+    #expect(try SkillStore.Listing().entries().isEmpty)  // Removed directories are not retained.
 }

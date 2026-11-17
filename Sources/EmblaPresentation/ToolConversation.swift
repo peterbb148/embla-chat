@@ -16,11 +16,12 @@ extension ToolWorkspace {
     func specifications(using cloud: ConversationCloudSync, forRequest: Bool = true) throws
         -> [ModelToolSpecification]
     {
-        let paused = cloudFeaturesPaused(using: cloud, forRequest: forRequest)
-        if !paused { try validateSelectedPreference() }
+        let pinned = forRequest ? try hasPreparedCachedTurn(using: cloud) : false
+        let paused = try cloudFeaturesPaused(using: cloud, forRequest: forRequest)
+        if !paused && !pinned { try validateSelectedPreference() }
         var specifications = try remoteTools(forRequest: forRequest)
-        if selectedSkill != nil && !paused {
-            guard skillSourceKey == QuickActionsModel.sourceKey(for: cloud) else {
+        if try requestSkill(using: cloud, forRequest: forRequest) != nil && !paused {
+            guard pinned || skillSourceKey == QuickActionsModel.sourceKey(for: cloud) else {
                 throw SkillFailure.changed
             }
             specifications.append(
@@ -44,7 +45,9 @@ extension ToolWorkspace {
         if !specifications.isEmpty {
             text += "\n" + (try ModelToolResponse.instructions(tools: specifications))
         }
-        if let selectedSkill, !cloudFeaturesPaused(using: cloud, forRequest: forRequest) {
+        if let selectedSkill = try requestSkill(using: cloud, forRequest: forRequest),
+            try !cloudFeaturesPaused(using: cloud, forRequest: forRequest)
+        {
             text += "\n\n" + selectedSkill.context
         }
         return text
@@ -64,7 +67,7 @@ extension ToolWorkspace {
                     ])
                 }),
             "device_timezone": .string(TimeZone.autoupdatingCurrent.identifier),
-            "selected_skill": selectedSkill.map {
+            "selected_skill": try requestSkill(using: cloud, forRequest: forRequest).map {
                 .object(["name": .string($0.name), "description": .string($0.description)])
             } ?? .null,
         ]).text()
@@ -79,7 +82,7 @@ extension ToolWorkspace {
     func invocation(server: String, name: String, arguments: [String: ToolJSON]) throws
         -> ToolInvocation
     {
-        if server == "skill", name == "read_skill_file", selectedSkill != nil {
+        if server == "skill", name == "read_skill_file", requestHasSkill {
             guard Set(arguments.keys) == ["path"], arguments["path"]?.string != nil else {
                 throw ToolProtocolError.invalidResponse
             }
@@ -102,7 +105,12 @@ extension ToolWorkspace {
         -> ToolJSON
     {
         if request.local {
-            if cloudFeaturesPaused(using: cloud, forRequest: true) {
+            if try hasPreparedCachedTurn(using: cloud), let path = request.arguments["path"]?.string
+            {
+                return .object(["text": .string(try readPreparedCachedResource(path, using: cloud))]
+                )
+            }
+            if try cloudFeaturesPaused(using: cloud, forRequest: true) {
                 try network.check()
                 throw NetworkAccessFailure.requestPaused
             }

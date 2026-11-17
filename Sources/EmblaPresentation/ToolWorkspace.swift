@@ -44,6 +44,8 @@ public final class ToolWorkspace {
     public let network: NetworkAccess
     private(set) var requestAllowsNetwork: Bool?
     private(set) var requestHasNetworkDependency = false
+    @ObservationIgnored private var cachedSkillTurn:
+        (bookmark: Data, configuration: UUID, skill: SkillDocument?)?
     public private(set) var skills: [SkillEntry] = []
     public private(set) var selectedSkill: SkillDocument?
     public private(set) var servers: [MCPServer] = []
@@ -252,6 +254,7 @@ public final class ToolWorkspace {
 
     /// User registration/enabling authorizes reconnecting for a submitted message, not at startup.
     func prepare(using cloud: ConversationCloudSync, serverIDs: Set<UUID>? = nil) async throws {
+        cachedSkillTurn = nil
         requestAllowsNetwork = network.snapshot.allowsRequests
         requestHasNetworkDependency =
             requestAllowsNetwork == true
@@ -261,6 +264,12 @@ public final class ToolWorkspace {
             reloadSkills(using: cloud)
             try await waitForSkillPreparation()
             if usingCachedSettings { try validateSelectedPreference() }
+            if let bookmark = cloud.cachedFolderBookmark {
+                cachedSkillTurn = (
+                    bookmark, cloud.configurationRevision,
+                    usingCachedSettings ? selectedSkill : nil
+                )
+            }
             return
         }
         if settingsSourceKey != nil {
@@ -545,12 +554,47 @@ public final class ToolWorkspace {
     }
 
     func resetRequestPreparation() {
+        cachedSkillTurn = nil
         requestAllowsNetwork = nil
         requestHasNetworkDependency = false
     }
 
-    func cloudFeaturesPaused(using cloud: ConversationCloudSync, forRequest: Bool) -> Bool {
-        cloud.enabled && !permitsNetwork(forRequest: forRequest) && !usingCachedSettings
+    func hasPreparedCachedTurn(using cloud: ConversationCloudSync) throws -> Bool {
+        guard requestAllowsNetwork == false, let turn = cachedSkillTurn else { return false }
+        guard turn.configuration == cloud.configurationRevision,
+            cloud.cachedFolderBookmark == turn.bookmark
+        else { throw SkillFailure.changed }
+        return true
+    }
+
+    func validateRequestConfiguration(_ expected: UUID, using cloud: ConversationCloudSync) throws {
+        if try hasPreparedCachedTurn(using: cloud) { return }
+        guard expected == revision else { throw SkillFailure.changed }
+    }
+
+    var requestHasSkill: Bool {
+        if requestAllowsNetwork == false, let turn = cachedSkillTurn { return turn.skill != nil }
+        return selectedSkill != nil
+    }
+
+    func requestSkill(using cloud: ConversationCloudSync, forRequest: Bool) throws -> SkillDocument?
+    {
+        if forRequest, try hasPreparedCachedTurn(using: cloud) { return cachedSkillTurn?.skill }
+        return selectedSkill
+    }
+
+    func readPreparedCachedResource(_ path: String, using cloud: ConversationCloudSync) throws
+        -> String
+    {
+        guard try hasPreparedCachedTurn(using: cloud), let turn = cachedSkillTurn,
+            let skill = turn.skill, let store
+        else { throw SkillFailure.changed }
+        return try store.cachedResource(path, skill: skill, bookmark: turn.bookmark)
+    }
+
+    func cloudFeaturesPaused(using cloud: ConversationCloudSync, forRequest: Bool) throws -> Bool {
+        if forRequest, try hasPreparedCachedTurn(using: cloud) { return false }
+        return cloud.enabled && !permitsNetwork(forRequest: forRequest) && !usingCachedSettings
     }
 
     func validateRequestNetwork() throws {
