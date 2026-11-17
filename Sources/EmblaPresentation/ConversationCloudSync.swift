@@ -65,6 +65,7 @@ public final class ConversationCloudSync {
     @ObservationIgnored private var needsSync = false
     @ObservationIgnored private var baseNeedsSave = false
     @ObservationIgnored private var storedEnabled = false
+    @ObservationIgnored private var recoverableGrant = false
     @ObservationIgnored private var offPreferencePending = false
     @ObservationIgnored private var foreground = true
     @ObservationIgnored private var paused = true
@@ -73,7 +74,8 @@ public final class ConversationCloudSync {
 
     /// Internal consumers share the existing grant only after consent is actually durable.
     var authorizedFolderBookmark: Data? {
-        folderAccessReady && enabled && network.snapshot.allowsRequests ? bookmark : nil
+        folderAccessReady && enabled && recoverableGrant && network.snapshot.allowsRequests
+            ? bookmark : nil
     }
 
     public init(network: NetworkAccess = .shared) {
@@ -98,6 +100,7 @@ public final class ConversationCloudSync {
         self.consentVersion = consentVersion
         requiresScopeConsent = enabled && consentVersion != 2
         storedEnabled = enabled
+        recoverableGrant = enabled && consentVersion == 2 && bookmark != nil
         offPreferencePending = false
         self.bookmark = bookmark
         baseFingerprint = base
@@ -147,6 +150,7 @@ public final class ConversationCloudSync {
         pause()
         let configuration = UUID()
         configurationRevision = configuration
+        recoverableGrant = false
         offPreferencePending = false
         enabled = true
         requiresScopeConsent = false
@@ -176,6 +180,7 @@ public final class ConversationCloudSync {
         }
         guard configurationRevision == configuration, enabled else { return }
         storedEnabled = true
+        recoverableGrant = true
         guard network.snapshot.allowsRequests else {
             status = "iCloud is paused while network access is unavailable; the setting remains on."
             return
@@ -192,6 +197,7 @@ public final class ConversationCloudSync {
         configurationRevision = UUID()
         let configuration = configurationRevision
         enabled = false
+        recoverableGrant = false
         requiresScopeConsent = false
         offPreferencePending = true
         storage = nil
@@ -265,7 +271,7 @@ public final class ConversationCloudSync {
         pause()
         storage = nil
         folderAccessReady = false
-        guard enabled, !requiresScopeConsent else { return }
+        guard enabled, !requiresScopeConsent, recoverableGrant else { return }
         guard network.snapshot.allowsRequests else {
             status = "iCloud is paused while network access is unavailable; the setting remains on."
             return

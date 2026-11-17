@@ -35,7 +35,8 @@ The global iCloud preference, selected folder, permissions and readable settings
 preserved. Offline operation pauses new app access to cloud chats, settings, skills and
 actions. Device-local saved chats/drafts remain usable. Cloud skills/actions/settings are
 unavailable while paused; Embla does not silently substitute the separate Off profile.
-Coordinated file operations recheck the policy on entry and before reading/writing.
+Coordinated file operations recheck the policy on entry and before reading/writing. Recovery
+opens only a durably saved folder grant; pending or failed folder changes stay suspended.
 
 **The outline is not a system-wide network isolation guarantee.** iCloud Drive/File Provider
 may finish or later resume transfers already handed to the system. Embla cannot cancel all
@@ -59,8 +60,8 @@ cellular/Wi-Fi combinations and Apple-managed transfers require physical-device 
 
 On 2026-11-17 the real pinned model on the Mac completed offline manual summarization
 and exact codename recall with an enabled remote registration and no discovery. Synthetic
-integration tests separately exercise cancellation and file boundaries. All 226 unit/integration
-tests passed (179 presentation, 47 core). Review fixes cover on-demand connection upgrades
+integration tests separately exercise cancellation and file boundaries. All 227 unit/integration
+tests passed (180 presentation, 47 core). Review fixes cover on-demand connection upgrades
 and preserve a long-lived HTTP session per client, with independent per-task admission and
 cancellation. Two final simulator UI tests passed in light/dark appearance with chat, Settings and Context sheets, the keyboard
 boundary, and reconnect while the keyboard was already present. These are policy-injection checks,
