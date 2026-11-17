@@ -100,7 +100,7 @@ public actor MCPClient {
     public static let protocolVersion = "2026-07-28"
     private let endpoint: URL
     private let token: String?
-    private let session: URLSession
+    private let transport: NetworkTransport
     private let network: NetworkAccess
     private static let limit = 131_072
 
@@ -120,11 +120,8 @@ public actor MCPClient {
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 60
-        session = URLSession(
-            configuration: configuration, delegate: MCPNoRedirect(), delegateQueue: nil)
+        transport = NetworkTransport(configuration: configuration)
     }
-
-    deinit { session.invalidateAndCancel() }
 
     public func discover() async throws -> MCPDiscovery {
         let information = try await request("server/discover")
@@ -234,10 +231,8 @@ public actor MCPClient {
         }
         if let token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
-        let operation = NetworkByteRequest(
-            access: network, limit: Self.limit, overflow: MCPFailure.limit)
-        let (bytes, response) = try await operation.response(
-            for: request, configuration: session.configuration)
+        let (bytes, response) = try await transport.response(
+            for: request, access: network, limit: Self.limit, overflow: MCPFailure.limit)
         defer { bytes.task.cancel() }
         try bytes.task.check()
         guard let response = response as? HTTPURLResponse else { throw MCPFailure.invalidResponse }
@@ -349,14 +344,6 @@ public actor MCPClient {
         else { return "=?base64?" + Data(value.utf8).base64EncodedString() + "?=" }
         return value
     }
-}
-
-private final class MCPNoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
-    func urlSession(
-        _ session: URLSession, task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
-        completionHandler: @escaping @Sendable (URLRequest?) -> Void
-    ) { completionHandler(nil) }
 }
 
 struct MCPParameterHeader: Sendable, Equatable {

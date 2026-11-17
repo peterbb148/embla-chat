@@ -153,4 +153,26 @@ import Testing
         await #expect(throws: NetworkAccessFailure.offline) { try await pending.value }
         #expect(try await fixture.counts()["/slow"]?["tools/list"] == nil)
     }
+    @Test func onDemandConnectivityUpgradePreservesAnInflightRequestLease() async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let access = NetworkAccess(initialState: .requiresConnection)
+        let client = try fixture.client("slow", network: access)
+        let pending = Task { try await client.discover() }
+        defer { pending.cancel() }
+        let clock = ContinuousClock(); let started = clock.now
+        while try await fixture.counts()["/slow"]?["server/discover"] != 1,
+            clock.now - started < .seconds(10)
+        { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(try await fixture.counts()["/slow"]?["server/discover"] == 1)
+        access.updatePath(.satisfied)
+        #expect(access.snapshot.allowsRequests && !access.snapshot.localOnly)
+        try access.check()
+        pending.cancel()
+        do {
+            _ = try await pending.value
+            Issue.record("The slow fixture should finish only after explicit cancellation.")
+        } catch {
+            #expect(error is CancellationError || (error as? URLError)?.code == .cancelled)
+        }
+    }
 #endif

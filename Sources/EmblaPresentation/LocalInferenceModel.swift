@@ -100,6 +100,7 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var operationID: UUID?
     @ObservationIgnored private var pendingUnload = false
     @ObservationIgnored private var networkInterruption: String?
+    @ObservationIgnored private var appliedNetworkAdmission: Bool?
     @ObservationIgnored private var pendingClear = false
     @ObservationIgnored private var pendingSelection: UUID?
     @ObservationIgnored private var pendingProjectID: UUID?
@@ -316,6 +317,12 @@ public final class LocalInferenceModel {
 
     /// Network-dependent work fails explicitly; local-only generation can continue unchanged.
     public func connectivityChanged() {
+        let admitted = tools.network.snapshot.allowsRequests
+        if appliedNetworkAdmission == admitted {
+            refreshContextUsage()
+            return
+        }
+        appliedNetworkAdmission = admitted
         do { try tools.network.check() } catch {
             if running && tools.requestHasNetworkDependency {
                 networkInterruption = error.localizedDescription

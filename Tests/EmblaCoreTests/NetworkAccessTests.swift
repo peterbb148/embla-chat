@@ -19,6 +19,10 @@ import Testing
     access.activateRequests(after: access.snapshot.revision)
     try access.check()  // A connection attempt can activate an on-demand path.
     access.updatePath(.satisfied)
+    #expect(access.snapshot.allowsRequests) // An on-demand connection improved; no privacy exit.
+    try access.check()
+    access.updatePath(.unsatisfied)
+    access.updatePath(.satisfied)
     #expect(!access.snapshot.allowsRequests)
     access.activateRequests(after: access.snapshot.revision)
     try access.check()

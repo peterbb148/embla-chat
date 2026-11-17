@@ -34,10 +34,9 @@ struct NetworkBytes: AsyncSequence, Sendable {
     }
 }
 
-final class NetworkByteRequest: NSObject, URLSessionDataDelegate, Sendable {
+final class NetworkByteRequest: Sendable {
     private struct State {
         var task: URLSessionDataTask?
-        var session: URLSession?
         var lease: NetworkRequestLease?
         var header: CheckedContinuation<(NetworkBytes, URLResponse), any Error>?
         var cancelled = false
@@ -47,36 +46,38 @@ final class NetworkByteRequest: NSObject, URLSessionDataDelegate, Sendable {
     }
 
     private let state = Mutex(State())
+    private let router: NetworkStreamDelegate
     private let access: NetworkAccess
     private let limit: Int
     private let overflow: any Error & Sendable
     private let chunks: AsyncThrowingStream<Data, any Error>
     private let continuation: AsyncThrowingStream<Data, any Error>.Continuation
 
-    init(access: NetworkAccess, limit: Int, overflow: any Error & Sendable) {
+    init(
+        router: NetworkStreamDelegate, access: NetworkAccess, limit: Int,
+        overflow: any Error & Sendable
+    ) {
+        self.router = router
         self.access = access
         self.limit = limit
         self.overflow = overflow
         let pair = AsyncThrowingStream<Data, any Error>.makeStream()
         chunks = pair.stream
         continuation = pair.continuation
-        super.init()
     }
 
     func response(
-        for request: URLRequest, configuration: URLSessionConfiguration
+        for request: URLRequest, session: URLSession
     ) async throws -> (NetworkBytes, URLResponse) {
         try await withTaskCancellationHandler {
             try Task.checkCancellation()
             try access.check()
             return try await withCheckedThrowingContinuation { header in
-                let session = URLSession(
-                    configuration: configuration, delegate: self, delegateQueue: nil)
                 let task = session.dataTask(with: request)
+                router.insert(self, for: task.taskIdentifier)
                 state.withLock {
                     $0.header = header
                     $0.task = task
-                    $0.session = session
                 }
                 do {
                     try access.start(task) { lease in
@@ -87,7 +88,7 @@ final class NetworkByteRequest: NSObject, URLSessionDataDelegate, Sendable {
                     }
                 } catch {
                     finish(error)
-                    session.invalidateAndCancel()
+                    task.cancel()
                 }
             }
         } onCancel: {
@@ -99,11 +100,11 @@ final class NetworkByteRequest: NSObject, URLSessionDataDelegate, Sendable {
     func cancel() {
         let current = state.withLock { value in
             value.cancelled = true
-            return (value.task, value.lease, value.session)
+            return value.task
         }
-        current.0?.cancel()
-        current.2?.invalidateAndCancel()
-        if let lease = current.1 { access.finish(lease) }
+        if current != nil { finish(CancellationError()) }
+        current?.cancel()
+        if let lease = state.withLock({ $0.lease }) { access.finish(lease) }
     }
 
     func check() throws {
@@ -124,6 +125,7 @@ final class NetworkByteRequest: NSObject, URLSessionDataDelegate, Sendable {
             return (header, value.lease, value.headerDelivered)
         }
         guard let (header, lease, delivered) = pending else { return }
+        if let task = state.withLock({ $0.task }) { router.remove(task.taskIdentifier) }
         var failure = error
         do { try lease?.check() } catch { failure = error }
         if let header {
@@ -134,9 +136,8 @@ final class NetworkByteRequest: NSObject, URLSessionDataDelegate, Sendable {
         if !delivered, let lease { access.finish(lease) }
     }
 
-    func urlSession(
-        _ session: URLSession, dataTask: URLSessionDataTask,
-        didReceive response: URLResponse,
+    func received(
+        response: URLResponse,
         completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
     ) {
         do { try check() } catch {
@@ -154,7 +155,7 @@ final class NetworkByteRequest: NSObject, URLSessionDataDelegate, Sendable {
         completionHandler(.allow)
     }
 
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    func received(data: Data, task: URLSessionDataTask) {
         do {
             try check()
             let fits = state.withLock { value in
@@ -166,18 +167,63 @@ final class NetworkByteRequest: NSObject, URLSessionDataDelegate, Sendable {
             continuation.yield(data)
         } catch {
             finish(error)
-            dataTask.cancel()
+            task.cancel()
         }
+    }
+
+    func completed(_ error: (any Error)?) { finish(error) }
+}
+
+/// One session per client retains connection pooling. The delegate routes callbacks by task ID;
+/// each request still owns its independent bounded stream, cancellation and network lease.
+final class NetworkTransport: Sendable {
+    private let router: NetworkStreamDelegate
+    private let session: URLSession
+
+    init(configuration: URLSessionConfiguration) {
+        let router = NetworkStreamDelegate()
+        self.router = router
+        session = URLSession(configuration: configuration, delegate: router, delegateQueue: nil)
+    }
+
+    deinit { session.invalidateAndCancel() }
+
+    func response(
+        for request: URLRequest, access: NetworkAccess, limit: Int, overflow: any Error & Sendable
+    ) async throws -> (NetworkBytes, URLResponse) {
+        let operation = NetworkByteRequest(
+            router: router, access: access, limit: limit, overflow: overflow)
+        return try await operation.response(for: request, session: session)
+    }
+}
+
+final class NetworkStreamDelegate: NSObject, URLSessionDataDelegate, Sendable {
+    private let requests = Mutex<[Int: NetworkByteRequest]>([:])
+    func insert(_ request: NetworkByteRequest, for id: Int) {
+        requests.withLock { $0[id] = request }
+    }
+    func remove(_ id: Int) { requests.withLock { $0[id] = nil } }
+    private func request(_ task: URLSessionTask) -> NetworkByteRequest? {
+        requests.withLock { $0[task.taskIdentifier] }
+    }
+
+    func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+        completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let operation = request(dataTask) else { completionHandler(.cancel); return }
+        operation.received(response: response, completionHandler: completionHandler)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        request(dataTask)?.received(data: data, task: dataTask)
     }
 
     func urlSession(
         _ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?
-    ) {
-        finish(error)
-        session.finishTasksAndInvalidate()
-    }
+    ) { request(task)?.completed(error) }
 
-    /// Preserve the clients' no-redirect rule, including credential-bearing requests.
+    /// Never follow redirects, including credential-bearing requests.
     func urlSession(
         _ session: URLSession, task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,

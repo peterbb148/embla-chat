@@ -41,7 +41,16 @@ final class AppConnectivity {
         observer = access.observe { [weak self] value in
             Task { @MainActor [weak self] in
                 guard let self, value.revision >= snapshot.revision else { return }
+                let changedPrivacy = snapshot.localOnly != value.localOnly
                 snapshot = value
+                if changedPrivacy {
+                    UIAccessibility.post(
+                        notification: .announcement,
+                        argument: value.localOnly
+                            ? "Privacy mode. Network access paused."
+                            : "Privacy mode ended. Check connectivity status for network availability."
+                    )
+                }
             }
         }
     }

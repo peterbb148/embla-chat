@@ -24,7 +24,7 @@ public struct MCPRegistryPage: Sendable {
 
 /// Anonymous reads from the official catalog, separate from registered-server credentials.
 public actor MCPRegistryClient {
-    private let session: URLSession
+    private let transport: NetworkTransport
     private let network: NetworkAccess
     private static let limit = 2_097_152
 
@@ -36,24 +36,20 @@ public actor MCPRegistryClient {
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 45
-        session = URLSession(
-            configuration: configuration, delegate: RegistryNoRedirect(), delegateQueue: nil)
+        transport = NetworkTransport(configuration: configuration)
     }
 
     init(session: URLSession, network: NetworkAccess = NetworkAccess(initialState: .satisfied)) {
-        self.session = session
+        transport = NetworkTransport(configuration: session.configuration)
         self.network = network
     }
-    deinit { session.invalidateAndCancel() }
 
     /// A nonempty cursor is opaque; keep the same search and version filter on every page.
     public func page(search: String = "", cursor: String? = nil) async throws -> MCPRegistryPage {
         try Task.checkCancellation()
         let request = Self.request(search: search, cursor: cursor)
-        let operation = NetworkByteRequest(
-            access: network, limit: Self.limit, overflow: MCPRegistryFailure.tooLarge)
-        let (bytes, response) = try await operation.response(
-            for: request, configuration: session.configuration)
+        let (bytes, response) = try await transport.response(
+            for: request, access: network, limit: Self.limit, overflow: MCPRegistryFailure.tooLarge)
         defer { bytes.task.cancel() }
         try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse else {
@@ -192,15 +188,4 @@ private struct RegistryResponse: Decodable {
     }
     /// Variables are not interpreted or substituted by this client.
     struct Variable: Decodable {}
-}
-
-private final class RegistryNoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    func urlSession(
-        _ session: URLSession, task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping @Sendable (URLRequest?) -> Void
-    ) {
-        completionHandler(nil)
-    }
 }

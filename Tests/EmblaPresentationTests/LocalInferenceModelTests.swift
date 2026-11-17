@@ -1363,7 +1363,17 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
             session: InferenceSession { _, _ in backend }, tools: workspace)
         model.prompt = "Retrieve live synthetic data"
         model.run()
-        try await Task.sleep(for: .milliseconds(100))
+        let clock = ContinuousClock()
+        let start = clock.now
+        while clock.now - start < .seconds(10) {
+            let (bytes, _) = try await URLSession.shared.data(from: wire.url("request-counts"))
+            let counts = try JSONDecoder().decode([String: [String: Int]].self, from: bytes)
+            if counts["/slow"]?["server/discover"] == 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let (bytes, _) = try await URLSession.shared.data(from: wire.url("request-counts"))
+        let counts = try JSONDecoder().decode([String: [String: Int]].self, from: bytes)
+        try #require(counts["/slow"]?["server/discover"] == 1)
         policy.updatePath(.unsatisfied)
         model.connectivityChanged()
         await model.waitUntilIdle()
@@ -1375,5 +1385,31 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
         model.connectivityChanged()
         try await Task.sleep(for: .milliseconds(100))
         #expect(!model.busy && backend.calls == 0 && workspace.discovered.isEmpty)
+    }
+#endif
+
+#if os(macOS)
+    @Test @MainActor func anOnDemandPathUpgradeRetainsPreparedToolClientsAndGrants() async throws {
+        let fixture = try PresentationFixture(); defer { fixture.clean() }
+        let wire = try PlanningWireFixture(); defer { wire.stop() }
+        let policy = NetworkAccess(initialState: .requiresConnection)
+        let workspace = ToolWorkspace(
+            configuration: fixture.root.appendingPathComponent("servers.json"), network: policy)
+        let server = MCPServer(name: "Synthetic on-demand server", endpoint: wire.url("json"))
+        try await workspace.saveServer(server)
+        let backend = PresentationBackend(pauseFirst: false)
+        let model = await fixture.model(
+            session: InferenceSession { _, _ in backend }, tools: workspace)
+        model.connectivityChanged()
+        try await workspace.prepare(using: model.cloud)
+        let revision = workspace.revision
+        let names = workspace.servers.first?.enabledTools
+        policy.updatePath(.satisfied)
+        model.connectivityChanged()
+        #expect(workspace.revision == revision && workspace.servers.first?.enabledTools == names)
+        #expect(workspace.discovered[server.id]?.isEmpty == false)
+        let result = try await workspace.remoteCall(
+            serverID: server.id, name: "echo", arguments: ["text": .string("Kept connection")])
+        #expect(try result.text().contains("Kept connection"))
     }
 #endif

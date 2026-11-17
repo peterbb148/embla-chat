@@ -117,9 +117,16 @@ public final class NetworkAccess: Sendable {
         let change = state.withLock {
             value -> (Snapshot, [URLSessionTask], [@Sendable (Snapshot) -> Void])? in
             guard path != value.path else { return nil }
+            let staysUsable =
+                value.ready
+                && (value.path == .satisfied || value.path == .requiresConnection)
+                && (path == .satisfied || path == .requiresConnection)
             value.path = path
-            value.ready = false
+            value.ready = staysUsable
             value.revision += 1
+            if staysUsable {
+                return (value.snapshot, [], Array(value.observers.values))
+            }
             let failure = Self.failure(for: value.snapshot)
             let tasks = value.requests.values.map { task, lease in
                 lease.revoke(failure)
