@@ -569,3 +569,35 @@ private actor ActionFailingStore: ConversationStoring {
     #expect(fixture.model.messages.filter { $0.role == .user }.map(\.text) == ["Original draft"])
     await fixture.finish()
 }
+
+@Test @MainActor func editedMessagesWithUnchangedIDsInvalidateReplacementConsent() async throws {
+    let fixture = try await ActionSubmissionFixture()
+    defer { fixture.clean() }
+    fixture.model.prompt = "Original turn"
+    fixture.model.run(); await fixture.model.waitUntilIdle()
+    let action = QuickAction(
+        id: "instant", label: "Instant", order: 0, prompt: "Configured send", autoSend: true)
+    let actions = await loadedActionModel(action, cloud: fixture.model.cloud)
+    fixture.model.prompt = "Private draft"
+    guard case .needsConfirmation(let consent) = try await actions.apply(action, to: fixture.model)
+    else { Issue.record("Expected replacement confirmation"); return }
+    let original = try #require(fixture.model.cloud.current?()?.snapshot)
+    let restore = try #require(fixture.model.cloud.apply)
+    var edited = original
+    let index = try #require(
+        edited.chats.firstIndex {
+            $0.conversationID == fixture.model.conversationID
+        })
+    edited.chats[index].messages[0].text = "Edited text retaining the same message ID"
+    try await restore(edited, original.fingerprint())
+    fixture.model.prompt = "Private draft"
+    #expect(fixture.model.messages.map(\.id) == consent.messages.map(\.id))
+    #expect(fixture.model.messages != consent.messages)
+    await #expect(throws: QuickActionError.self) {
+        try await actions.apply(action, to: fixture.model, replacing: consent)
+    }
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.model.prompt == "Private draft" && fixture.backend.calls == 1)
+    #expect(fixture.model.messages[0].text == "Edited text retaining the same message ID")
+    await fixture.finish()
+}

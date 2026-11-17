@@ -49,7 +49,7 @@ public struct QuickAction: Codable, Sendable, Equatable, Identifiable {
 public struct QuickActionReplacement: Sendable, Equatable {
     public let action: QuickAction
     public let conversationID: UUID
-    public let messageIDs: [UUID]
+    public let messages: [ChatMessage]
     public let draft: String
 }
 

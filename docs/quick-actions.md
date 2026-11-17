@@ -12,7 +12,8 @@ configured prompt immediately through the normal Send path; these bubbles have a
 send arrow. A different nonempty draft requires **Replace draft** or **Replace and send**
 confirmation. Cancel keeps the draft and sends nothing. Confirmation belongs to the exact
 chat, transcript, draft and loaded action: navigating, adding another turn, editing the draft
-or changing sources invalidates it. Send is disabled while an action is preparing; a late
+or changing sources invalidates it. Edited messages invalidate it even when their IDs stay the
+same. Send is disabled while an action is preparing; a late
 skill-selection result cannot submit after an intervening turn, even if the draft text matches again.
 
 Immediate sending requires a verified model, available settings/skill and ready chat storage.
