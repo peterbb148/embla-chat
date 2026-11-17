@@ -117,6 +117,11 @@ provider validation remains separately tracked in #45.
 ## Connectivity
 
 [Offline privacy mode](offline-privacy.md) preserves the global On choice and pauses new
-cloud access. Cloud skills/actions/settings are explicitly unavailable while paused; the app
-does not substitute its separate device profile. OS-managed transfers already handed to
+cloud access. The last successfully loaded settings, actions and skills remain available
+from a private, excluded-from-backup cache on the device, scoped to that folder grant. This
+includes the readable keys in the shared settings document; they never enter model prompts
+or chat files. Offline configuration edits require reconnection. Skill selection can change
+for the current session without writing the shared preference. Uncached skill resources
+require a successful online read first. The app never substitutes its separate device
+profile or hides an online read error by using a stale snapshot. OS-managed transfers already handed to
 iCloud Drive may resume later. Consented synchronization resumes when connectivity returns.

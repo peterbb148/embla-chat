@@ -78,6 +78,11 @@ public final class ConversationCloudSync {
             ? bookmark : nil
     }
 
+    /// Identifies an already-consented local snapshot without resolving or opening a cloud URL.
+    var cachedFolderBookmark: Data? {
+        enabled && recoverableGrant && !requiresScopeConsent ? bookmark : nil
+    }
+
     public init(network: NetworkAccess = .shared) {
         self.network = network
         factory = { ICloudConversationStore(bookmark: $0, network: network) }

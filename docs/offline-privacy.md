@@ -16,7 +16,7 @@ not inspect radio switches or send third-party connectivity probes.
 ## What remains available
 
 Downloaded-model inference, saved local chats/drafts, local compaction, and skills/actions
-from the device profile remain available. Enabled remote registrations do not force
+from the device profile or the last synced iCloud copy remain available. Enabled remote registrations do not force
 discovery before offline chat. Remote tools are excluded from the current model capabilities;
 the model receives an explicit limitation, not a fabricated live result. Existing historical
 tool outputs stay in the transcript and are not represented as newly retrieved data.
@@ -33,9 +33,19 @@ until a new submission, even if connectivity returns while the model is answerin
 ## iCloud boundary
 
 The global iCloud preference, selected folder, permissions and readable settings file are
-preserved. Offline operation pauses new app access to cloud chats, settings, skills and
-actions. Device-local saved chats/drafts remain usable. Cloud skills/actions/settings are
-unavailable while paused; Embla does not silently substitute the separate Off profile.
+preserved. Offline operation pauses new app access to iCloud/File Provider. Device-local saved
+chats/drafts remain usable. Successfully loaded actions, skill instructions, supporting
+files and settings are saved in a private device cache, isolated by the durably authorized
+folder grant and excluded from backup. Offline reads use that same profile, including after
+a restart; Embla never substitutes the separate Off profile. Settings snapshots also contain
+the readable MCP keys already authorized for that folder. Remote calls remain blocked.
+
+Actions and skill instructions are cached on successful reload; supporting files are cached
+when successfully opened. Content not yet cached fails clearly and must be loaded while
+connected first. An offline skill selection applies to this session through Send preparation;
+it does not queue a change to the shared preference. Shared configuration edits and starter
+file creation require connectivity. Reconnection refreshes the cloud source and restores its
+shared skill choice. No online read error silently selects an older cached copy.
 Coordinated file operations recheck the policy on entry and before reading/writing. Recovery
 opens only a durably saved folder grant; pending or failed folder changes stay suspended.
 
@@ -61,8 +71,9 @@ cellular/Wi-Fi combinations and Apple-managed transfers require physical-device 
 
 On 2026-11-17 the real pinned model on the Mac completed offline manual summarization
 and exact codename recall with an enabled remote registration and no discovery. Synthetic
-integration tests separately exercise cancellation and file boundaries. All 227 unit/integration
-tests passed (180 presentation, 47 core). Review fixes cover on-demand connection upgrades
+integration tests separately exercise cancellation and file boundaries. All 230 unit/integration
+tests passed (183 presentation, 47 core), including offline snapshot cold-start and folder
+isolation checks. Review fixes cover on-demand connection upgrades
 and preserve a long-lived HTTP session per client, with independent per-task admission and
 cancellation. Simulator UI coverage checks light/dark appearance, Settings and Context sheets,
 keyboard input, reconnect while the keyboard is already present, and rotation. Full-screen
@@ -73,9 +84,11 @@ changed physical radios.
 Physical iPhone checks verified fresh Time.Now calls over cellular with Wi-Fi off and over
 Wi-Fi with airplane mode on. Airplane mode with Wi-Fi off showed privacy mode, no enabled
 remote tools, and a successful local answer. The user requested that the outline also
-surround the keyboard; final physical verification of that correction and reconnect remains
-pending in #78. Successful personal-iCloud synchronization was observed after the user
-confirmed scope; broader provider/cross-device/failure testing remains #45.
+surround the keyboard; the user confirmed full keyboard coverage on the installed phone
+build. After reconnect,
+Device Hub showed the border cleared, network availability and iCloud still On. The new
+cached-data behavior is awaiting phone verification in #78. Successful personal-iCloud
+synchronization was observed after the user confirmed scope; broader provider/cross-device/failure testing remains #45.
 
 Phone testing exposed confusing Settings wording. A satisfied path now displays **Network
 connection available**; individual service failures retain their actual errors. Older iCloud

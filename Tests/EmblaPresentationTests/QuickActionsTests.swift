@@ -116,7 +116,7 @@ private actor ActionsFixture: QuickActionsStoring {
         case .device:
             deviceReads += 1
             return local
-        case .cloud:
+        case .cloud, .cachedCloud:
             cloudReads += 1
             if holdCloud { await withCheckedContinuation { gate = $0 } }
             if failCloud { throw CocoaError(.fileReadNoPermission) }

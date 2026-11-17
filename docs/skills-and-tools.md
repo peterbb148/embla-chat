@@ -81,7 +81,10 @@ permissions. A changed endpoint still clears permissions. Enabled registrations 
 registrations awaiting their first successful discovery) reconnect on Send after restart.
 Discovery and calls do not run merely at app launch.
 [Offline privacy mode](offline-privacy.md) blocks discovery and remote calls, including cached
-clients, while keeping device-local skills and downloaded-model chat available. Failed calls
+clients, while keeping device-local skills, previously loaded iCloud skill instructions and
+supporting files, and downloaded-model chat available. Uncached files need a successful
+online read first; no scripts execute. Offline skill choices last for the session and do not
+modify the shared preference. Failed calls
 require an explicit retry; reconnecting does not replay them. Explicit context-count retry and
 manual compaction can obtain missing tool metadata for older settings; ordinary counting
 uses last-discovered definitions locally. No server is registered implicitly.

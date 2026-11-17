@@ -6,6 +6,7 @@ import EmblaCore
 enum QuickActionSource: Sendable, Equatable {
     case device
     case cloud(Data)
+    case cachedCloud(Data)
 }
 
 protocol QuickActionsStoring: Sendable {
@@ -19,6 +20,9 @@ actor QuickActionStore: QuickActionsStoring {
     let stateRoot: URL
 
     private let network: NetworkAccess
+    private var cache: SyncedResourceCache {
+        SyncedResourceCache(root: stateRoot.appendingPathComponent("CloudSnapshots"))
+    }
 
     init(localRoot: URL, stateRoot: URL, network: NetworkAccess = .shared) {
         self.network = network
@@ -34,10 +38,15 @@ actor QuickActionStore: QuickActionsStoring {
             return try CoordinatedActionFile.read(
                 at: localRoot.appendingPathComponent("actions.json"))
         case .cloud(let bookmark):
-            return try withCloudAccess(bookmark) { root in
+            let value = try withCloudAccess(bookmark) { root in
                 try CoordinatedActionFile.read(
                     at: root.appendingPathComponent("Actions/actions.json"), network: network)
             }
+            try network.check()
+            try cache.write(value.encoded(), name: "actions", bookmark: bookmark)
+            return value
+        case .cachedCloud(let bookmark):
+            return try QuickActionConfiguration.decode(cache.read("actions", bookmark: bookmark))
         }
     }
 
@@ -56,6 +65,8 @@ actor QuickActionStore: QuickActionsStoring {
                 try CoordinatedActionFile.create(
                     at: actions.appendingPathComponent("actions.json"), network: network)
             }
+        case .cachedCloud:
+            throw NetworkAccessFailure.offline
         }
     }
 

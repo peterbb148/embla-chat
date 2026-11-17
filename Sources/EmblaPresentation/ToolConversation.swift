@@ -132,7 +132,7 @@ extension ToolWorkspace {
             """
         if cloud.enabled {
             text +=
-                " iCloud skills, actions and settings are paused. Do not claim to use an unavailable cloud skill."
+                " Cloud synchronization is paused. Only the last synced content saved on this device is available; do not claim to read uncached cloud files."
         }
         return text
     }

@@ -1231,6 +1231,7 @@ func connectivityRecoveryCannotOpenPendingOrFailedFolderPermissions(_ previously
     cloud.connectivityChanged()
     #expect(opened.withLock { $0 } == before)
     #expect(!cloud.folderAccessReady && cloud.authorizedFolderBookmark == nil)
+    #expect(cloud.cachedFolderBookmark == nil)
     await gate.release()
     await #expect(throws: CloudConversationError.coordination) { try await pending.value }
     policy.updatePath(.unsatisfied)
@@ -1240,12 +1241,14 @@ func connectivityRecoveryCannotOpenPendingOrFailedFolderPermissions(_ previously
     cloud.connectivityChanged()
     #expect(opened.withLock { $0 } == before)
     #expect(cloud.enabled == previouslyOn && !cloud.folderAccessReady)
+    #expect(cloud.cachedFolderBookmark == nil)
     #expect(cloud.error != nil)
     policy.updatePath(.unsatisfied)
     cloud.connectivityChanged()
     cloud.persist = {}
     try await cloud.enable(bookmark: proposed)
     #expect(opened.withLock { $0 } == before && !cloud.folderAccessReady)
+    #expect(cloud.cachedFolderBookmark == proposed)
     policy.updatePath(.satisfied)
     policy.activateRequests(after: policy.snapshot.revision)
     cloud.connectivityChanged()

@@ -45,8 +45,7 @@ public final class QuickActionsModel {
     public static func sourceKey(for cloud: ConversationCloudSync) -> String {
         guard cloud.enabled else { return "device" }
         guard cloud.network.snapshot.allowsRequests else {
-            return "network-paused:" + cloud.configurationRevision.uuidString
-                + ":" + String(cloud.network.snapshot.revision)
+            return "cloud-offline:" + cloud.configurationRevision.uuidString
         }
         guard !cloud.requiresScopeConsent, cloud.folderAccessReady else {
             return "unavailable:" + cloud.configurationRevision.uuidString + ":" + cloud.status
@@ -187,15 +186,20 @@ public final class QuickActionsModel {
         }
         let source: QuickActionSource
         if cloud.enabled {
-            do { try cloud.network.check() } catch {
-                self.error = error.localizedDescription
-                return
-            }
-            guard !cloud.requiresScopeConsent, let bookmark = cloud.authorizedFolderBookmark else {
+            guard !cloud.requiresScopeConsent, let bookmark = cloud.cachedFolderBookmark else {
                 error = QuickActionError.sourceUnavailable.localizedDescription
                 return
             }
-            source = .cloud(bookmark)
+            if cloud.network.snapshot.allowsRequests {
+                guard cloud.authorizedFolderBookmark != nil else {
+                    error = QuickActionError.sourceUnavailable.localizedDescription
+                    return
+                }
+                source = .cloud(bookmark)
+            } else {
+                source = .cachedCloud(bookmark)
+                sourceDescription = "Last synced iCloud Actions copy on this device"
+            }
         } else {
             source = .device
         }

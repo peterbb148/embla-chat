@@ -72,10 +72,10 @@ import EmblaCore
     #expect(try tools.specifications(using: cloud).isEmpty)
     #expect(
         try tools.instructions(using: cloud).contains(
-            "iCloud skills, actions and settings are paused"))
+            "Cloud synchronization is paused"))
     cloud.refresh()
     #expect(cloud.enabled && cloud.error == nil)
-    #expect(QuickActionsModel.sourceKey(for: cloud).hasPrefix("network-paused:"))
+    #expect(QuickActionsModel.sourceKey(for: cloud).hasPrefix("cloud-offline:"))
 }
 
 @Test func cloudFileBoundariesRejectOfflineBeforeAnyDocumentOrBookmarkAccess() async throws {

@@ -8,43 +8,91 @@ actor SkillStore {
     let localRoot: URL
 
     private let network: NetworkAccess
+    private let cache: SyncedResourceCache
 
-    init(localRoot: URL, network: NetworkAccess = .shared) {
+    init(localRoot: URL, network: NetworkAccess = .shared, cacheRoot: URL? = nil) {
         self.localRoot = localRoot
         self.network = network
+        cache = SyncedResourceCache(
+            root: cacheRoot
+                ?? localRoot.deletingLastPathComponent()
+                .appendingPathComponent(".synced-skills"))
+    }
+
+    private struct Listing: Codable {
+        var documents: [String: Data] = [:]
+        var errors: [String: String] = [:]
+
+        func entries() throws -> [SkillEntry] {
+            guard documents.count + errors.count <= 256,
+                Set(documents.keys).isDisjoint(with: errors.keys)
+            else { throw SyncedResourceFailure.invalid }
+            let valid = try documents.map { name, data in
+                SkillEntry(
+                    id: name, document: try SkillDocument.decode(data, directoryName: name),
+                    error: nil)
+            }
+            return (valid + errors.map { SkillEntry(id: $0.key, document: nil, error: $0.value) })
+                .sorted { $0.id < $1.id }
+        }
     }
 
     func entries(_ source: QuickActionSource) throws -> [SkillEntry] {
-        try withRoot(source) { root, descriptor in
+        if case .cachedCloud(let bookmark) = source {
+            return try JSONDecoder().decode(
+                Listing.self, from: cache.read("listing", bookmark: bookmark)
+            )
+            .entries()
+        }
+        var listing = Listing()
+        let entries = try withRoot(source) { root, descriptor in
             let folders = try Self.names(in: descriptor).sorted()
             return try folders.map { name in
                 try Task.checkCancellation()
                 do {
-                    let document = try SkillDocument.decode(
-                        readFile(
-                            "SKILL.md", folder: name, root: root, descriptor: descriptor,
-                            source: source),
-                        directoryName: name)
+                    let data = try readFile(
+                        "SKILL.md", folder: name, root: root, descriptor: descriptor,
+                        source: source)
+                    let document = try SkillDocument.decode(data, directoryName: name)
+                    listing.documents[name] = data
                     return SkillEntry(id: name, document: document, error: nil)
                 } catch is CancellationError { throw CancellationError() } catch {
+                    listing.errors[name] = error.localizedDescription
                     return SkillEntry(id: name, document: nil, error: error.localizedDescription)
                 }
             }
         }
+        if case .cloud(let bookmark) = source {
+            try network.check()
+            try cache.write(JSONEncoder().encode(listing), name: "listing", bookmark: bookmark)
+        }
+        return entries
     }
 
     func resource(_ path: String, skill: SkillDocument, source: QuickActionSource) throws -> String
     {
-        try withRoot(source) { root, descriptor in
+        guard path.split(separator: "/").first != "scripts",
+            path.components(separatedBy: "/").allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") })
+        else { throw SkillFailure.unsupportedResource }
+        let key = "resource:" + skill.name + ":" + skill.fingerprint + ":" + path
+        if case .cachedCloud(let bookmark) = source {
+            let listing = try entries(source)
+            guard listing.first(where: { $0.id == skill.name })?.document == skill else {
+                throw SkillFailure.changed
+            }
+            let data = try cache.read(key, bookmark: bookmark)
+            guard data.count <= 65_536, let text = String(data: data, encoding: .utf8) else {
+                throw SkillFailure.unsupportedResource
+            }
+            return text
+        }
+        let text = try withRoot(source) { root, descriptor in
             let current = try SkillDocument.decode(
                 readFile(
                     "SKILL.md", folder: skill.name, root: root, descriptor: descriptor,
                     source: source),
                 directoryName: skill.name)
             guard current == skill else { throw SkillFailure.changed }
-            guard path.split(separator: "/").first != "scripts" else {
-                throw SkillFailure.unsupportedResource
-            }
             let data = try readFile(
                 path, folder: skill.name, root: root, descriptor: descriptor, source: source)
             guard let text = String(data: data, encoding: .utf8) else {
@@ -52,6 +100,11 @@ actor SkillStore {
             }
             return text
         }
+        if case .cloud(let bookmark) = source {
+            try network.check()
+            try cache.write(Data(text.utf8), name: key, bookmark: bookmark)
+        }
+        return text
     }
 
     private func readFile(
@@ -194,6 +247,8 @@ actor SkillStore {
             defer { close(skills) }
             try network.check()
             return try action(root.appendingPathComponent("Skills", isDirectory: true), skills)
+        case .cachedCloud:
+            throw SyncedResourceFailure.notCached
         }
     }
 }

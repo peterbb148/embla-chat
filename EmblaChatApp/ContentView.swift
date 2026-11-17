@@ -726,7 +726,8 @@ private struct ModelSettingsView: View {
                     Text(connectivity.label ?? "Network connection available")
                         .accessibilityIdentifier("connectivity-settings-status")
                     Text(
-                        "In privacy mode, chat stays on this device while internet tools "
+                        "In privacy mode, chat and previously synced actions and skills stay available "
+                            + "on this device while internet tools "
                             + "and new iCloud access pause. Your iCloud setting stays unchanged. "
                             + "Previously queued iCloud transfers may resume later."
                     )

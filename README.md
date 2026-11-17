@@ -20,7 +20,7 @@ saved chats through iCloud Drive. Model inference runs locally after the model i
 - Portable Agent Skills and automatic calls to registered, enabled MCP tools.
 - Model download, integrity verification and storage management.
 - Optional iCloud Drive synchronization, off by default.
-- Automatic offline privacy mode with a network gate and app-wide green outline.
+- Offline privacy mode with a network gate, full-screen green outline and locally cached synced actions and skills.
 
 ## Getting started
 
