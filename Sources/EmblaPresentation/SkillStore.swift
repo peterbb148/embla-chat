@@ -81,12 +81,28 @@ actor SkillStore {
         try JSONDecoder().decode(Listing.self, from: cache.read("listing", bookmark: bookmark))
     }
 
+    /// A corrupt generated snapshot must not prevent reloading its authoritative cloud source.
+    nonisolated func previousListingForRefresh(_ bookmark: Data) throws -> Listing {
+        let data: Data
+        do {
+            data = try cache.read("listing", bookmark: bookmark)
+        } catch SyncedResourceFailure.notCached { return Listing() } catch SyncedResourceFailure
+            .invalid
+        { return Listing() }
+        do {
+            let listing = try JSONDecoder().decode(Listing.self, from: data)
+            _ = try listing.entries()
+            return listing
+        } catch {
+            // Only decoding/validation is discarded here; cache I/O errors still propagate.
+            return Listing()
+        }
+    }
+
     private func providerEntries(_ source: QuickActionSource) throws -> [SkillEntry] {
         let previous: Listing
         if case .cloud(let bookmark) = source {
-            do { previous = try cachedListing(bookmark) } catch SyncedResourceFailure.notCached {
-                previous = Listing()
-            }
+            previous = try previousListingForRefresh(bookmark)
         } else {
             previous = Listing()
         }
@@ -150,25 +166,49 @@ actor SkillStore {
             throw SkillFailure.unsupportedResource
         }
         let key = "resource:" + skill.name + ":" + skill.fingerprint + ":" + path
-        let text = try withRoot(source) { root, descriptor in
-            let current = try SkillDocument.decode(
-                readFile(
-                    "SKILL.md", folder: skill.name, root: root, descriptor: descriptor,
-                    source: source),
-                directoryName: skill.name)
-            guard current == skill else { throw SkillFailure.changed }
-            let data = try readFile(
-                path, folder: skill.name, root: root, descriptor: descriptor, source: source)
-            guard let text = String(data: data, encoding: .utf8) else {
-                throw SkillFailure.unsupportedResource
+        let text: String
+        do {
+            text = try withRoot(source) { root, descriptor in
+                let current = try SkillDocument.decode(
+                    readFile(
+                        "SKILL.md", folder: skill.name, root: root, descriptor: descriptor,
+                        source: source),
+                    directoryName: skill.name)
+                guard current == skill else { throw SkillFailure.changed }
+                let data = try readFile(
+                    path, folder: skill.name, root: root, descriptor: descriptor, source: source)
+                guard let text = String(data: data, encoding: .utf8) else {
+                    throw SkillFailure.unsupportedResource
+                }
+                return text
             }
-            return text
+        } catch {
+            if case .cloud(let bookmark) = source {
+                try invalidateResource(path, skill: skill, bookmark: bookmark, after: error)
+            }
+            throw error
         }
         if case .cloud(let bookmark) = source {
             try network.check()
             try cache.write(Data(text.utf8), name: key, bookmark: bookmark)
         }
         return text
+    }
+
+    nonisolated func invalidateResource(
+        _ path: String, skill: SkillDocument,
+        bookmark: Data, after error: Error
+    ) throws {
+        let failure = error as NSError
+        let deleted =
+            failure.domain == NSCocoaErrorDomain
+            && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(failure.code)
+        if !deleted {
+            guard case SkillFailure.unsupportedResource = error else { return }
+        }
+        try cache.remove(
+            "resource:" + skill.name + ":" + skill.fingerprint + ":" + path,
+            bookmark: bookmark)
     }
 
     private func readFile(
@@ -201,7 +241,7 @@ actor SkillStore {
     /// Directory descriptors pin the selected tree; O_NOFOLLOW makes each traversal atomic.
     static func openDirectory(_ path: String) throws -> Int32 {
         let descriptor = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard descriptor >= 0 else { throw SkillFailure.unsupportedResource }
+        guard descriptor >= 0 else { throw readFailure(errno) }
         return descriptor
     }
 
@@ -314,7 +354,7 @@ actor SkillStore {
             else { throw CloudConversationError.notICloudFolder }
             let skills = openat(
                 descriptor, "Skills", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            guard skills >= 0 else { throw SkillFailure.unsupportedResource }
+            guard skills >= 0 else { throw Self.readFailure(errno) }
             defer { close(skills) }
             try network.check()
             return try action(root.appendingPathComponent("Skills", isDirectory: true), skills)

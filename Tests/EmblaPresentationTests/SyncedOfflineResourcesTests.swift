@@ -333,3 +333,73 @@ extension QuickActionStore {
     #expect(try changed.entries().first?.document?.fingerprint != original.fingerprint)
     #expect(try SkillStore.Listing().entries().isEmpty)  // Removed directories are not retained.
 }
+
+@Test func corruptGeneratedSkillCacheCanBeRebuiltFromSuccessfulSourceReads() async throws {
+    let root = try snapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bookmark = Data("synthetic corrupt cache grant".utf8)
+    let cacheRoot = root.appendingPathComponent("Cache")
+    let cache = SyncedResourceCache(root: cacheRoot)
+    let store = SkillStore(
+        localRoot: root.appendingPathComponent("OffSkills"), cacheRoot: cacheRoot)
+    let malformed = Data("---\nname: [invalid YAML\n---\nChanged.".utf8)
+    for data in [
+        Data("invalid JSON".utf8),
+        try JSONEncoder().encode(SkillStore.Listing(documents: ["saved-skill": malformed])),
+    ] {
+        try cache.write(data, name: "listing", bookmark: bookmark)
+        #expect(try store.previousListingForRefresh(bookmark).documents.isEmpty)
+        await #expect(throws: (any Error).self) { try await store.entries(.cachedCloud(bookmark)) }
+        var fresh = SkillStore.Listing()
+        let bytes = Data(
+            "---\nname: saved-skill\ndescription: Fresh.\n---\nValid source data.".utf8)
+        let result = fresh.record(
+            .success(bytes), name: "saved-skill",
+            previous: try store.previousListingForRefresh(bookmark))
+        #expect(result.error == nil)
+        try cache.write(JSONEncoder().encode(fresh), name: "listing", bookmark: bookmark)
+        #expect(
+            try await store.entries(.cachedCloud(bookmark)).first?.document?.instructions
+                == "Valid source data.")
+    }
+}
+
+@Test func confirmedResourceDeletionInvalidatesItsCachedCopyWithoutDiscardingOtherFiles()
+    async throws
+{
+    let root = try snapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bookmark = Data("synthetic resource grant".utf8)
+    let cacheRoot = root.appendingPathComponent("Cache")
+    let cache = SyncedResourceCache(root: cacheRoot)
+    let store = SkillStore(
+        localRoot: root.appendingPathComponent("OffSkills"), cacheRoot: cacheRoot)
+    let bytes = Data("---\nname: saved-skill\ndescription: Saved.\n---\nValid instructions.".utf8)
+    let skill = try SkillDocument.decode(bytes, directoryName: "saved-skill")
+    try cache.write(
+        JSONEncoder().encode(SkillStore.Listing(documents: ["saved-skill": bytes])),
+        name: "listing", bookmark: bookmark)
+    for path in ["removed.txt", "retained.txt"] {
+        try cache.write(
+            Data(path.utf8), name: "resource:saved-skill:\(skill.fingerprint):\(path)",
+            bookmark: bookmark)
+    }
+    try store.invalidateResource(
+        "removed.txt", skill: skill, bookmark: bookmark, after: CocoaError(.fileReadUnknown))
+    #expect(
+        try await store.resource("removed.txt", skill: skill, source: .cachedCloud(bookmark))
+            == "removed.txt")
+    try store.invalidateResource(
+        "removed.txt", skill: skill, bookmark: bookmark, after: CocoaError(.fileReadNoSuchFile))
+    await #expect(throws: SyncedResourceFailure.self) {
+        try await store.resource("removed.txt", skill: skill, source: .cachedCloud(bookmark))
+    }
+    #expect(
+        try await store.resource("retained.txt", skill: skill, source: .cachedCloud(bookmark))
+            == "retained.txt")
+    try store.invalidateResource(
+        "retained.txt", skill: skill, bookmark: bookmark, after: SkillFailure.unsupportedResource)
+    await #expect(throws: SyncedResourceFailure.self) {
+        try await store.resource("retained.txt", skill: skill, source: .cachedCloud(bookmark))
+    }
+}

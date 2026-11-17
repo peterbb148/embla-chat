@@ -30,6 +30,14 @@ struct SyncedResourceCache: Sendable {
         try data.write(to: file, options: .atomic)
     }
 
+    /// Only generated snapshots are removed; the user's cloud files are never touched.
+    func remove(_ name: String, bookmark: Data) throws {
+        let file = location(name, bookmark: bookmark)
+        if FileManager.default.fileExists(atPath: file.path) {
+            try FileManager.default.removeItem(at: file)
+        }
+    }
+
     private func location(_ name: String, bookmark: Data) -> URL {
         func digest(_ data: Data) -> String {
             SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

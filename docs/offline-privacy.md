@@ -50,7 +50,10 @@ file capability across reconnects, without gaining remote tools. Explicit folder
 changes still revoke that turn. Cached reads run independently of blocked provider I/O.
 Transient skill-read errors remain visible online and preserve the previous good offline
 copy; confirmed changed, invalid or deleted content invalidates it. No online read error
-silently selects an older cached copy.
+silently selects an older cached copy. Confirmed missing or invalid supporting files remove
+their generated cached copy; transient I/O errors preserve it. Corrupt generated skill
+metadata reports an error offline. A connected reload rebuilds it from successfully read
+authoritative source bytes.
 Coordinated file operations recheck the policy on entry and before reading/writing. Recovery
 opens only a durably saved folder grant; pending or failed folder changes stay suspended.
 
@@ -76,8 +79,8 @@ cellular/Wi-Fi combinations and Apple-managed transfers require physical-device 
 
 On 2026-11-17 the real pinned model on the Mac completed offline manual summarization
 and exact codename recall with an enabled remote registration and no discovery. Synthetic
-integration tests separately exercise cancellation and file boundaries. All 232 unit/integration
-tests passed (185 presentation, 47 core), including offline snapshot cold-start and folder
+integration tests separately exercise cancellation and file boundaries. All 234 unit/integration
+tests passed (187 presentation, 47 core), including offline snapshot cold-start and folder
 isolation checks. Review fixes cover on-demand connection upgrades
 and preserve a long-lived HTTP session per client, with independent per-task admission and
 cancellation. Simulator UI coverage checks light/dark appearance, Settings and Context sheets,
