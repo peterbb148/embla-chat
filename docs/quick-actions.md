@@ -4,7 +4,8 @@ Quick actions appear as naturally sized, wrapping bubbles in an empty chat. All 
 entries remain in configured order; there is no sideways carousel or ranked subset. Large
 catalogs can use the transcript's normal vertical scrolling. In an ongoing chat, tap the
 lightning button beside the context indicator to show or hide the same bubbles. Selecting
-one keeps the current chat and closes the chooser after successful application.
+one keeps the current chat and closes the chooser after successful application. Normal Send
+also closes the chooser when the new user turn is appended, restoring response auto-scrolling.
 
 By default, a prompt fills the composer for editing. Set `autoSend` to `true` to send its
 configured prompt immediately through the normal Send path; these bubbles have a small

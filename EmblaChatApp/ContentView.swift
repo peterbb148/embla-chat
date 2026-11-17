@@ -158,6 +158,7 @@ struct ContentView: View {
                                 where: { $0.role == .user }
                             )
                         {
+                            showQuickActions = false
                             transcriptScroll.resumeFollowing()
                         }
                         if !actionsVisible && transcriptScroll.shouldScrollAutomatically {
