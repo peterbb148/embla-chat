@@ -268,8 +268,8 @@ swift test --force-resolved-versions \
   --filter realModelRecoversAnOversizedSavedToolResultWithSourcesWithoutANetworkCall
 ```
 
-On 2026-11-17 that actual Mac model test passed in 67.911 seconds: 18,910 source tokens became
-47 projected tokens, raw text was preserved, and the answer retained the exact BLUE PENGUIN
+On 2026-11-17 that actual Mac model test passed in 74.819 seconds: 18,910 source tokens became
+52 projected tokens, raw text was preserved, and the answer retained the exact BLUE PENGUIN
 fact and source URL. This synthetic saved-result case is real tokenizer/Metal/model evidence,
 not a live Tavily result or an iPhone/simulator performance claim.
 

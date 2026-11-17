@@ -230,13 +230,11 @@ public actor MCPClient {
         let duration = method == "tools/call" ? timeouts.toolCall : timeouts.discovery
         let deadline = sharedDeadline ?? now.advanced(by: .seconds(duration))
         guard deadline > now else { throw MCPFailure.requestTimedOut }
-        let remaining = now.duration(to: deadline).components
-        let timeout = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
         do {
             return try await withThrowingTaskGroup(of: ToolJSON.self) { group in
                 group.addTask {
                     try await self.performRequest(
-                        method, params: params, headers: headers, timeout: timeout)
+                        method, params: params, headers: headers, deadline: deadline)
                 }
                 group.addTask {
                     try await ContinuousClock().sleep(until: deadline)
@@ -244,6 +242,8 @@ public actor MCPClient {
                 }
                 defer { group.cancelAll() }
                 guard let result = try await group.next() else { throw CancellationError() }
+                try Task.checkCancellation()
+                guard ContinuousClock.now < deadline else { throw MCPFailure.requestTimedOut }
                 return result
             }
         } catch {
@@ -256,7 +256,7 @@ public actor MCPClient {
     /// The deadline covers headers and the complete JSON/SSE response, including keep-alives.
     private func performRequest(
         _ method: String, params: [String: ToolJSON], headers: [String: String],
-        timeout: TimeInterval
+        deadline: ContinuousClock.Instant
     ) async throws -> ToolJSON {
         try Task.checkCancellation()
         let id = UUID().uuidString
@@ -274,7 +274,6 @@ public actor MCPClient {
         ])
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = timeout
         request.httpBody = try JSONEncoder().encode(message)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
@@ -285,6 +284,11 @@ public actor MCPClient {
         }
         if let token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
+        try Task.checkCancellation()
+        let now = ContinuousClock.now
+        guard now < deadline else { throw MCPFailure.requestTimedOut }
+        let remaining = now.duration(to: deadline).components
+        request.timeoutInterval = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
         let (bytes, response) = try await transport.response(
             for: request, access: network, limit: Self.limit, overflow: MCPFailure.limit)
         defer { bytes.task.cancel() }
@@ -320,7 +324,7 @@ public actor MCPClient {
                 data.append(byte)
             }
             try bytes.task.check()
-            return try Self.result(data, id: id)
+            return try Self.resultBeforeDeadline(data, id: id, deadline: deadline)
         }
         guard type.hasPrefix("text/event-stream") else { throw MCPFailure.invalidResponse }
         var line = Data()
@@ -353,7 +357,7 @@ public actor MCPClient {
                     let message = try Self.decode(data)
                     if message["id"] != nil {
                         try bytes.task.check()
-                        return try Self.result(data, id: id)
+                        return try Self.resultBeforeDeadline(data, id: id, deadline: deadline)
                     }
                     guard message["jsonrpc"] == .string("2.0"),
                         message["method"]?.string?.hasPrefix("notifications/") == true
@@ -367,6 +371,15 @@ public actor MCPClient {
             }
         }
         throw MCPFailure.invalidResponse
+    }
+
+    private static func resultBeforeDeadline(
+        _ data: Data, id: String, deadline: ContinuousClock.Instant
+    ) throws -> ToolJSON {
+        let value = try result(data, id: id)
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else { throw MCPFailure.requestTimedOut }
+        return value
     }
 
     private static func decode(_ data: Data) throws -> ToolJSON {

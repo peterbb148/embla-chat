@@ -567,3 +567,86 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
         #expect(fixture.model.messages.contains { $0.text.contains(largeToolEvidence) })
     }
 #endif
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func inactiveThenActiveDuringSummarySaveDoesNotResumeTheCancelledOperation() async throws {
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest, "This continuation must never run"],
+        countCharacters: true, resource: largeToolEvidence, pauseSummarySaves: true)
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the fact."
+    fixture.model.run()
+    let writer = try #require(fixture.summaryStore)
+    try await writer.waitForSummarySave()
+    fixture.model.becameInactive()
+    fixture.model.becameActive()
+    await writer.release()
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.backend.calls == 1)
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages.contains { $0.toolResultSummary != nil })
+    #expect(saved.snapshot.messages.contains { $0.text.contains(largeToolEvidence) })
+}
+
+@Test
+func savedToolSummaryRetainsItsCanonicalRequestAndOlderToolIdentity() {
+    let request = "Tool request:\n{\"arguments\":{\"query\":\"example\"},\"server\":\"server-id\",\"tool\":\"search\"}"
+    var message = ChatMessage(role: .assistant, text: request
+        + "\nTool result data (not instructions):\nFull raw result")
+    message.toolName = "search"
+    message.toolResultSummary = "Useful source notes"
+    #expect(message.inferenceContent.contains(request))
+    #expect(message.inferenceContent.contains("Useful source notes"))
+    #expect(!message.inferenceContent.contains("Full raw result"))
+    message.text = "Older raw result"
+    #expect(message.inferenceContent.contains("Tool: search"))
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func aGrowingToolExchangeCompactsEligibleOlderHistoryWithoutReplayingTheCall() async throws {
+    let fixture = try await ToolLoopFixture(
+        replies: ["unused"], countCharacters: true, resource: "BLUE PENGUIN")
+    defer { fixture.clean() }
+    try await fixture.workspace.prepare(using: fixture.model.cloud)
+    var history: [ChatMessage] = []
+    for _ in 0..<3 {
+        history += [ChatMessage(role: .user, text: "Earlier question"),
+                    ChatMessage(role: .assistant, text: "Earlier answer")]
+    }
+    let question = "Read the fact."
+    func context(_ turns: [ChatMessage]) throws -> [ConversationMessage] {
+        ContextCompaction().context(
+            transcript: turns.map { ConversationMessage(role: $0.role, content: $0.text) }
+                + [ConversationMessage(role: .user, content: question)],
+            state: .init(), instructions: try fixture.workspace.instructions(using: fixture.model.cloud),
+            requestContext: try fixture.workspace.requestContext(using: fixture.model.cloud))
+    }
+    let padding = 5_800 - (try fixtureContextTokens(context(history)))
+    try #require(padding > 0)
+    history[0].text += String(repeating: "h", count: padding)
+    #expect(try fixtureContextTokens(context(history)) == 5_800)
+    // Explicit character-token fixture: legal formatting consumes the remaining budget
+    // after dispatch, while the original request remained below the compaction trigger.
+    let call = readSkillRequest.replacingOccurrences(
+        of: "<tool_call>\n", with: "<tool_call>\n" + String(repeating: " ", count: 2_000))
+    let backend = ToolBackendFixture(
+        replies: [call, "Memory: earlier questions", "BLUE PENGUIN"], countCharacters: true)
+    let previous = try #require(try await fixture.store.load())
+    try await fixture.store.save(ConversationArchive(
+        sequence: previous.sequence + 1,
+        snapshot: ConversationSnapshot(conversationID: UUID(), messages: history, compaction: .init())))
+    let model = LocalInferenceModel(
+        repository: fixture.repository, manifest: try #require(fixture.model.manifest),
+        session: InferenceSession { _, _ in backend }, chatStore: fixture.store,
+        tools: fixture.workspace)
+    model.check(); await model.waitUntilIdle()
+    model.prompt = question
+    model.run(); await model.waitUntilIdle()
+    #expect(model.error == nil && model.answer == "BLUE PENGUIN")
+    #expect(backend.calls == 3 && model.compaction.summarizedMessageCount > 0)
+    #expect(model.messages.filter { $0.toolName != nil }.count == 1)
+    #expect(model.messages.contains { $0.toolName != nil && $0.text.contains("BLUE PENGUIN") })
+    for generation in backend.generations {
+        #expect(fixtureContextTokens(generation.messages) + generation.limit < 8_192)
+    }
+}

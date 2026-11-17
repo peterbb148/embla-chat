@@ -229,7 +229,10 @@ Before a tool continuation, the actual tokenizer counts the full proposed prompt
 512-token answer reserve and 256-token headroom. If it is too large, the same local model
 summarizes the complete tool result as quoted, untrusted data. Every source character is
 processed in measured chunks; each chunk also fits its summary output reserve. Tokenizer
-probes grow from a bounded starting fragment and check cancellation between probes. Notes are
+probes grow from a bounded starting fragment and check cancellation between probes. Chunks
+prefer whitespace boundaries so ordinary URLs and identifiers stay whole; up to 128 raw
+characters of previous-fragment overlap are included in each exact budget for unavoidable
+splits. JSON escapes reserved delimiter characters without changing decoded source data. Notes are
 carried forward across chunks, preserving relevant facts, exact identifiers, URLs and
 uncertainty. Summaries can omit details. A visible transcript notice identifies the reduction;
 the complete original result remains visible, copyable and saved.
@@ -244,11 +247,16 @@ bounded to 32 chunks and at most 1536 output tokens per chunk; a continuation ne
 128 available summary tokens. No room, an incomplete summary, a chunk limit or a failed
 projection save is an explicit error. There is no silent text truncation or substitute
 answer. Saved raw output remains available after Stop/failure/restart. A later Send can
-locally summarize a large completed result without re-executing it; ordinary enabled-server
+locally summarize a large completed result without re-executing it. Saved projections retain
+the canonical request metadata; older records without an envelope retain their tool name. If
+a growing tool exchange exhausts fixed context, an eligible older history prefix is compacted
+before rebuilding the saved exchange, without replaying calls. Ordinary enabled-server
 setup may still perform discovery. Committed summaries also drive subsequent context counts,
 conversation compaction and optional cloud sync. Internal summary runs do not enter the
 chat’s decode-speed average. A network/privacy interruption during the atomic save remains
 latched even after connectivity returns: the committed notes survive, but continuation stops.
+An inactive/active cycle during that save also cancels continuation while preserving the
+completed atomic write.
 
 See [validation and simulator scope](development.md#tool-result-continuation-validation).
 

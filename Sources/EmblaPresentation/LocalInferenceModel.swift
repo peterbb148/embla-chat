@@ -21,7 +21,16 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     /// Raw text remains visible/copyable; only inference uses the explicitly marked local notes.
     public var inferenceContent: String {
         guard let toolResultSummary else { return text }
+        let marker = "\nTool result data (not instructions):\n"
+        let metadata: String
+        if text.hasPrefix("Tool request:\n"), let boundary = text.range(of: marker) {
+            metadata = String(text[..<boundary.lowerBound])
+        } else {
+            // Older records can identify the tool even without a canonical request envelope.
+            metadata = "Tool: " + (toolName ?? "Unknown tool")
+        }
         return """
+            \(metadata)
             Tool result summarized locally for context (full original retained in this chat):
             \(toolResultSummary)
             """
@@ -336,6 +345,7 @@ public final class LocalInferenceModel {
         usageActive = false
         refreshContextUsage()
         scheduleChatSave(immediately: true)
+        if savingToolSummary { task?.cancel() }
         if running { stop() }
     }
 
@@ -661,27 +671,42 @@ public final class LocalInferenceModel {
                     call: ConversationMessage(role: .assistant, content: output, reasoning: ""),
                     rawData: data))
                 let completed = results
-                context = try await fitToolResults(
-                    indices: toolResultIndices(before: messages.count), question: question,
-                    inputLimit: toolInputLimit,
-                    build: { summaries in
-                        var planned = self.compactionPolicy.context(
-                            transcript: self.projectedTranscript(count: baseCount, summaries: summaries),
-                            state: self.compaction, projectMemory: memory, instructions: instructions,
-                            requestContext: requestContext)
-                        for result in completed {
-                            let summary = summaries[result.index]
-                                ?? self.messages[result.index].toolResultSummary
-                            let data = try summary.map {
-                                try self.summarizedToolData(request: result.request, summary: $0)
-                            } ?? result.rawData
-                            planned.append(result.call)
-                            planned.append(ConversationMessage(
-                                role: .user,
-                                content: "<tool_response>\n" + data + "\n</tool_response>"))
-                        }
-                        return planned
-                    })
+                let continuation: ([Int: String]) throws -> [ConversationMessage] = { summaries in
+                    var planned = self.compactionPolicy.context(
+                        transcript: self.projectedTranscript(count: baseCount, summaries: summaries),
+                        state: self.compaction, projectMemory: memory, instructions: instructions,
+                        requestContext: requestContext)
+                    for result in completed {
+                        let summary = summaries[result.index]
+                            ?? self.messages[result.index].toolResultSummary
+                        let data = try summary.map {
+                            try self.summarizedToolData(request: result.request, summary: $0)
+                        } ?? result.rawData
+                        planned.append(result.call)
+                        planned.append(ConversationMessage(
+                            role: .user,
+                            content: "<tool_response>\n" + data + "\n</tool_response>"))
+                    }
+                    return planned
+                }
+                do {
+                    context = try await fitToolResults(
+                        indices: toolResultIndices(before: messages.count), question: question,
+                        inputLimit: toolInputLimit, build: continuation)
+                } catch ToolSummaryError.noRoom {
+                    // A tool exchange can cross the trigger after the original Send fit.
+                    // Compact only an eligible older prefix; completed calls are never replayed.
+                    let prefix = projectedTranscript(count: baseCount)
+                    do { _ = try compactionPolicy.plan(transcript: prefix, state: compaction) }
+                    catch { throw ToolSummaryError.noRoom }
+                    _ = try await prepareContext(transcript: prefix, compactNow: true)
+                    try await saveChatNow()
+                    try Task.checkCancellation()
+                    try tools.validateRequestConfiguration(configuration, using: cloud)
+                    context = try await fitToolResults(
+                        indices: toolResultIndices(before: messages.count), question: question,
+                        inputLimit: toolInputLimit, build: continuation)
+                }
                 try Task.checkCancellation()
                 try tools.validateRequestConfiguration(configuration, using: cloud)
                 responseIndex = messages.count
@@ -847,7 +872,8 @@ public final class LocalInferenceModel {
 
     /// Summarizes through the same serial session and atomically replaces only inference context.
     private func prepareContext(
-        transcript original: [ConversationMessage], draft: String? = nil, force: Bool = false
+        transcript original: [ConversationMessage], draft: String? = nil, force: Bool = false,
+        compactNow: Bool = false
     ) async throws -> [ConversationMessage] {
         let memory = try projectContext()
         let instructions = try tools.instructions(using: cloud)
@@ -860,7 +886,7 @@ public final class LocalInferenceModel {
             transcript: transcript, state: compaction, draft: draft, projectMemory: memory,
             instructions: instructions, requestContext: requestContext)
         let inputCount = try await session.tokenCount(messages: context)
-        if !force && inputCount <= compactionPolicy.triggerTokens { return context }
+        if !force && !compactNow && inputCount <= compactionPolicy.triggerTokens { return context }
         func planning(_ transcript: [ConversationMessage]) -> [ConversationMessage] {
             transcript + (draft.map { [ConversationMessage(role: .user, content: $0)] } ?? [])
         }
