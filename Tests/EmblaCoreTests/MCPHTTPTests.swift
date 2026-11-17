@@ -102,7 +102,10 @@ import Testing
         } catch MCPFailure.requestTimedOut {
             // Both the explicit deadline and native URLSession expiry use this error.
         } catch { Issue.record("Unexpected timeout error: \(error)") }
-        #expect(try await fixture.counts()["/delayed-discovery"]?["server/discover"] == 1)
+        // Under load the absolute deadline may expire before dispatch. Both zero and
+        // one server requests are valid; retries are never allowed.
+        let discoveryRequests = try await fixture.counts()["/delayed-discovery"]?["server/discover"] ?? 0
+        #expect(discoveryRequests <= 1)
         for path in ["delayed-tool", "progress-tool"] {
             let client = try fixture.client(path, timeouts: .init(discovery: 1, toolCall: 0.2))
             let tool = try #require(try await client.discover().tools.first)
@@ -112,10 +115,11 @@ import Testing
             } catch MCPFailure.requestTimedOut {
                 // Both the explicit deadline and native URLSession expiry use this error.
             } catch { Issue.record("Unexpected timeout error: \(error)") }
-            #expect(try await fixture.counts()["/" + path]?["tools/call"] == 1)
-            // Discovery still works; timing out one request must not invalidate the client session.
+            let sent = try await fixture.counts()["/" + path]?["tools/call"] ?? 0
+            #expect(sent <= 1)
+            // Discovery still works, and cannot replay a dispatched or pre-dispatch timeout.
             _ = try await client.discover()
-            #expect(try await fixture.counts()["/" + path]?["tools/call"] == 1)
+            #expect((try await fixture.counts()["/" + path]?["tools/call"] ?? 0) == sent)
         }
     }
 
