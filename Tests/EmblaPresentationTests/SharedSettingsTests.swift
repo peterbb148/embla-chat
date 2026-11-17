@@ -445,7 +445,7 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
         lock.withLock {
             entered = true; onMain = Thread.isMainThread
         }
-        _ = gate.wait(timeout: .now() + 30)
+        gate.wait()
         lock.withLock { finished = true }
         return SharedSettingsRead(current: missing ? nil : SharedSettings())
     }
@@ -459,13 +459,16 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
     }
 }
 
-@Test(arguments: [false, true]) @MainActor
+// Each case intentionally occupies an executor thread. Running both blocked cases at once
+// can exhaust a small CI worker's cooperative pool before its test driver can disable cloud.
+@Test(.serialized, arguments: [false, true]) @MainActor
 func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: Bool)
     async throws
 {
     let root = try settingsRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let provider = BlockedSettingsFixture(missing: missing)
+    defer { provider.gate.signal() }
     let workspace = ToolWorkspace(
         configuration: root.appendingPathComponent("servers.json"),
         credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
@@ -480,7 +483,8 @@ func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: 
     while !provider.started && clock.now - start < .seconds(30) {
         try await Task.sleep(for: .milliseconds(1))
     }
-    #expect(provider.started && !provider.usedMainThread)
+    try #require(provider.started)
+    #expect(!provider.usedMainThread)
     #expect(!provider.readFinished)
     cloud.disable()
     provider.gate.signal()
