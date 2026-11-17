@@ -317,11 +317,15 @@ extension QuickActionStore {
         _ = deleted.record(.failure(failure), name: "saved-skill", previous: previous)
         #expect(try deleted.entries().first?.document == nil && deleted.documents.isEmpty)
     }
-    var malformed = SkillStore.Listing()
-    _ = malformed.record(
-        .success(Data("Invalid changed instructions".utf8)), name: "saved-skill", previous: previous
-    )
-    #expect(try malformed.entries().first?.document == nil && malformed.documents.isEmpty)
+    for text in [
+        "Invalid changed instructions",
+        "---\nname: [unterminated YAML\n---\nChanged instructions.",
+        "---\nname: saved-skill\n---\nMissing required description.",
+    ] {
+        var malformed = SkillStore.Listing()
+        _ = malformed.record(.success(Data(text.utf8)), name: "saved-skill", previous: previous)
+        #expect(try malformed.entries().first?.document == nil && malformed.documents.isEmpty)
+    }
     var changed = SkillStore.Listing()
     let replacement = Data(
         "---\nname: saved-skill\ndescription: Cached.\n---\nNew instructions.".utf8)

@@ -28,11 +28,9 @@ actor SkillStore {
         mutating func record(_ result: Result<Data, Error>, name: String, previous: Listing)
             -> SkillEntry
         {
+            let data: Data
             do {
-                let data = try result.get()
-                let document = try SkillDocument.decode(data, directoryName: name)
-                documents[name] = data
-                return SkillEntry(id: name, document: document, error: nil)
+                data = try result.get()
             } catch {
                 let failure = error as NSError
                 let deleted =
@@ -44,6 +42,15 @@ actor SkillStore {
                 } else {
                     errors[name] = error.localizedDescription
                 }
+                return SkillEntry(id: name, document: nil, error: error.localizedDescription)
+            }
+            do {
+                let document = try SkillDocument.decode(data, directoryName: name)
+                documents[name] = data
+                return SkillEntry(id: name, document: document, error: nil)
+            } catch {
+                // These bytes were read successfully: every decoding failure invalidates them.
+                errors[name] = error.localizedDescription
                 return SkillEntry(id: name, document: nil, error: error.localizedDescription)
             }
         }
