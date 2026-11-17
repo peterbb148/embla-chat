@@ -71,7 +71,8 @@ Review the file if you need to combine configurations before choosing. No automa
 or last-writer-wins policy silently drops registrations.
 
 Reads and writes run on a storage actor so a stalled provider cannot block the UI or Off.
-Results are applied only to the same active source/revision. Off synchronously revokes
+Results are applied only to the same active source/revision. Canceling inference preparation
+releases its caller while blocked provider I/O drains; the canceled read cannot export settings. Off synchronously revokes
 pending storage access; reads that finish later cannot create a settings file or export
 local keys. Writers check revocation again inside coordination before mutation. Writes compare the entire previously read document and conflict versions inside file
 coordination. A stale save fails and asks for reload; it does not overwrite another device's

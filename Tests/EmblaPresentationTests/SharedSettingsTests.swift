@@ -604,3 +604,29 @@ func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: 
     #expect(saved.name == refreshed.name && saved.endpoint == external.servers[0].endpoint)
     #expect(saved.credential?.bearerToken == "synthetic-newer-key")
 }
+
+@Test @MainActor func cancellingPreparationReturnsWhileProviderReadRemainsBlocked() async throws {
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provider = BlockedSettingsFixture(missing: true)
+    defer { provider.gate.signal() }
+    let workspace = ToolWorkspace(
+        configuration: root.appendingPathComponent("servers.json"),
+        credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
+    let cloud = ConversationCloudSync()
+    await workspace.reloadSettings(using: cloud)
+    cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
+    let pending = Task { try await workspace.prepare(using: cloud) }
+    let clock = ContinuousClock()
+    let start = clock.now
+    while !provider.started && clock.now - start < .seconds(30) {
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    try #require(provider.started)
+    pending.cancel()
+    await #expect(throws: CancellationError.self) { try await pending.value }
+    #expect(!provider.readFinished && provider.writes == 0)
+    provider.gate.signal()
+    await workspace.waitUntilIdle()
+    #expect(provider.writes == 0)
+}

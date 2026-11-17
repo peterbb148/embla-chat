@@ -3,6 +3,34 @@ import Observation
 
 import EmblaCore
 
+/// Cancellation releases the caller while an uncancellable provider read drains off-thread.
+private final class SkillPreparationWait: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var finished = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let ready = lock.withLock {
+                if finished { return true }
+                self.continuation = continuation
+                return false
+            }
+            if ready { continuation.resume() }
+        }
+    }
+
+    func finish() {
+        let pending = lock.withLock {
+            finished = true
+            let pending = continuation
+            continuation = nil
+            return pending
+        }
+        pending?.resume()
+    }
+}
+
 /// Opaque editor baseline: no raw credential is exposed to the view.
 public struct MCPServerEditBaseline: Equatable, Sendable {
     fileprivate let serverID: UUID
@@ -205,7 +233,7 @@ public final class ToolWorkspace {
     func prepare(using cloud: ConversationCloudSync, serverIDs: Set<UUID>? = nil) async throws {
         if settingsSourceKey != nil {
             reloadSkills(using: cloud)
-            await skillTask?.value
+            try await waitForSkillPreparation()
         }
         try requireSettingsReady()
         if let setupError {
@@ -224,7 +252,7 @@ public final class ToolWorkspace {
         for server in servers
         where
             (!server.enabledTools.isEmpty || server.enableToolsOnFirstDiscovery)
-            && clients[server.id] == nil
+            && (clients[server.id] == nil || server.lastDiscoveredTools == nil)
         {
             if let serverIDs, !serverIDs.contains(server.id) { continue }
             try Task.checkCancellation()
@@ -281,7 +309,8 @@ public final class ToolWorkspace {
                     value.enableToolsOnFirstDiscovery = false
                 } else {
                     value.enableToolsOnFirstDiscovery = previous.enableToolsOnFirstDiscovery
-                    value.lastDiscoveredTools = newToken == nil ? previous.lastDiscoveredTools : nil
+                    let unchangedKey = try newToken == nil || newToken == token(for: previous)
+                    value.lastDiscoveredTools = unchangedKey ? previous.lastDiscoveredTools : nil
                 }
             } else {
                 value.lastDiscoveredTools = nil
@@ -492,7 +521,7 @@ public final class ToolWorkspace {
     func preparePlanningMetadata(using cloud: ConversationCloudSync) async throws {
         if settingsSourceKey != nil {
             reloadSkills(using: cloud)
-            await skillTask?.value
+            try await waitForSkillPreparation()
         }
         try requireSettingsReady()
         let missing = Set(
@@ -550,6 +579,21 @@ public final class ToolWorkspace {
             throw SkillFailure.changed
         }
         return try await client.call(tool, arguments: arguments)
+    }
+
+    private func waitForSkillPreparation() async throws {
+        guard let worker = skillTask else { try Task.checkCancellation(); return }
+        let gate = SkillPreparationWait()
+        Task {
+            await worker.value; gate.finish()
+        }
+        await withTaskCancellationHandler {
+            await gate.wait()
+        } onCancel: {
+            worker.cancel()
+            gate.finish()
+        }
+        try Task.checkCancellation()
     }
 
     func waitUntilIdle() async {
@@ -837,6 +881,7 @@ extension ToolWorkspace {
             let old = current.servers.first { $0.id == server.id }
             if changed == nil || changed?.endpoint != old?.endpoint
                 || changed?.credential != old?.credential
+                || registrations.first(where: { $0.id == server.id })?.lastDiscoveredTools == nil
             {
                 clients[server.id] = nil
                 discovered[server.id] = nil
