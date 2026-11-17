@@ -172,6 +172,9 @@ public final class LocalInferenceModel {
         start(.compact)
     }
 
+    /// Explicit retry may recover tool metadata; ordinary background counts never connect.
+    public func retryContextUsage() { start(.refreshTools) }
+
     public var manualCompactionUnavailableReason: String? {
         if !chatRestored || resetting { return "Wait for the saved chat to open." }
         if storageError != nil { return "Resolve the chat storage error first." }
@@ -329,7 +332,9 @@ public final class LocalInferenceModel {
         if let saveTask { _ = await saveTask.result }
     }
 
-    private enum Operation { case check, download, delete, generate, compact, clear, unload }
+    private enum Operation {
+        case check, download, delete, generate, compact, refreshTools, clear, unload
+    }
 
     private func start(_ operation: Operation) {
         guard !busy, !cloud.resolving, !resetting || operation == .clear,
@@ -337,7 +342,7 @@ public final class LocalInferenceModel {
         else { return }
         busy = true
         downloading = operation == .download
-        running = operation == .generate || operation == .compact
+        running = operation == .generate || operation == .compact || operation == .refreshTools
         if operation != .unload && repository != nil { error = nil }
         downloadedBytes = 0
         let id = UUID()
@@ -350,7 +355,8 @@ public final class LocalInferenceModel {
         task = Task {
             do {
                 if operation != .delete { try await restoreChatIfNeeded() }
-                if loaded && operation != .generate && operation != .compact && operation != .clear
+                if loaded && operation != .generate && operation != .compact
+                    && operation != .refreshTools && operation != .clear
                 {
                     try await session.unload()
                     loaded = false
@@ -376,10 +382,15 @@ public final class LocalInferenceModel {
                 case .generate:
                     try await generate(input: input, repository: requireRepository())
                 case .compact:
+                    try await tools.preparePlanningMetadata(using: cloud)
                     try await loadModelIfNeeded(repository: requireRepository())
                     _ = try await prepareContext(
                         transcript: conversationMessages(), draft: input, force: true)
                     status = "Earlier messages compacted."
+                case .refreshTools:
+                    status = "Connecting tools for context counting…"
+                    try await tools.preparePlanningMetadata(using: cloud)
+                    status = "Tool metadata ready for context counting."
                 case .clear:
                     break  // Deferred actions reset the session and clear the visible text.
                 case .unload:

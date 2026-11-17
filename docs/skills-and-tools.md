@@ -78,12 +78,14 @@ Turn individual tools off afterward if needed. This initial grant is saved once;
 refreshes and restarts preserve those choices, and older registrations keep their exact
 permissions. A changed endpoint still clears permissions. Enabled registrations (and new
 registrations awaiting their first successful discovery) reconnect on Send after restart.
-Discovery and calls do not run merely at app launch. No server is registered implicitly.
+Discovery and calls do not run merely at app launch. Explicit context-count retry and
+manual compaction can obtain missing tool metadata for older settings; ordinary counting
+uses last-discovered definitions locally. No server is registered implicitly.
 Sending while Settings is still discovering takes ownership of connection setup under the
 Send task, so setup cannot race the submitted message and cancellation remains effective. The endpoint must use HTTPS; loopback HTTP is allowed for local developer tests.
 Redirects are rejected, and the client has no cookie jar or shared credential store.
-Credentials/query strings in endpoints are not supported. Name, endpoint and selected
-tool names are stored in excluded-from-backup device settings, separately from chat and
+Credentials/query strings in endpoints are not supported. Name, endpoint, selected
+tool names and validated last-discovered definitions are stored in excluded-from-backup device settings, separately from chat and
 skill files. Tokens use non-synchronizing, When-Unlocked-This-Device-Only Keychain items;
 the app does not add credentials to model prompts or portable documents. Credentials are
 bound to the exact endpoint as well as the registration ID, preventing a failed settings
@@ -227,9 +229,9 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 135 presentation
-and 41 core tests; seven actual-model cases are opt-in and skipped by default. All ten
-production UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
+from opt-in actual-model/public-server tests. The current suite reports 143 presentation
+and 41 core tests; eight actual-model cases are opt-in and skipped by default. The ten
+simulator UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
 created. App-only UI screenshots are retained in the result bundle. Final hosted checks,
 review and merge evidence are recorded in [#27](https://github.com/peterbb148/embla-chat/issues/27)
@@ -259,3 +261,11 @@ latest/active filtering, unsupported connections, publisher identity, opaque pag
 HTTP errors and malformed responses. Exact live run/review/merge evidence belongs in #61.
 The clock reply also added an incorrect unrequested weekday; #70 tracks investigation of
 that answer-quality defect. Requested-field validation is not proof of every generated fact.
+
+Local context planning reuses the validated saved catalog after pause/restart (#71), not a
+live connection. Send still prepares actual clients and refreshes missing connections before
+generation, and dispatch requires a live client plus the enabled/schema checks. Metadata
+persists atomically with the registration; changing its endpoint or credential invalidates
+it, durably before changing the credential; a failed invalidation leaves the old credential
+and schemas intact. Planning only reconnects servers missing metadata. Count retry supports
+Stop and cancels on inactivity. This does not send chats or credentials to the registry or iCloud.

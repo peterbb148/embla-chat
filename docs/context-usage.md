@@ -19,16 +19,25 @@ while typing does not construct a GPU engine, load model weights, call a network
 or require a successful GPU compilation. Counts debounce draft/stream changes and reject
 superseded results. Restore, New Chat, summary changes and foreground activation refresh
 them; inactive/background states cancel counting. Production always supplies the real
-counter. Internal test construction can inject an explicit counter fixture. If registered
-tool schemas are not yet available, the indicator reports that state; discovery happens
-when the user connects in Settings or sends, never as a counting side effect. During a
+counter. Internal test construction can inject an explicit counter fixture. Validated last-discovered
+tool definitions are saved in device-only settings and remain available for local planning
+after backgrounding/restart, without connecting a server or granting a live connection.
+Counts use those exact saved definitions; Send reconnects when needed and rechecks the
+budget against its discovered catalog. A server can change its definitions between those steps.
+
+Older settings without definitions show an explicit error. **Retry count** now prepares the
+enabled servers and counts again; authentication/network failures remain errors. Routine
+counting never connects or drops enabled schemas silently. Changing the endpoint or credential
+invalidates its saved definitions. Malformed saved metadata is a settings error. During a
 tool loop the ring still projects the next user message from the visible transcript; the
 session separately checks each actual growing model/tool prompt before generation.
 
 Capacity is 8192 tokens. Details distinguish the 512-token reply reserve, 1536-token summary
 reserve and 256-token headroom, explaining the existing automatic threshold of 5888.
 The ring rounds the measured fraction to a whole percentage; details retain the exact
-integer count. Its fill stops at a full circle if over capacity, while the numeric value
+integer count. Details also show how many older messages are represented by the saved
+summary, so a successful small reduction is visible even when the whole percentage is
+unchanged. Tool definitions and the retained recent turns remain in context. Its fill stops at a full circle if over capacity, while the numeric value
 continues to show the measured usage.
 
 ## Compact now
@@ -39,6 +48,9 @@ manual summary requests quote the historical turns and prior summary as JSON dat
 from the live task instructions, and use temperature 0 / top-p 1 for summary generation.
 Normal conversational sampling is unchanged. The latest two
 exchanges and current draft stay verbatim; older eligible turns become the rolling summary.
+With saved tool definitions, compaction itself needs no server connection. Older settings
+without definitions obtain them during the explicit compaction operation, as Send does,
+before budgeting the summary. No MCP tool is invoked merely to summarize the chat.
 With no eligible prefix, the disabled action explains why. The full visible transcript
 and draft remain intact, and no artificial assistant turn is appended.
 
@@ -97,3 +109,41 @@ continue in Simulator; physical validation and the compiler limitation remain re
 Project chats also count [explicit project memory](projects.md) in the same leading system
 prefix used for inference. Notes remain separate from rolling summaries; changing/clearing
 notes refreshes the ring. Oversized notes fail clearly without hidden truncation.
+
+## Enabled-server regression (#71)
+
+A regression reproduced the missing-schema failure after pause/restart. Package tests cover
+offline counting and manual compaction with saved schemas, unchanged transcript/draft,
+credential/endpoint invalidation, rejection of malformed stored metadata and rejection of
+remote dispatch without a live connection. The opt-in actual-model test recovers legacy
+metadata through Retry, measures an over-threshold synthetic chat with the real tokenizer,
+requires automatic compaction, reopens it with no live clients, compacts manually and checks
+summary persistence and exact BLUE PENGUIN recall. Results and physical-phone validation
+are recorded in #71 and its PR; an opt-in test being present is not a claim it passed.
+
+The #71 real-model regression passed on 2026-11-17 in 85.751 seconds: automatic
+compaction reduced 5961 input tokens to 1084, manual compaction worked after reopening
+without a live server connection, and the subsequent reply recalled BLUE PENGUIN exactly.
+The context-panel simulator regression passed in 22.481 seconds. These are distinct from
+physical-device acceptance. The separate physical UI test creates a clearly named
+synthetic chat, measures before/after tokens, relaunches and checks recall; it skips
+Simulator because it requires the actual model and a signed phone test runner.
+Its initial attempt was blocked before launch by missing Xcode account/test-runner
+provisioning, not counted as a physical pass. See #71 for subsequent device results.
+
+The phone's diagnostic chat also saved a real summary covering six older messages and
+retained BLUE PENGUIN. Recounting that saved diagnostic transcript with the pinned tokenizer
+measured 1586 uncompressed versus 1562 with its summary: 24 tokens saved, which rounds to
+the same whole percentage. This is a reconstruction from saved phone state, not a claim
+that the exact live UI readings were captured before/after. Device Hub input became
+unreliable; Peter completed the compaction taps manually. Keyboard capture was restored Off.
+
+After review fixes, the actual-model regression passed again in 79.035 seconds with
+5955 → 1078 tokens and exact retained-fact recall. Loopback transport tests additionally
+verify cancellation on Stop/inactivity and recovery of only missing metadata while
+retaining an offline server's saved catalog. Credential write-failure tests verify that
+unwritable settings leave both the old credential and its corresponding schemas intact.
+
+A subsequent live phone reading showed 2003 tokens. A fresh reconstruction of the same
+saved diagnostic chat also counted exactly 2003, confirming the display refreshed after
+further conversation. The saved summary still covered six older messages.

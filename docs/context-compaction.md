@@ -30,6 +30,11 @@ must fit the exact next-response budget. Output limits, generation errors, cance
 and oversized recent messages leave the previous summary and boundary unchanged and show
 an error. There is no alternative provider or silent dropping of recent messages.
 
+Enabled MCP definitions persist locally for exact offline planning after restart; older
+settings recover missing metadata during explicit manual compaction or context-count retry
+(#71). The summary remains local; no tool call is required to summarize a chat. Send still
+prepares actual connections before generating a tool-enabled reply.
+
 Summary and response generation share the existing serial session. The composer shows
 “Compacting earlier messages…” during summarization. Stop cancels it; New Chat waits for
 the engine to stop and then clears transcript, summary and boundary together. Summary

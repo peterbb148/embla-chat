@@ -944,6 +944,9 @@ private struct ContextUsageView: View {
                         LabeledContent("Used", value: "\(usage.inputTokens) tokens")
                             .accessibilityIdentifier("context-used")
                         LabeledContent("Capacity", value: "\(usage.capacity) tokens")
+                        LabeledContent("Enabled MCP tools", value:
+                            "\(model.tools.servers.reduce(0) { $0 + $1.enabledTools.count })")
+                            .accessibilityIdentifier("context-enabled-tools")
                         LabeledContent("Reply reserve", value: "\(usage.replyReserve) tokens")
                         LabeledContent(
                             "Auto-compaction threshold",
@@ -960,15 +963,23 @@ private struct ContextUsageView: View {
                         Text(reason).foregroundStyle(.secondary)
                     case .failed(let reason):
                         Text("Could not count context: \(reason)").foregroundStyle(.red)
-                        Button("Retry count") { model.refreshContextUsage() }
+                        Button("Retry count") { model.retryContextUsage() }
+                            .disabled(model.busy)
                     }
                     Text(
-                        "Includes the saved summary, retained turns, current draft and model template. "
+                        "Includes saved tool definitions, summary, retained turns, current draft "
+                            + "and model template. Send reconnects tools when needed "
+                            + "and rechecks the budget. "
                             + "Earlier assistant reasoning follows the model’s template rules."
                     )
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Compaction") {
+                    if model.compaction.summarizedMessageCount > 0 {
+                        LabeledContent("Messages in saved summary", value:
+                            "\(model.compaction.summarizedMessageCount)")
+                            .accessibilityIdentifier("compaction-summary-count")
+                    }
                     Button("Compact now") {
                         model.compactNow()
                         dismiss()
@@ -979,8 +990,11 @@ private struct ContextUsageView: View {
                     }
                     Text(
                         "Summarizes older turns on this device, keeping the visible chat and "
-                            + "latest two exchanges. Summaries can lose details. Use Stop during generation "
-                            + "to keep the previous committed summary."
+                            + "latest two exchanges. Summaries can lose details. "
+                            + "Use Stop during generation "
+                            + "to keep the previous committed summary. "
+                            + "The ring rounds to whole percent; "
+                            + "small token savings can leave it unchanged."
                     )
                     .font(.caption).foregroundStyle(.secondary)
                 }
