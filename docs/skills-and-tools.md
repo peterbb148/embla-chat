@@ -229,7 +229,7 @@ The official hosted MCP reference endpoint instead returned an OAuth 401; no sig
 credential was created. Provider availability and data can change.
 
 Package tests distinguish control-flow fixtures and the synthetic loopback HTTP/SSE server
-from opt-in actual-model/public-server tests. The current suite reports 140 presentation
+from opt-in actual-model/public-server tests. The current suite reports 143 presentation
 and 41 core tests; eight actual-model cases are opt-in and skipped by default. The ten
 simulator UI tests passed on the existing iPhone 17 Pro/iOS 27.2 simulator, including
 skill access and no-network/no-token server registration/removal. No new simulator was
@@ -266,4 +266,6 @@ Local context planning reuses the validated saved catalog after pause/restart (#
 live connection. Send still prepares actual clients and refreshes missing connections before
 generation, and dispatch requires a live client plus the enabled/schema checks. Metadata
 persists atomically with the registration; changing its endpoint or credential invalidates
-it. This does not send chats or credentials to the registry or iCloud.
+it, durably before changing the credential; a failed invalidation leaves the old credential
+and schemas intact. Planning only reconnects servers missing metadata. Count retry supports
+Stop and cancels on inactivity. This does not send chats or credentials to the registry or iCloud.

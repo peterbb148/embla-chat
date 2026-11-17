@@ -342,7 +342,7 @@ public final class LocalInferenceModel {
         else { return }
         busy = true
         downloading = operation == .download
-        running = operation == .generate || operation == .compact
+        running = operation == .generate || operation == .compact || operation == .refreshTools
         if operation != .unload && repository != nil { error = nil }
         downloadedBytes = 0
         let id = UUID()
@@ -389,7 +389,7 @@ public final class LocalInferenceModel {
                     status = "Earlier messages compacted."
                 case .refreshTools:
                     status = "Connecting tools for context counting…"
-                    try await tools.prepare(using: cloud)
+                    try await tools.preparePlanningMetadata(using: cloud)
                     status = "Tool metadata ready for context counting."
                 case .clear:
                     break  // Deferred actions reset the session and clear the visible text.

@@ -1186,3 +1186,72 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
     #expect(try await store.load()?.snapshot.compaction == model.compaction)
     #expect(workspace.discovered.isEmpty && workspace.connecting == nil)
 }
+
+#if os(macOS)
+/// Reuses the loopback MCP wire fixture; no production client or server is substituted.
+private final class PlanningWireFixture {
+    let process = Process()
+    let port: Int
+
+    init() throws {
+        let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Fixtures/mcp_server.py")
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", script.path]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        port = try #require(Int(String(decoding: pipe.fileHandleForReading.availableData,
+            as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+    }
+
+    func url(_ path: String) -> URL { URL(string: "http://127.0.0.1:\(port)/\(path)")! }
+    func stop() { if process.isRunning { process.terminate(); process.waitUntilExit() } }
+}
+
+@Test @MainActor func planningConnectsOnlyMissingSchemasAndRetainsAnOfflineServersCatalog()
+    async throws
+{
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let wire = try PlanningWireFixture(); defer { wire.stop() }
+    let workspace = ToolWorkspace(
+        configuration: fixture.root.appendingPathComponent("servers.json"))
+    let offline = MCPServer(name: "Known offline synthetic endpoint",
+        endpoint: URL(string: "https://example.invalid/mcp")!)
+    try workspace.saveServer(offline)
+    try workspace.acceptDiscoveredTools([
+        MCPTool(name: "cached", description: "Saved synthetic metadata",
+            inputSchema: .object(["type": .string("object")]))], serverID: offline.id)
+    let missing = MCPServer(name: "Missing synthetic catalog", endpoint: wire.url("json"))
+    try workspace.saveServer(missing)
+    workspace.pause()
+    try await workspace.preparePlanningMetadata(using: ConversationCloudSync())
+    #expect(try workspace.remoteTools().map(\.name).sorted() == ["cached", "echo"])
+    #expect(workspace.discovered[offline.id] == nil)
+    #expect(workspace.discovered[missing.id]?.map(\.name) == ["echo"])
+}
+
+@Test(arguments: [false, true]) @MainActor
+func contextMetadataRetryCanBeStoppedAndCancelsOnInactivity(_ inactive: Bool) async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let wire = try PlanningWireFixture(); defer { wire.stop() }
+    let workspace = ToolWorkspace(
+        configuration: fixture.root.appendingPathComponent("servers.json"))
+    try workspace.saveServer(
+        MCPServer(name: "Slow synthetic discovery", endpoint: wire.url("slow")))
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend }, tools: workspace)
+    model.prompt = "Unsent synthetic draft"
+    model.retryContextUsage()
+    #expect(model.busy && model.running)
+    try await Task.sleep(for: .milliseconds(150))
+    if inactive { model.becameInactive() } else { model.stop() }
+    await model.waitUntilIdle()
+    #expect(!model.busy && !model.running)
+    #expect(model.status == "Stopped. You can retry.")
+    #expect(workspace.servers.first?.lastDiscoveredTools == nil)
+    #expect(model.messages.isEmpty && model.prompt == "Unsent synthetic draft")
+    #expect(backend.calls == 0)
+}
+#endif

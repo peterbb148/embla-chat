@@ -35,7 +35,9 @@ session separately checks each actual growing model/tool prompt before generatio
 Capacity is 8192 tokens. Details distinguish the 512-token reply reserve, 1536-token summary
 reserve and 256-token headroom, explaining the existing automatic threshold of 5888.
 The ring rounds the measured fraction to a whole percentage; details retain the exact
-integer count. Its fill stops at a full circle if over capacity, while the numeric value
+integer count. Details also show how many older messages are represented by the saved
+summary, so a successful small reduction is visible even when the whole percentage is
+unchanged. Tool definitions and the retained recent turns remain in context. Its fill stops at a full circle if over capacity, while the numeric value
 continues to show the measured usage.
 
 ## Compact now
@@ -128,3 +130,16 @@ synthetic chat, measures before/after tokens, relaunches and checks recall; it s
 Simulator because it requires the actual model and a signed phone test runner.
 Its initial attempt was blocked before launch by missing Xcode account/test-runner
 provisioning, not counted as a physical pass. See #71 for subsequent device results.
+
+The phone's diagnostic chat also saved a real summary covering six older messages and
+retained BLUE PENGUIN. Recounting that saved diagnostic transcript with the pinned tokenizer
+measured 1586 uncompressed versus 1562 with its summary: 24 tokens saved, which rounds to
+the same whole percentage. This is a reconstruction from saved phone state, not a claim
+that the exact live UI readings were captured before/after. Device Hub input became
+unreliable; Peter completed the compaction taps manually. Keyboard capture was restored Off.
+
+After review fixes, the actual-model regression passed again in 79.035 seconds with
+5955 → 1078 tokens and exact retained-fact recall. Loopback transport tests additionally
+verify cancellation on Stop/inactivity and recovery of only missing metadata while
+retaining an offline server's saved catalog. Credential write-failure tests verify that
+unwritable settings leave both the old credential and its corresponding schemas intact.

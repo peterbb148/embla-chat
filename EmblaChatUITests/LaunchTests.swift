@@ -369,8 +369,20 @@ extension LaunchTests {
             if recover && app.buttons["Retry count"].waitForExistence(timeout: 3) {
                 app.buttons["Retry count"].tap()
             }
-            let row = app.descendants(matching: .any).matching(identifier: "context-used").firstMatch
+            let row = app.descendants(matching: .any)
+                .matching(identifier: "context-used").firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 45))
+            let toolsRow = app.descendants(matching: .any)
+                .matching(identifier: "context-enabled-tools").firstMatch
+            XCTAssertTrue(toolsRow.exists, "Enabled MCP tools must be part of this regression")
+            let toolText = ([toolsRow.label, toolsRow.value as? String ?? ""]
+                + toolsRow.staticTexts.allElementsBoundByIndex.map(\.label)).joined(separator: " ")
+            let number = try NSRegularExpression(pattern: "([0-9]+)")
+            let toolCount = try XCTUnwrap(number.firstMatch(
+                in: toolText, range: NSRange(toolText.startIndex..., in: toolText)))
+            let enabled = try XCTUnwrap(Int((toolText as NSString).substring(
+                with: toolCount.range(at: 1))))
+            XCTAssertGreaterThan(enabled, 0, "Configure and enable an MCP server before this test")
             let parts = [row.label, row.value as? String ?? ""]
                 + row.staticTexts.allElementsBoundByIndex.map(\.label)
             let text = parts.joined(separator: " ")
@@ -401,6 +413,7 @@ extension LaunchTests {
         waitForReply()
         let after = try openContext(recover: false)
         XCTAssertLessThan(after, before)
+        XCTAssertTrue(app.descendants(matching: .any)["compaction-summary-count"].exists)
         let compacted = XCTAttachment(screenshot: app.screenshot())
         compacted.name =
             "Physical model compaction reduced context from \(before) to \(after) tokens"
@@ -411,6 +424,7 @@ extension LaunchTests {
         XCTAssertTrue(composer.waitForExistence(timeout: 30))
         _ = try openContext(recover: false)
         XCTAssertFalse(app.buttons["Retry count"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["compaction-summary-count"].exists)
         app.buttons["Done"].tap()
         composer.tap()
         composer.typeText("What is the project codename? Reply only with the codename.")

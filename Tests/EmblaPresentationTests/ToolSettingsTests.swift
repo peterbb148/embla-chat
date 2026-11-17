@@ -269,3 +269,31 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     }
     #expect(try Data(contentsOf: file) == corrupt)
 }
+
+@Test(arguments: [false, true]) @MainActor
+func failedMetadataInvalidationLeavesTheCredentialAndItsSchemasUnchanged(_ remove: Bool) throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+    let file = root.appendingPathComponent("servers.json")
+    let vault = MemoryCredentialFixture()
+    let workspace = ToolWorkspace(configuration: file, credentials: vault)
+    let server = MCPServer(name: "Credential-bound synthetic catalog",
+        endpoint: URL(string: "https://example.invalid/mcp")!)
+    try workspace.saveServer(server, newToken: "synthetic-original")
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    let original = try Data(contentsOf: file)
+    let originalServer = workspace.servers[0]
+    try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
+    #expect(throws: (any Error).self) {
+        if remove { try workspace.clearCredential(server.id) }
+        else { try workspace.saveServer(originalServer, newToken: "synthetic-replacement") }
+    }
+    #expect(vault.read(MCPCredentialID(server: server)) == "synthetic-original")
+    #expect(workspace.servers[0] == originalServer)
+    #expect(try Data(contentsOf: file) == original)
+    #expect(try workspace.remoteTools().map(\.name) == ["clock"])
+}

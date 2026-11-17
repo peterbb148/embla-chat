@@ -145,7 +145,7 @@ public final class ToolWorkspace {
     }
 
     /// User registration/enabling authorizes reconnecting for a submitted message, not at startup.
-    func prepare(using cloud: ConversationCloudSync) async throws {
+    func prepare(using cloud: ConversationCloudSync, serverIDs: Set<UUID>? = nil) async throws {
         if let setupError {
             throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)
         }
@@ -163,6 +163,7 @@ public final class ToolWorkspace {
             (!server.enabledTools.isEmpty || server.enableToolsOnFirstDiscovery)
                 && clients[server.id] == nil
         {
+            if let serverIDs, !serverIDs.contains(server.id) { continue }
             try Task.checkCancellation()
             let client = try MCPClient(
                 server: server, bearerToken: credentials.read(MCPCredentialID(server: server)))
@@ -217,7 +218,12 @@ public final class ToolWorkspace {
                 if newToken == nil { server.lastDiscoveredTools = previous.lastDiscoveredTools }
             }
         }
-        if let newToken { try credentials.write(newToken, id: MCPCredentialID(server: server)) }
+        if let newToken {
+            if previous?.endpoint == server.endpoint {
+                try invalidatePlanningMetadata(server.id)
+            }
+            try credentials.write(newToken, id: MCPCredentialID(server: server))
+        }
         if let index = updated.firstIndex(where: { $0.id == server.id }) {
             updated[index] = server
         } else {
@@ -253,10 +259,12 @@ public final class ToolWorkspace {
     }
 
     public func clearCredential(_ id: UUID) throws {
+        try invalidatePlanningMetadata(id)
         try credentials.deleteAll(id)
-        clients[id] = nil
-        discovered[id] = nil
-        revision = UUID()
+    }
+
+    /// Invalidation must be durable before a credential can change, including failure paths.
+    private func invalidatePlanningMetadata(_ id: UUID) throws {
         guard let configuration, let index = servers.firstIndex(where: { $0.id == id }) else {
             throw SkillFailure.changed
         }
@@ -264,6 +272,9 @@ public final class ToolWorkspace {
         updated[index].lastDiscoveredTools = nil
         try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
         servers = updated
+        clients[id] = nil
+        discovered[id] = nil
+        revision = UUID()
     }
 
     public func discover(_ id: UUID) {
@@ -355,12 +366,14 @@ public final class ToolWorkspace {
 
     /// Older settings need an explicit connection once before local planning can use metadata.
     func preparePlanningMetadata(using cloud: ConversationCloudSync) async throws {
-        if servers.contains(where: {
+        let missing = Set(servers.filter {
             (!$0.enabledTools.isEmpty || $0.enableToolsOnFirstDiscovery)
                 && $0.lastDiscoveredTools == nil
-        }) {
-            try await prepare(using: cloud)
+        }.map(\.id))
+        if !missing.isEmpty {
+            try await prepare(using: cloud, serverIDs: missing)
         }
+        _ = try remoteTools()
     }
 
     /// Local planning uses validated saved metadata; live calls still require successful prepare.
