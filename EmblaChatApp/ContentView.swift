@@ -1111,7 +1111,7 @@ private struct ContextUsageView: View {
                     .accessibilityIdentifier("context-generation-speed")
                     Text(
                         "Measured chat generation, including reasoning and tool rounds. "
-                            + "Excludes prompt processing, compaction and stopped runs without final metrics."
+                            + "Excludes prompt processing (including the first token), compaction and stopped runs without final metrics."
                     )
                     .font(.caption).foregroundStyle(.secondary)
                 }

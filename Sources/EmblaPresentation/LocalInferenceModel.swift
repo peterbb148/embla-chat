@@ -68,9 +68,10 @@ public final class LocalInferenceModel {
     /// Time-weighted decode throughput of recorded chat generations, excluding summary work.
     public var averageDecodeTokensPerSecond: Double? {
         let measured = messages.filter { $0.role == .assistant }.compactMap(\.generationMetrics)
-            .filter { $0.completionTokens > 0 && $0.decodeMilliseconds > 0 }
+            .filter { $0.completionTokens > 1 && $0.decodeMilliseconds > 0 }
         guard !measured.isEmpty else { return nil }
-        let tokens = measured.reduce(0.0) { $0 + Double($1.completionTokens) }
+        // Upstream starts decode timing after its first token, which belongs to prefill.
+        let tokens = measured.reduce(0.0) { $0 + Double($1.completionTokens - 1) }
         let milliseconds = measured.reduce(0.0) { $0 + $1.decodeMilliseconds }
         let rate = tokens / (milliseconds / 1_000)
         return rate.isFinite && rate > 0 ? rate : nil

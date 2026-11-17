@@ -47,12 +47,14 @@ continues to show the measured usage.
 ## Average generation speed
 
 Context shows **Average decode speed** in tokens/s for the selected chat. It divides
-all measured generated tokens by their total decode time, rather than averaging response
-rates. Measurements include reasoning and tool-planning/continuation rounds with final
+all measured decode tokens by their total decode time, rather than averaging response
+rates. The pinned runtime starts decode timing after the first generated token; that
+token belongs to prompt processing and is subtracted from each run’s completion count. Measurements include reasoning and tool-planning/continuation rounds with final
 runtime metrics, including output-limited runs. Prompt processing, model loading, network
 waits and internal compaction generations are excluded. Cancelled/interrupted runs that
 never deliver final runtime metrics contribute nothing; their duration is not estimated.
-Only measurements with positive generated tokens and decode time contribute.
+Only measurements with positive decode tokens and decode time contribute; a run that
+produces only its first token has no measured decode tokens.
 
 Measurements persist with their assistant messages, so navigation, restart, cloud sync
 and compaction retain the same chat's average. Old messages without measurements remain

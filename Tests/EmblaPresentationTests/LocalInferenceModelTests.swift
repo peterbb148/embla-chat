@@ -162,7 +162,7 @@ func stopWaitsForTheWorkerAndAllowsAnotherPrompt() async throws {
     await model.waitUntilIdle()
     #expect(model.answer == "fixture answer")
     #expect(model.metrics?.completionTokens == 2)
-    #expect(model.averageDecodeTokensPerSecond == 2_000)
+    #expect(model.averageDecodeTokensPerSecond == 1_000)
     #expect(model.messages.count == 4)
     #expect(model.messages[3].state == .complete)
     #expect(backend.calls == 2)
@@ -555,7 +555,7 @@ func controllerRestoresSavedTranscriptAndUnsentDraftWithoutStartingInference() a
         session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
     #expect(second.chatRestored && second.storageError == nil)
     #expect(second.messages == first.messages)
-    #expect(second.averageDecodeTokensPerSecond == 2_000)
+    #expect(second.averageDecodeTokensPerSecond == 1_000)
     #expect(second.conversationID == first.conversationID)
     #expect(second.prompt == "A draft kept on this device")
     #expect(!second.loaded && backend.calls == calls)
@@ -1425,11 +1425,11 @@ func chatDecodeAverageIsWeightedAndSurvivesHistoryAndRestart() async throws {
     let store = ConversationStore(root: fixture.root.appendingPathComponent("speed-chat"))
     var first = ChatMessage(role: .assistant, text: "First measured answer")
     first.generationMetrics = GenerationMetrics(
-        finishReason: "stop", promptTokens: 500, completionTokens: 100,
+        finishReason: "stop", promptTokens: 500, completionTokens: 101,
         promptMilliseconds: 50_000, decodeMilliseconds: 1_000)
     var second = ChatMessage(role: .assistant, text: "Limited measured answer", state: .limited)
     second.generationMetrics = GenerationMetrics(
-        finishReason: "length", promptTokens: 600, completionTokens: 100,
+        finishReason: "length", promptTokens: 600, completionTokens: 101,
         promptMilliseconds: 70_000, decodeMilliseconds: 3_000)
     let legacy = ChatMessage(role: .assistant, text: "Older answer without measurements")
     let snapshot = ConversationSnapshot(
@@ -1449,7 +1449,7 @@ func chatDecodeAverageIsWeightedAndSurvivesHistoryAndRestart() async throws {
     #expect(model.averageDecodeTokensPerSecond == nil)
     model.prompt = "A separate chat"
     model.run(); await model.waitUntilIdle()
-    #expect(model.averageDecodeTokensPerSecond == 2_000)
+    #expect(model.averageDecodeTokensPerSecond == 1_000)
     model.selectChat(snapshot.conversationID); await model.waitUntilIdle()
     #expect(model.averageDecodeTokensPerSecond == 50)
     let reopened = await fixture.model(
