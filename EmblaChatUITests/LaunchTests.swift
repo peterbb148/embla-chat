@@ -1,3 +1,4 @@
+import UIKit
 import XCTest
 
 /// Exercises the production chat UI without model downloads or substitute responses.
@@ -57,22 +58,30 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         composer.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        let keyboard = XCTAttachment(screenshot: app.screenshot())
+        let keyboardScreen = XCUIScreen.main.screenshot()
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        assertFullScreenPrivacyOutline(keyboardScreen)
+        let keyboard = XCTAttachment(screenshot: keyboardScreen)
         keyboard.name = "Privacy border with keyboard"
         keyboard.lifetime = .keepAlways
         add(keyboard)
+        let before = composer.value as? String
+        composer.typeText("x")
+        XCTAssertNotEqual(composer.value as? String, before)
+        composer.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertEqual(composer.value as? String, before)
         app.buttons["Hide keyboard"].tap()
         app.buttons["Chat history"].tap()
         app.buttons["Settings"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        let sheet = XCTAttachment(screenshot: app.screenshot())
+        let sheet = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         sheet.name = "Privacy border above Settings"
         sheet.lifetime = .keepAlways
         add(sheet)
         app.buttons["Done"].tap()
         app.buttons["Context usage"].tap()
         XCTAssertTrue(app.navigationBars["Context"].waitForExistence(timeout: 5))
-        let context = XCTAttachment(screenshot: app.screenshot())
+        let context = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         context.name = "Privacy border above Context"
         context.lifetime = .keepAlways
         add(context)
@@ -83,9 +92,11 @@ final class LaunchTests: XCTestCase {
         let connected = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "exists == false"), object: status)
         XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 10), .completed)
+        assertFullScreenPrivacyOutline(XCUIScreen.main.screenshot(), visible: false)
         app.buttons["test-connectivity"].tap()
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.label, "Privacy mode — network paused")
+        assertFullScreenPrivacyOutline(XCUIScreen.main.screenshot())
         app.buttons["Hide keyboard"].tap()
         XCUIDevice.shared.orientation = .landscapeLeft
         let rotated = XCTNSPredicateExpectation(
@@ -101,6 +112,57 @@ final class LaunchTests: XCTestCase {
         landscape.lifetime = .keepAlways
         add(landscape)
 
+    }
+
+    /// Check rendered screen edges, including the portion occupied by the software keyboard.
+    @MainActor
+    private func assertFullScreenPrivacyOutline(
+        _ screenshot: XCUIScreenshot, visible: Bool = true,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        guard let image = screenshot.image.cgImage, image.width > 24, image.height > 24 else {
+            XCTFail("Missing full-screen screenshot", file: file, line: line)
+            return
+        }
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = pixels.withUnsafeMutableBytes { storage in
+            guard
+                let context = CGContext(
+                    data: storage.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                    bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue
+                        | CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else {
+            XCTFail("Cannot read screenshot pixels", file: file, line: line); return
+        }
+        func green(inX xs: Range<Int>, y ys: Range<Int>) -> Bool {
+            for y in ys {
+                for x in xs {
+                    let offset = (y * width + x) * 4
+                    let r = Int(pixels[offset]), g = Int(pixels[offset + 1]),
+                        b = Int(pixels[offset + 2])
+                    if g > 100 && g * 10 > r * 14 && g * 10 > b * 11 { return true }
+                }
+            }
+            return false
+        }
+        for ys in [0..<12, (height - 12)..<height] {
+            XCTAssertEqual(
+                green(inX: (width / 2 - 6)..<(width / 2 + 6), y: ys), visible,
+                "Outline must reach both screen edges", file: file, line: line)
+        }
+        for y in [height * 15 / 100, height * 85 / 100] {
+            for xs in [0..<12, (width - 12)..<width] {
+                XCTAssertEqual(
+                    green(inX: xs, y: (y - 6)..<(y + 6)), visible,
+                    "Outline must continue beside the keyboard", file: file, line: line)
+            }
+        }
     }
 
     @MainActor

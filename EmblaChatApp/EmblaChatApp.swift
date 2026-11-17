@@ -67,7 +67,8 @@ final class AppConnectivity {
     }
 }
 
-/// A separate, non-key, noninteractive window stays above sheets without intercepting touches.
+/// Additive, noninteractive strokes share the screen perimeter across presented windows.
+/// UIKit window-visibility notifications include the keyboard; no private classes are queried.
 struct PrivacyBorder: UIViewRepresentable {
     let connectivity: AppConnectivity
     let snapshot: NetworkAccess.Snapshot
@@ -79,70 +80,107 @@ struct PrivacyBorder: UIViewRepresentable {
     static func dismantleUIView(_ view: Host, coordinator: ()) { view.hide() }
 
     final class Host: UIView {
-        private var border: UIWindow?
+        private final class Presentation {
+            weak var window: UIWindow?
+            var outline: Outline?
+            init(_ window: UIWindow) { self.window = window }
+        }
+        private var presentations: [Presentation] = []
         private var access: NetworkAccess?
         private var snapshot: NetworkAccess.Snapshot?
-        private var keyboardFrame: CGRect?
+        private var viewport = CGRect.zero
 
         override init(frame: CGRect) {
             super.init(frame: frame)
-            NotificationCenter.default.addObserver(
-                self, selector: #selector(keyboardChanged(_:)),
-                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-            NotificationCenter.default.addObserver(
-                self, selector: #selector(keyboardChanged(_:)),
-                name: UIResponder.keyboardWillHideNotification, object: nil)
+            for name in [
+                UIWindow.didBecomeVisibleNotification,
+                UIResponder.keyboardDidShowNotification,
+                UIResponder.keyboardWillChangeFrameNotification,
+            ] {
+                NotificationCenter.default.addObserver(
+                    self, selector: #selector(presentationChanged(_:)), name: name, object: nil)
+            }
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is unsupported") }
 
-        @objc private func keyboardChanged(_ notification: Notification) {
-            keyboardFrame =
-                notification.name == UIResponder.keyboardWillHideNotification
-                ? nil : notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
-            (border?.rootViewController?.view as? Outline)?.setKeyboardFrame(keyboardFrame)
+        @objc private func presentationChanged(_ notification: Notification) {
+            if let presented = notification.object as? UIWindow { remember(presented) }
+            render()
+        }
+
+        private func remember(_ presented: UIWindow) {
+            presentations.removeAll { $0.window == nil }
+            guard !presentations.contains(where: { $0.window === presented }) else { return }
+            presentations.append(Presentation(presented))
         }
 
         override func didMoveToWindow() {
             super.didMoveToWindow()
+            guard window != nil else { hide(); return }
             if let access, let snapshot { apply(access, snapshot) }
         }
 
-        func hide() { border?.isHidden = true; border = nil }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            if let window, window.bounds != viewport { render() }
+        }
+
+        /// Remove every owned stroke before reopening network admission.
+        func hide() {
+            for presentation in presentations {
+                presentation.outline?.removeFromSuperview()
+                presentation.outline = nil
+            }
+        }
 
         func apply(_ access: NetworkAccess, _ snapshot: NetworkAccess.Snapshot) {
             self.access = access
             self.snapshot = snapshot
-            guard let scene = window?.windowScene else { return }
-            if snapshot.localOnly {
-                if border == nil {
-                    let overlay = UIWindow(windowScene: scene)
-                    overlay.windowLevel = .alert + 1
-                    overlay.backgroundColor = .clear
-                    overlay.isUserInteractionEnabled = false
-                    overlay.accessibilityElementsHidden = true
-                    let controller = UIViewController()
-                    let outline = Outline()
-                    outline.setKeyboardFrame(keyboardFrame)
-                    controller.view = outline
-                    overlay.rootViewController = controller
-                    border = overlay
-                }
-                border?.isHidden = false
-            } else {
-                // Hide synchronously before acknowledging this exact online transition.
-                hide()
+            render()
+            if !snapshot.localOnly, window != nil {
                 access.activateRequests(after: snapshot.revision)
+            }
+        }
+
+        private func render() {
+            guard let source = window, let scene = source.windowScene else { return }
+            viewport = source.bounds
+            for presented in scene.windows { remember(presented) }
+            guard snapshot?.localOnly == true else { hide(); return }
+            for presentation in presentations {
+                guard let target = presentation.window else { continue }
+                let outline: Outline
+                if let current = presentation.outline {
+                    outline = current
+                } else {
+                    outline = Outline()
+                    presentation.outline = outline
+                }
+                if outline.superview !== target { target.addSubview(outline) }
+                let insets = source.safeAreaInsets
+                outline.cornerRadius = max(insets.top, insets.bottom, insets.left, insets.right, 12)
+                outline.frame = target.bounds
+                target.bringSubviewToFront(outline)
+                let highestLayer =
+                    target.layer.sublayers?
+                    .filter { $0 !== outline.layer }.map(\.zPosition).max() ?? 0
+                outline.layer.zPosition = highestLayer + 1
+                outline.setNeedsLayout()
             }
         }
     }
 
     private final class Outline: UIView {
         private let stroke = CAShapeLayer()
-        private var keyboardFrame: CGRect?
+        var cornerRadius: CGFloat = 12
         override init(frame: CGRect) {
             super.init(frame: frame)
             backgroundColor = .clear
             isUserInteractionEnabled = false
+            accessibilityElementsHidden = true
+            isOpaque = false
+            autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            layer.zPosition = 1
             stroke.fillColor = UIColor.clear.cgColor
             stroke.strokeColor = UIColor.systemGreen.cgColor
             stroke.lineWidth = 2
@@ -150,27 +188,16 @@ struct PrivacyBorder: UIViewRepresentable {
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is unsupported") }
 
-        func setKeyboardFrame(_ frame: CGRect?) {
-            keyboardFrame = frame
-            setNeedsLayout()
-        }
-
         override func layoutSubviews() {
             super.layoutSubviews()
-            let radius = max(
-                safeAreaInsets.top, safeAreaInsets.bottom,
-                safeAreaInsets.left, safeAreaInsets.right, 12)
+            guard let space = window?.windowScene?.coordinateSpace else { return }
+            // Keyboard presentations may use a different UIScreen even on the same phone.
+            // Convert only within this window's scene; cross-screen conversion is invalid.
+            let perimeter = space.convert(space.bounds, to: self)
             stroke.frame = bounds
-            var visible = bounds
-            if let keyboardFrame {
-                let keyboard = convert(keyboardFrame, from: nil)
-                if keyboard.width >= bounds.width / 2, keyboard.maxY >= bounds.maxY {
-                    visible.size.height = max(0, min(bounds.height, keyboard.minY))
-                }
-            }
             stroke.path =
                 UIBezierPath(
-                    roundedRect: visible.insetBy(dx: 1, dy: 1), cornerRadius: radius
+                    roundedRect: perimeter.insetBy(dx: 1, dy: 1), cornerRadius: cornerRadius
                 ).cgPath
         }
     }

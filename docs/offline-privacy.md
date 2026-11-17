@@ -3,7 +3,8 @@
 Embla monitors the system's network path across all interfaces with `NWPathMonitor`.
 An unavailable path automatically pauses app-initiated networking and displays a thin
 green outline, with **Privacy mode — network paused** on the chat screen. The outline
-covers sheets and does not intercept touches or keyboard input. Entry/exit transitions are
+follows the full screen edge, including the system keyboard and presented sheets, without
+intercepting touches or keyboard input. Entry/exit transitions are
 announced to VoiceOver even when a modal covers the chat status.
 
 A satisfied path only permits connection attempts; it does not verify the internet,
@@ -63,12 +64,18 @@ and exact codename recall with an enabled remote registration and no discovery. 
 integration tests separately exercise cancellation and file boundaries. All 227 unit/integration
 tests passed (180 presentation, 47 core). Review fixes cover on-demand connection upgrades
 and preserve a long-lived HTTP session per client, with independent per-task admission and
-cancellation. Two final simulator UI tests passed in light/dark appearance with chat, Settings and Context sheets, the keyboard
-boundary, and reconnect while the keyboard was already present. Rotation checks passed;
-a full-screen landscape capture was inspected because app-element captures crop incorrectly
-with the extra indicator window in the local XCTest environment. These are policy-injection checks,
-not evidence that the simulator changed physical radios. Physical Wi-Fi/cellular/airplane-mode
-checks and actual personal-iCloud provider transfer remain outstanding (#78 and #45).
+cancellation. Simulator UI coverage checks light/dark appearance, Settings and Context sheets,
+keyboard input, reconnect while the keyboard is already present, and rotation. Full-screen
+pixel assertions require green at the top, bottom and both sides, including beside the
+software keyboard. These are policy-injection checks, not evidence that the simulator
+changed physical radios.
+
+Physical iPhone checks verified fresh Time.Now calls over cellular with Wi-Fi off and over
+Wi-Fi with airplane mode on. Airplane mode with Wi-Fi off showed privacy mode, no enabled
+remote tools, and a successful local answer. The user requested that the outline also
+surround the keyboard; final physical verification of that correction and reconnect remains
+pending in #78. Successful personal-iCloud synchronization was observed after the user
+confirmed scope; broader provider/cross-device/failure testing remains #45.
 
 Phone testing exposed confusing Settings wording. A satisfied path now displays **Network
 connection available**; individual service failures retain their actual errors. Older iCloud
