@@ -8,6 +8,8 @@ public struct MCPServer: Codable, Sendable, Equatable, Identifiable {
     public var enabledTools: Set<String>
     /// New registrations grant their first discovered catalog once; saved choices then persist.
     public var enableToolsOnFirstDiscovery: Bool
+    /// Last validated discovery, used for local context planning, never as a live connection.
+    public var lastDiscoveredTools: [MCPTool]?
     /// Short, stable catalog identifier; matching is exact, never inferred from a model reply.
     public var modelID: String { "mcp_" + id.uuidString.prefix(8).lowercased() }
 
@@ -20,10 +22,11 @@ public struct MCPServer: Codable, Sendable, Equatable, Identifiable {
         self.endpoint = endpoint
         self.enabledTools = enabledTools
         self.enableToolsOnFirstDiscovery = enableToolsOnFirstDiscovery
+        lastDiscoveredTools = nil
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, endpoint, enabledTools, enableToolsOnFirstDiscovery
+        case id, name, endpoint, enabledTools, enableToolsOnFirstDiscovery, lastDiscoveredTools
     }
 
     /// Existing installations retain their exact saved permissions rather than granting new ones.
@@ -35,6 +38,9 @@ public struct MCPServer: Codable, Sendable, Equatable, Identifiable {
         enabledTools = try values.decode(Set<String>.self, forKey: .enabledTools)
         enableToolsOnFirstDiscovery =
             try values.decodeIfPresent(Bool.self, forKey: .enableToolsOnFirstDiscovery) ?? false
+        lastDiscoveredTools =
+            try values.decodeIfPresent([MCPTool].self, forKey: .lastDiscoveredTools)
+        try validate()
     }
 
     public func validate() throws {
@@ -45,11 +51,16 @@ public struct MCPServer: Codable, Sendable, Equatable, Identifiable {
                 || (endpoint.scheme == "http"
                     && ["127.0.0.1", "localhost", "[::1]"].contains(host))
         else { throw MCPFailure.endpoint }
+        if let tools = lastDiscoveredTools {
+            guard tools.count <= 64, Set(tools.map(\.name)).count == tools.count else {
+                throw MCPFailure.invalidResponse
+            }
+        }
     }
 }
 
 /// Tool descriptions and schemas are untrusted server data, never authorization.
-public struct MCPTool: Sendable, Equatable, Identifiable {
+public struct MCPTool: Codable, Sendable, Equatable, Identifiable {
     public let name: String
     public let description: String
     public let inputSchema: ToolJSON
@@ -64,6 +75,17 @@ public struct MCPTool: Sendable, Equatable, Identifiable {
         self.description = description
         self.inputSchema = inputSchema
         headers = try MCPParameterHeader.parse(inputSchema)
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, description, inputSchema }
+
+    /// Reapply wire-schema validation to stored metadata, including parameter headers.
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            name: values.decode(String.self, forKey: .name),
+            description: values.decode(String.self, forKey: .description),
+            inputSchema: values.decode(ToolJSON.self, forKey: .inputSchema))
     }
 }
 

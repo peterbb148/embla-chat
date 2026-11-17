@@ -128,11 +128,12 @@ private struct PresentationFixture {
 
     @MainActor func model(
         session: InferenceSession, chatStore: ConversationStore? = nil,
-        countTokens: (@Sendable (URL, [ConversationMessage]) async throws -> Int)? = nil
+        countTokens: (@Sendable (URL, [ConversationMessage]) async throws -> Int)? = nil,
+        tools: ToolWorkspace? = nil
     ) async -> LocalInferenceModel {
         let model = LocalInferenceModel(
             repository: repository, manifest: manifest, session: session, chatStore: chatStore,
-            countTokens: countTokens)
+            countTokens: countTokens, tools: tools)
         model.check()
         await model.waitUntilIdle()
         return model
@@ -1150,4 +1151,38 @@ func oversizedProjectMemoryFailsClearlyWithoutTruncatingOrGenerating() async thr
     #expect(backend.calls == 0)
     #expect(model.projects == [project] && model.compaction.summary.isEmpty)
     #expect(try await store.load()?.projects == [project])
+}
+
+/// Persisted schemas permit local compaction without contacting an unavailable test endpoint.
+@Test(.timeLimit(.minutes(1))) @MainActor
+func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let file = fixture.root.appendingPathComponent("servers.json")
+    let setup = ToolWorkspace(configuration: file)
+    let server = MCPServer(name: "Synthetic offline catalog",
+        endpoint: URL(string: "https://example.invalid/mcp")!)
+    try setup.saveServer(server)
+    try setup.acceptDiscoveredTools([
+        MCPTool(name: "synthetic_clock", description: "Fixture only, never called.",
+            inputSchema: .object(["type": .string("object")]))], serverID: server.id)
+    setup.pause()
+    let workspace = ToolWorkspace(configuration: file)
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
+    let archive = manualCompactionArchive()
+    try await store.save(archive)
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in PresentationBackend(pauseFirst: false) },
+        chatStore: store, countTokens: { _, messages in
+            messages.reduce(0) { $0 + $1.content.count }
+        }, tools: workspace)
+    await model.waitForContextUsage()
+    guard case .ready = model.contextUsage else {
+        Issue.record("Saved schemas must allow offline context counting"); return
+    }
+    model.compactNow(); await model.waitUntilIdle()
+    #expect(model.error == nil)
+    #expect(model.compaction.summarizedMessageCount == 4)
+    #expect(model.messages == archive.snapshot.messages && model.prompt == archive.draft)
+    #expect(try await store.load()?.snapshot.compaction == model.compaction)
+    #expect(workspace.discovered.isEmpty && workspace.connecting == nil)
 }

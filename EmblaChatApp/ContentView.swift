@@ -960,10 +960,13 @@ private struct ContextUsageView: View {
                         Text(reason).foregroundStyle(.secondary)
                     case .failed(let reason):
                         Text("Could not count context: \(reason)").foregroundStyle(.red)
-                        Button("Retry count") { model.refreshContextUsage() }
+                        Button("Retry count") { model.retryContextUsage() }
+                            .disabled(model.busy)
                     }
                     Text(
-                        "Includes the saved summary, retained turns, current draft and model template. "
+                        "Includes saved tool definitions, summary, retained turns, current draft "
+                            + "and model template. Send reconnects tools when needed "
+                            + "and rechecks the budget. "
                             + "Earlier assistant reasoning follows the model’s template rules."
                     )
                     .font(.caption).foregroundStyle(.secondary)

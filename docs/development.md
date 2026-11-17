@@ -220,3 +220,15 @@ This reads the real public catalog, registers the selected Context7 endpoint in 
 device-only test settings, and sends synthetic public documentation/time queries. No token
 is supplied. All tools from both servers stay available. Provider failures fail the run;
 this is Mac-host real inference evidence, separate from simulator UI and catalog fixtures.
+
+For the enabled-server compaction regression (#71), use the existing verified model root
+and run this test alone (it performs real Metal inference and public Time.Now discovery):
+
+```sh
+EMBLA_REAL_TOOL_COMPACTION=1 \
+EMBLA_REAL_MODEL_ROOT="$PWD/build/VerificationModel" \
+swift test --filter realToolChatRecoversMetadataAndCompactsAutomaticallyThenOfflineAfterRestart
+```
+
+The history is explicitly synthetic; tokenization, summaries, saved state and recall use
+the actual runtime. Default tests skip it. Simulator UI checks do not prove inference.

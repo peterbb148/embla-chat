@@ -200,3 +200,72 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     #expect(workspace.servers.first?.enabledTools == Set(["one"]))
     #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
 }
+
+/// Local planning must survive restart without treating metadata as a live connection.
+@Test @MainActor func savedToolSchemasRemainUsableForOfflineContextAfterPauseAndRestart()
+    async throws
+{
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("servers.json")
+    let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    let server = MCPServer(name: "Synthetic planning server",
+        endpoint: URL(string: "https://example.invalid/mcp")!)
+    try workspace.saveServer(server)
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    workspace.pause()
+    #expect(try workspace.remoteTools().map(\.name) == ["clock"])
+    let reopened = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    #expect(reopened.discovered.isEmpty && reopened.connecting == nil)
+    #expect(try reopened.remoteTools().map(\.name) == ["clock"])
+    await #expect(throws: SkillFailure.self) {
+        try await reopened.remoteCall(serverID: server.id, name: "clock", arguments: [:])
+    }
+}
+
+@Test @MainActor func changedCredentialOrEndpointInvalidatesStoredPlanningSchemas() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("servers.json")
+    let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    let server = MCPServer(name: "Synthetic planning server",
+        endpoint: URL(string: "https://example.invalid/mcp")!)
+    try workspace.saveServer(server)
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    try workspace.saveServer(workspace.servers[0], newToken: "synthetic-new-credential")
+    #expect(workspace.servers[0].lastDiscoveredTools == nil)
+    #expect(ToolWorkspace(configuration: file).servers[0].lastDiscoveredTools == nil)
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    try workspace.clearCredential(server.id)
+    #expect(workspace.servers[0].lastDiscoveredTools == nil)
+    try workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    var changed = workspace.servers[0]
+    changed.endpoint = URL(string: "https://other.example.invalid/mcp")!
+    try workspace.saveServer(changed)
+    #expect(workspace.servers[0].lastDiscoveredTools == nil)
+    #expect(workspace.servers[0].enabledTools.isEmpty)
+}
+
+@Test @MainActor func corruptStoredSchemasFailClosedInsteadOfLosingEnabledTools() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("servers.json")
+    let server = MCPServer(name: "Synthetic corrupt catalog",
+        endpoint: URL(string: "https://example.invalid/mcp")!, enabledTools: ["clock"])
+    var object = try #require(JSONSerialization.jsonObject(
+        with: JSONEncoder().encode([server])) as? [[String: Any]])
+    object[0]["lastDiscoveredTools"] = [
+        ["name": "clock", "description": "Invalid saved schema", "inputSchema": false]]
+    let corrupt = try JSONSerialization.data(withJSONObject: object)
+    try corrupt.write(to: file)
+    let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    #expect(workspace.error != nil)
+    #expect(throws: SkillFailure.self) { try workspace.remoteTools() }
+    await #expect(throws: SkillFailure.self) {
+        try await workspace.prepare(using: ConversationCloudSync())
+    }
+    #expect(try Data(contentsOf: file) == corrupt)
+}

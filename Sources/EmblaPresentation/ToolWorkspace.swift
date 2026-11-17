@@ -206,12 +206,15 @@ public final class ToolWorkspace {
         discovered[server.id] = nil
         revision = UUID()
         let previous = servers.first(where: { $0.id == server.id })
+        // A registration form cannot supply schemas; only validated discovery may publish them.
+        server.lastDiscoveredTools = nil
         if let previous {
             if previous.endpoint != server.endpoint {
                 server.enabledTools = []
                 server.enableToolsOnFirstDiscovery = false
             } else {
                 server.enableToolsOnFirstDiscovery = previous.enableToolsOnFirstDiscovery
+                if newToken == nil { server.lastDiscoveredTools = previous.lastDiscoveredTools }
             }
         }
         if let newToken { try credentials.write(newToken, id: MCPCredentialID(server: server)) }
@@ -254,6 +257,13 @@ public final class ToolWorkspace {
         clients[id] = nil
         discovered[id] = nil
         revision = UUID()
+        guard let configuration, let index = servers.firstIndex(where: { $0.id == id }) else {
+            throw SkillFailure.changed
+        }
+        var updated = servers
+        updated[index].lastDiscoveredTools = nil
+        try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
+        servers = updated
     }
 
     public func discover(_ id: UUID) {
@@ -290,14 +300,16 @@ public final class ToolWorkspace {
             throw SkillFailure.changed
         }
         let initial = servers[index].enableToolsOnFirstDiscovery
+        guard let configuration else { throw SkillFailure.unavailable }
+        var updated = servers
+        updated[index].lastDiscoveredTools = tools
+        try updated[index].validate()
         if initial {
-            guard let configuration else { throw SkillFailure.unavailable }
-            var updated = servers
             updated[index].enabledTools = Set(tools.map(\.name))
             updated[index].enableToolsOnFirstDiscovery = false
-            try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
-            servers = updated
         }
+        try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
+        servers = updated
         discovered[serverID] = tools
         return initial
     }
@@ -341,7 +353,17 @@ public final class ToolWorkspace {
         revision = UUID()
     }
 
-    /// Enabled tools need discovered schemas (reconnected on Send); credentials never enter context.
+    /// Older settings need an explicit connection once before local planning can use metadata.
+    func preparePlanningMetadata(using cloud: ConversationCloudSync) async throws {
+        if servers.contains(where: {
+            (!$0.enabledTools.isEmpty || $0.enableToolsOnFirstDiscovery)
+                && $0.lastDiscoveredTools == nil
+        }) {
+            try await prepare(using: cloud)
+        }
+    }
+
+    /// Local planning uses validated saved metadata; live calls still require successful prepare.
     func remoteTools() throws -> [ModelToolSpecification] {
         if let setupError {
             throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)
@@ -351,12 +373,15 @@ public final class ToolWorkspace {
             throw SkillFailure.invalid(
                 "MCP catalog identifiers collide. Remove and re-add one server.")
         }
-        for server in servers where !server.enabledTools.isEmpty {
-            guard let tools = discovered[server.id], clients[server.id] != nil,
+        for server in servers where
+            !server.enabledTools.isEmpty || server.enableToolsOnFirstDiscovery
+        {
+            guard !server.enableToolsOnFirstDiscovery, let tools = server.lastDiscoveredTools,
                 server.enabledTools.isSubset(of: Set(tools.map(\.name)))
             else {
                 throw SkillFailure.invalid(
-                    "Tool schemas for '\(server.name)' are unavailable. Send to reconnect or connect in Settings; missing enabled tools require configuration changes."
+                    "Tool schemas for '\(server.name)' are unavailable. Retry count to reconnect; "
+                        + "missing enabled tools require configuration changes."
                 )
             }
             result += tools.filter { server.enabledTools.contains($0.name) }.map {
