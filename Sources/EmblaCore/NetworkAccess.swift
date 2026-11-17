@@ -40,6 +40,7 @@ public final class NetworkAccess: Sendable {
         var path: NetworkPathState
         var ready: Bool
         var revision: UInt64 = 0
+        var monitorInitialized = false
         var requests: [UUID: (URLSessionTask, NetworkRequestLease)] = [:]
         var observers: [UUID: @Sendable (Snapshot) -> Void] = [:]
         var snapshot: Snapshot {
@@ -49,6 +50,7 @@ public final class NetworkAccess: Sendable {
 
     private let state: Mutex<State>
     private let monitor: NWPathMonitor?
+    private let monitorQueue = DispatchQueue(label: "EmblaChat.NetworkPath")
 
     /// Explicit injected state for clients/tests without a UI lifecycle. Production uses shared.
     public init(initialState: NetworkPathState) {
@@ -70,9 +72,11 @@ public final class NetworkAccess: Sendable {
             case .requiresConnection: value = .requiresConnection
             @unknown default: value = .unknown
             }
-            self?.updatePath(value)
+            guard let self else { return }
+            state.withLock { $0.monitorInitialized = true }
+            updatePath(value)
         }
-        monitor?.start(queue: DispatchQueue(label: "EmblaChat.NetworkPath"))
+        monitor?.start(queue: monitorQueue)
     }
 
     deinit { monitor?.cancel() }
@@ -94,12 +98,17 @@ public final class NetworkAccess: Sendable {
 
     /// Foreground refresh uses the monitor's path, without sending a third-party probe.
     public func refresh() {
-        guard let monitor else { return }
-        switch monitor.currentPath.status {
-        case .satisfied: updatePath(.satisfied)
-        case .unsatisfied: updatePath(.unsatisfied)
-        case .requiresConnection: updatePath(.requiresConnection)
-        @unknown default: updatePath(.unknown)
+        guard monitor != nil else { return }
+        monitorQueue.async { [weak self] in
+            guard let self, let monitor, state.withLock({ $0.monitorInitialized }) else { return }
+            // The monitor's initial currentPath is not an observed connectivity sample.
+            // Serialize foreground reads with path delivery to avoid applying an older read.
+            switch monitor.currentPath.status {
+            case .satisfied: updatePath(.satisfied)
+            case .unsatisfied: updatePath(.unsatisfied)
+            case .requiresConnection: updatePath(.requiresConnection)
+            @unknown default: updatePath(.unknown)
+            }
         }
     }
 
