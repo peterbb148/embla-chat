@@ -27,7 +27,7 @@ public struct GenerationOptions: Sendable {
     }
 }
 
-public struct GenerationMetrics: Sendable, Equatable {
+public struct GenerationMetrics: Codable, Sendable, Equatable {
     public let finishReason: String
     public let promptTokens: Int
     public let completionTokens: Int

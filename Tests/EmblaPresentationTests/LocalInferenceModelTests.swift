@@ -156,11 +156,13 @@ func stopWaitsForTheWorkerAndAllowsAnotherPrompt() async throws {
     #expect(model.error == nil)
     #expect(model.messages.count == 2)
     #expect(model.messages[1].state == .interrupted)
+    #expect(model.averageDecodeTokensPerSecond == nil)
     model.prompt = "Second prompt"
     model.run()
     await model.waitUntilIdle()
     #expect(model.answer == "fixture answer")
     #expect(model.metrics?.completionTokens == 2)
+    #expect(model.averageDecodeTokensPerSecond == 1_000)
     #expect(model.messages.count == 4)
     #expect(model.messages[3].state == .complete)
     #expect(backend.calls == 2)
@@ -553,6 +555,7 @@ func controllerRestoresSavedTranscriptAndUnsentDraftWithoutStartingInference() a
         session: InferenceSession { _, _ in backend }, chatStore: ConversationStore(root: root))
     #expect(second.chatRestored && second.storageError == nil)
     #expect(second.messages == first.messages)
+    #expect(second.averageDecodeTokensPerSecond == 1_000)
     #expect(second.conversationID == first.conversationID)
     #expect(second.prompt == "A draft kept on this device")
     #expect(!second.loaded && backend.calls == calls)
@@ -742,6 +745,7 @@ func manualCompactionWorksBelowThresholdAndPersistsWithoutAddingVisibleTurns() a
     #expect(model.error == nil)
     #expect(backend.calls == 1)
     #expect(model.messages == archive.snapshot.messages)
+    #expect(model.averageDecodeTokensPerSecond == nil)
     #expect(model.prompt == archive.draft)
     #expect(model.compaction.summarizedMessageCount == 4)
     #expect(!model.compaction.summary.isEmpty)
@@ -1413,3 +1417,67 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
         #expect(try result.text().contains("Kept connection"))
     }
 #endif
+
+
+@Test @MainActor
+func chatDecodeAverageIsWeightedAndSurvivesHistoryAndRestart() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("speed-chat"))
+    var first = ChatMessage(role: .assistant, text: "First measured answer")
+    first.generationMetrics = GenerationMetrics(
+        finishReason: "stop", promptTokens: 500, completionTokens: 101,
+        promptMilliseconds: 50_000, decodeMilliseconds: 1_000)
+    var second = ChatMessage(role: .assistant, text: "Limited measured answer", state: .limited)
+    second.generationMetrics = GenerationMetrics(
+        finishReason: "length", promptTokens: 600, completionTokens: 101,
+        promptMilliseconds: 70_000, decodeMilliseconds: 3_000)
+    let legacy = ChatMessage(role: .assistant, text: "Older answer without measurements")
+    let snapshot = ConversationSnapshot(
+        conversationID: UUID(), messages: [
+            ChatMessage(role: .user, text: "Synthetic speed fixture"), first,
+            ChatMessage(role: .user, text: "Second question"), second,
+            ChatMessage(role: .user, text: "Legacy question"), legacy,
+        ], compaction: CompactionState())
+    try await store.save(ConversationArchive(sequence: 1, snapshot: snapshot))
+    let backend = PresentationBackend(pauseFirst: false)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend }, chatStore: store)
+    #expect(model.averageDecodeTokensPerSecond == 50)
+    model.compactNow(); await model.waitUntilIdle()
+    #expect(model.error == nil && !model.compaction.summary.isEmpty)
+    #expect(model.averageDecodeTokensPerSecond == 50)
+    model.newChat(); await model.waitUntilIdle()
+    #expect(model.averageDecodeTokensPerSecond == nil)
+    model.prompt = "A separate chat"
+    model.run(); await model.waitUntilIdle()
+    #expect(model.averageDecodeTokensPerSecond == 1_000)
+    model.selectChat(snapshot.conversationID); await model.waitUntilIdle()
+    #expect(model.averageDecodeTokensPerSecond == 50)
+    let reopened = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: store)
+    #expect(reopened.averageDecodeTokensPerSecond == 50)
+    #expect(reopened.messages == snapshot.messages)
+}
+
+@Test
+func legacyMessagesWithoutMetricsDecodeAndInvalidMeasurementsAreRejected() throws {
+    let legacy = try JSONEncoder().encode(ChatMessage(role: .assistant, text: "Legacy"))
+    let decoded = try JSONDecoder().decode(ChatMessage.self, from: legacy)
+    #expect(decoded.generationMetrics == nil)
+    var validMessage = decoded
+    validMessage.generationMetrics = GenerationMetrics(
+        finishReason: "stop", promptTokens: 10, completionTokens: 5,
+        promptMilliseconds: 1, decodeMilliseconds: 2)
+    let user = ChatMessage(role: .user, text: "Synthetic validation question")
+    try ConversationSnapshot(
+        conversationID: UUID(), messages: [user, validMessage], compaction: CompactionState()
+    ).validate()
+    for bad in [-1.0, Double.infinity, Double.nan] {
+        var message = decoded
+        message.generationMetrics = GenerationMetrics(
+            finishReason: "stop", promptTokens: 10, completionTokens: 5,
+            promptMilliseconds: 1, decodeMilliseconds: bad)
+        let snapshot = ConversationSnapshot(
+            conversationID: UUID(), messages: [user, message], compaction: CompactionState())
+        #expect(throws: ConversationStorageError.invalidDocument) { try snapshot.validate() }
+    }
+}

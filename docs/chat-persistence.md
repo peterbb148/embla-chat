@@ -225,3 +225,14 @@ Quick actions shares the granted EmblaChat root only after the preference save s
 An observable folder-readiness state keeps configuration reads behind the same durable
 consent gate; restored legacy scope remains paused. Off reads only the on-device action
 configuration. Actions is separate from chat documents and never serializes a draft.
+
+## Generation measurements
+
+Assistant messages may carry optional `generationMetrics`: finish reason, prompt and
+completion token counts, prompt milliseconds and decode milliseconds from the runtime.
+The portable format remains version 1 with this additive optional field; older messages
+have no measurements. Invalid negative/nonfinite measurements are rejected during document
+validation. Metrics follow their source messages through history, compaction and optional
+cloud synchronization. Internal summary measurements are not attached to chat messages.
+Older app versions may discard the optional field when saving. See
+[Context usage](context-usage.md#average-generation-speed) for aggregation and exclusions.

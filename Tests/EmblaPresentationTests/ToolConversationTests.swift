@@ -130,6 +130,8 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
     fixture.model.run(); await fixture.model.waitUntilIdle()
     #expect(fixture.model.error == nil)
     #expect(fixture.model.answer == "BLUE PENGUIN" && fixture.backend.calls == 2)
+    #expect(fixture.model.averageDecodeTokensPerSecond == 1_000)
+    #expect(fixture.model.messages.filter { $0.generationMetrics != nil }.count == 2)
     #expect(fixture.backend.contexts.last?.last?.content.contains("BLUE PENGUIN") == true)
     let stored = try #require(try await fixture.store.load())
     #expect(

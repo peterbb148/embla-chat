@@ -4,6 +4,10 @@ The composer has a small context ring beside the keyboard control. Tap it for ex
 used/capacity values and Compact now. Opening details never starts compaction. A missing
 model, pending count or counting error has an explicit state instead of an invented number.
 
+Enabled MCP method counts appear beside each server in **Settings → MCP Servers**;
+the Context panel focuses on token usage and compaction. Enabled schemas still contribute
+to the token count.
+
 ## What the count means
 
 The indicator projects the context for the next message: the stored rolling summary,
@@ -39,6 +43,23 @@ integer count. Details also show how many older messages are represented by the 
 summary, so a successful small reduction is visible even when the whole percentage is
 unchanged. Tool definitions and the retained recent turns remain in context. Its fill stops at a full circle if over capacity, while the numeric value
 continues to show the measured usage.
+
+## Average generation speed
+
+Context shows **Average decode speed** in tokens/s for the selected chat. It divides
+all measured decode tokens by their total decode time, rather than averaging response
+rates. The pinned runtime starts decode timing after the first generated token; that
+token belongs to prompt processing and is subtracted from each run’s completion count. Measurements include reasoning and tool-planning/continuation rounds with final
+runtime metrics, including output-limited runs. Prompt processing, model loading, network
+waits and internal compaction generations are excluded. Cancelled/interrupted runs that
+never deliver final runtime metrics contribute nothing; their duration is not estimated.
+Only measurements with positive decode tokens and decode time contribute; a run that
+produces only its first token has no measured decode tokens.
+
+Measurements persist with their assistant messages, so navigation, restart, cloud sync
+and compaction retain the same chat's average. Old messages without measurements remain
+readable and are excluded. An empty/unmeasured chat displays **Not available**. The value
+describes measured model decoding, not visible-answer-only or end-to-end response speed.
 
 ## Compact now
 

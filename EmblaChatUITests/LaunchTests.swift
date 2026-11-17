@@ -579,6 +579,20 @@ extension LaunchTests {
             let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
             XCTAssertTrue(composer.waitForExistence(timeout: 30))
             app.buttons["Chat history"].tap()
+            app.buttons["Settings"].tap()
+            reveal(app.buttons["MCP Servers"], in: app)
+            app.buttons["MCP Servers"].tap()
+            let enabledServer = app.buttons.matching(
+                NSPredicate(
+                    format: "identifier BEGINSWITH %@ AND label MATCHES %@",
+                    "mcp-server-", ".*\\([1-9][0-9]*\\)$")
+            ).firstMatch
+            reveal(enabledServer, in: app)
+            XCTAssertTrue(
+                enabledServer.exists, "Configure and enable an MCP server before this test")
+            app.navigationBars["MCP Servers"].buttons["Settings"].tap()
+            app.buttons["Done"].tap()
+            app.buttons["Chat history"].tap()
             let newChat = app.buttons["sidebar-new-chat"]
             let navigable = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "enabled == true"), object: newChat)
@@ -612,23 +626,6 @@ extension LaunchTests {
                 let row = app.descendants(matching: .any)
                     .matching(identifier: "context-used").firstMatch
                 XCTAssertTrue(row.waitForExistence(timeout: 45))
-                let toolsRow = app.descendants(matching: .any)
-                    .matching(identifier: "context-enabled-tools").firstMatch
-                XCTAssertTrue(toolsRow.exists, "Enabled MCP tools must be part of this regression")
-                let toolText =
-                    ([toolsRow.label, toolsRow.value as? String ?? ""]
-                    + toolsRow.staticTexts.allElementsBoundByIndex.map(\.label)).joined(
-                        separator: " ")
-                let number = try NSRegularExpression(pattern: "([0-9]+)")
-                let toolCount = try XCTUnwrap(
-                    number.firstMatch(
-                        in: toolText, range: NSRange(toolText.startIndex..., in: toolText)))
-                let enabled = try XCTUnwrap(
-                    Int(
-                        (toolText as NSString).substring(
-                            with: toolCount.range(at: 1))))
-                XCTAssertGreaterThan(
-                    enabled, 0, "Configure and enable an MCP server before this test")
                 let parts =
                     [row.label, row.value as? String ?? ""]
                     + row.staticTexts.allElementsBoundByIndex.map(\.label)

@@ -99,8 +99,9 @@ Wi-Fi with airplane mode on. Airplane mode with Wi-Fi off showed privacy mode, n
 remote tools, and a successful local answer. The user requested that the outline also
 surround the keyboard; the user confirmed full keyboard coverage on the installed phone
 build. After reconnect,
-Device Hub showed the border cleared, network availability and iCloud still On. The new
-cached-data behavior is awaiting phone verification in #78. Successful personal-iCloud
+Device Hub showed the border cleared, network availability and iCloud still On. The reviewed cached-data build also passed physical offline action selection and local
+generation, cold offline restart with the same action bubbles, and reconnect with the
+border cleared and no visible tool replay (#78). Successful personal-iCloud
 synchronization was observed after the user confirmed scope; broader provider/cross-device/failure testing remains #45.
 
 Phone testing exposed confusing Settings wording. A satisfied path now displays **Network

@@ -1101,18 +1101,26 @@ private struct ContextUsageView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Generation speed") {
+                    LabeledContent(
+                        "Average decode speed",
+                        value: model.averageDecodeTokensPerSecond.map {
+                            "\($0.formatted(.number.precision(.fractionLength(1)))) tokens/s"
+                        } ?? "Not available"
+                    )
+                    .accessibilityIdentifier("context-generation-speed")
+                    Text(
+                        "Measured chat generation, including reasoning and tool rounds. "
+                            + "Excludes prompt processing (including the first token), compaction and stopped runs without final metrics."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Next message context") {
                     switch model.contextUsage {
                     case .ready(let usage):
                         LabeledContent("Used", value: "\(usage.inputTokens) tokens")
                             .accessibilityIdentifier("context-used")
                         LabeledContent("Capacity", value: "\(usage.capacity) tokens")
-                        LabeledContent(
-                            "Enabled MCP tools",
-                            value:
-                                "\(model.tools.servers.reduce(0) { $0 + $1.enabledTools.count })"
-                        )
-                        .accessibilityIdentifier("context-enabled-tools")
                         LabeledContent("Reply reserve", value: "\(usage.replyReserve) tokens")
                         LabeledContent(
                             "Auto-compaction threshold",
