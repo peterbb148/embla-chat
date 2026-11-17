@@ -136,7 +136,15 @@ struct MCPSettingsView: View {
             }
             Section("Servers") {
                 ForEach(model.tools.servers) { server in
-                    NavigationLink(server.name) { MCPServerEditor(model: model, initial: server) }
+                    NavigationLink {
+                        MCPServerEditor(model: model, initial: server)
+                    } label: {
+                        Text(
+                            server.enabledTools.isEmpty
+                                ? server.name
+                                : "\(server.name) (\(server.enabledTools.count))")
+                    }
+                    .accessibilityIdentifier("mcp-server-\(server.id.uuidString)")
                 }
             }
             if let error = model.tools.error {

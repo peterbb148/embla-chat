@@ -15,6 +15,7 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     public var reasoning = ""
     public var state: State = .complete
     public var toolName: String?
+    public var generationMetrics: GenerationMetrics?
 
     public init(
         id: UUID = UUID(), role: ConversationMessage.Role, text: String,
@@ -64,6 +65,17 @@ public final class LocalInferenceModel {
     public private(set) var reasoning = ""
     public private(set) var answer = ""
     public private(set) var metrics: GenerationMetrics?
+    /// Time-weighted decode throughput of recorded chat generations, excluding summary work.
+    public var averageDecodeTokensPerSecond: Double? {
+        let measured = messages.filter { $0.role == .assistant }.compactMap(\.generationMetrics)
+            .filter { $0.completionTokens > 0 && $0.decodeMilliseconds > 0 }
+        guard !measured.isEmpty else { return nil }
+        let tokens = measured.reduce(0.0) { $0 + Double($1.completionTokens) }
+        let milliseconds = measured.reduce(0.0) { $0 + $1.decodeMilliseconds }
+        let rate = tokens / (milliseconds / 1_000)
+        return rate.isFinite && rate > 0 ? rate : nil
+    }
+
     public private(set) var loadMilliseconds: Double?
     public let cloud: ConversationCloudSync
     public let tools: ToolWorkspace
@@ -506,7 +518,9 @@ public final class LocalInferenceModel {
                     answer += text
                     messages[responseIndex].text += text
                     status = "Answering…"
-                case let .finished(value): metrics = value
+                case let .finished(value):
+                    metrics = value
+                    messages[responseIndex].generationMetrics = value
                 }
                 scheduleChatSave()
             }
@@ -552,7 +566,10 @@ public final class LocalInferenceModel {
                     case .reasoning(let text):
                         reasoning += text
                         messages[responseIndex].reasoning += text
-                    case .finished(let value): metrics = value; finish = value.finishReason
+                    case .finished(let value):
+                        metrics = value
+                        finish = value.finishReason
+                        messages[responseIndex].generationMetrics = value
                     }
                     scheduleChatSave()
                 }

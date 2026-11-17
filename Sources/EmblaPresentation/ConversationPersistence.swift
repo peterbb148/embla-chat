@@ -28,7 +28,14 @@ public struct ConversationSnapshot: Codable, Sendable, Equatable {
         guard boundary >= 0, boundary <= messages.count,
             compaction.summary.isEmpty == (boundary == 0),
             Set(messages.map(\.id)).count == messages.count,
-            messages.allSatisfy({ $0.role != .system }),
+            messages.allSatisfy({ message in
+                guard message.role != .system else { return false }
+                guard let metrics = message.generationMetrics else { return true }
+                return message.role == .assistant && metrics.promptTokens >= 0
+                    && metrics.completionTokens >= 0
+                    && metrics.promptMilliseconds.isFinite && metrics.promptMilliseconds >= 0
+                    && metrics.decodeMilliseconds.isFinite && metrics.decodeMilliseconds >= 0
+            }),
             boundary == messages.count || messages[boundary].role == .user
         else { throw ConversationStorageError.invalidDocument }
     }
