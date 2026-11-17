@@ -139,7 +139,8 @@ python3 scripts/test-action-cloud.py --device EXISTING_SIMULATOR_UDID \
 
 This explicitly installs the built app, temporarily replaces its local archive and actions
 with synthetic UI fixtures, and runs only `testQuickActionCloudFromExplicitFixture`. It
-creates no simulator. It restores the original bytes even if the test fails, looking up the
+creates no simulator. It restores the original archive, action configuration and first-run initialization marker
+even if the test fails, looking up the
 container again because Xcode can relocate it. Logs and screenshots stay under ignored
 `build/action-cloud-*`. Temporary private backups are deleted after success; failed runs
 retain them there for recovery. A skipped fixture test is treated as failure by the helper.

@@ -36,8 +36,9 @@ def main() -> None:
     root = container()
     archive = Path("Library/Application Support/EmblaChat/Conversation/active-chat.json")
     actions = Path("Documents/Actions/actions.json")
+    marker = Path("Library/Application Support/EmblaChat/ActionSettings/initialized-v1")
     originals = {path: (root / path).read_bytes() if (root / path).exists() else None
-                 for path in [archive, actions]}
+                 for path in [archive, actions, marker]}
     evidence = Path(tempfile.mkdtemp(prefix="action-cloud-", dir=repo / "build"))
     os.chmod(evidence, 0o700)
     for index, data in enumerate(originals.values()):
@@ -90,7 +91,7 @@ def main() -> None:
                 target.unlink(missing_ok=True)
             else:
                 target.write_bytes(data)
-        print(f"Original chat and actions restored. Local evidence: {evidence}", flush=True)
+        print(f"Original archive, actions and initialization marker restored. Local evidence: {evidence}", flush=True)
     for index in range(len(originals)):
         (evidence / f"original-{index}").unlink(missing_ok=True)
 
