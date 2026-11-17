@@ -942,7 +942,6 @@ public final class LocalInferenceModel {
         _ snapshot: ConversationSnapshot, draft: String, history: [SavedConversation]
     ) {
         restoringChat = true
-        tools.clearSkill()
         self.history = history
         activeProjectID = snapshot.projectID
         messages = snapshot.messages

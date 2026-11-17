@@ -5,6 +5,8 @@ When the user enables chat synchronization, the native Files picker grants acces
 
 ```text
 EmblaChat/
+├── Settings/
+│   └── settings.json     (includes readable MCP API keys when enabled)
 ├── Chats/
 │   └── ActiveChat.json
 ├── Actions/
@@ -23,7 +25,7 @@ is retained for migration from the supported format-1 single-chat and format-2 h
 documents. Drafts and selected-chat state remain local. New Chat archives
 the previous chat, and the [left sidebar](chat-history.md) reopens saved context. The one
 global iCloud switch is optional and off by default; explicit On consent covers all saved
-chats and project memory after consent. Existing On installations must confirm that expanded
+chats, project memory, settings and readable MCP keys after consent. Existing On installations must confirm that expanded
 scope before provider access. Disabled mode never opens the folder provider. Conflict
 choices replace a whole
 library with explicit confirmation. These operations do not replace, clear or scan Skills.
@@ -38,7 +40,8 @@ The app discovers valid copied skills and lets the user explicitly select one. S
 UTF-8 text files can be read on demand inside that skill when that skill is selected. Scripts, dependencies
 and arbitrary process launch are not installed or made executable by copying files.
 [Skills and MCP](skills-and-tools.md) documents validation, source selection, protocol support,
-authorization, Keychain credentials and actual evidence. MCP server settings stay device-local;
+authorization and actual evidence. [Shared settings](settings-sync.md) describes optional
+registration/key synchronization;
 copying a skill does not configure or authorize servers. Remote tool arguments leave the
 device even while model inference remains local. Requests/results form part of saved chats
 and follow their existing global iCloud consent.

@@ -126,6 +126,9 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(toggle.value as? String, "0")
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertTrue(app.alerts["Enable iCloud Drive?"].waitForExistence(timeout: 5))
+        let disclosure = app.alerts.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS %@", "Keys are readable by anyone with folder access"))
+        XCTAssertTrue(disclosure.firstMatch.exists)
         app.alerts.buttons["Cancel"].tap()
         XCTAssertEqual(toggle.value as? String, "0")
         XCTAssertEqual(app.staticTexts["icloud-status"].label, "iCloud is off.")

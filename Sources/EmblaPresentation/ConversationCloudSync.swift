@@ -37,7 +37,7 @@ enum CloudSyncPolicy {
 public final class ConversationCloudSync {
     public private(set) var enabled = false
     public private(set) var requiresScopeConsent = false
-    public private(set) var consentVersion = 1
+    public private(set) var consentVersion = 2
     public private(set) var folderAccessReady = false
     public private(set) var configurationRevision = UUID()
     public private(set) var status = "iCloud is off."
@@ -77,12 +77,12 @@ public final class ConversationCloudSync {
         self.factory = factory
     }
 
-    func restore(enabled: Bool, bookmark: Data?, base: String?, consentVersion: Int = 1) {
+    func restore(enabled: Bool, bookmark: Data?, base: String?, consentVersion: Int = 2) {
         pause()
         configurationRevision = UUID()
         self.enabled = enabled
         self.consentVersion = consentVersion
-        requiresScopeConsent = enabled && consentVersion != 1
+        requiresScopeConsent = enabled && consentVersion != 2
         storedEnabled = enabled
         offPreferencePending = false
         self.bookmark = bookmark
@@ -90,11 +90,14 @@ public final class ConversationCloudSync {
         baseNeedsSave = false
         storage = enabled && !requiresScopeConsent ? bookmark.map(factory) : nil
         folderAccessReady = storage != nil
-        error = enabled && bookmark == nil ? CloudConversationError.permission.localizedDescription : nil
+        error =
+            enabled && bookmark == nil
+            ? CloudConversationError.permission.localizedDescription : nil
         status = enabled ? "Waiting to synchronize…" : "iCloud is off."
         if error != nil { status = "iCloud folder access is unavailable." }
         if requiresScopeConsent {
-            status = "iCloud paused. Confirm syncing chats and project memory in Settings."
+            status =
+                "iCloud paused. Confirm syncing chats, project memory, settings and readable MCP keys in Settings."
         }
     }
 
@@ -123,7 +126,7 @@ public final class ConversationCloudSync {
         offPreferencePending = false
         enabled = true
         requiresScopeConsent = false
-        consentVersion = 1
+        consentVersion = 2
         self.bookmark = bookmark
         baseFingerprint = nil
         baseNeedsSave = false
@@ -139,7 +142,8 @@ public final class ConversationCloudSync {
                 enabled = storedEnabled
                 storage = nil
                 self.error = error.localizedDescription
-                status = storedEnabled
+                status =
+                    storedEnabled
                     ? "iCloud stopped; the saved setting is still on. "
                         + "Choose a folder or turn off before closing."
                     : "Could not save the iCloud preference. iCloud remains off."
@@ -175,9 +179,12 @@ public final class ConversationCloudSync {
                 guard configurationRevision == configuration, !enabled else { return }
                 settingsSaved(enabled: false)
             } catch {
-                guard configurationRevision == configuration, !enabled, offPreferencePending else { return }
+                guard configurationRevision == configuration, !enabled, offPreferencePending else {
+                    return
+                }
                 self.error = error.localizedDescription
-                status = storedEnabled
+                status =
+                    storedEnabled
                     ? "iCloud stopped; the saved setting is still on and may resume after reopening. "
                         + "Retry before closing."
                     : "iCloud stopped, but the preference could not be saved. Retry before closing."
@@ -301,22 +308,33 @@ public final class ConversationCloudSync {
         guard generation == epoch, enabled else { return }
         error = nil
         let same = try current?()?.snapshot.fingerprint() == remote.current?.fingerprint()
-        status = remote.uploaded && same
+        status =
+            remote.uploaded && same
             ? "Synced with iCloud Drive." : "Saved to iCloud Drive; upload confirmation pending."
-        if let now = current?(), try now.snapshot.fingerprint() != baseFingerprint { needsSync = true }
+        if let now = current?(), try now.snapshot.fingerprint() != baseFingerprint {
+            needsSync = true
+        }
     }
 
     private func showConflict(local: ConversationLibrary, remote: CloudConversationRead) throws {
         conflictRead = remote
         conflictLocal = try local.fingerprint()
-        var result = [CloudChatChoice(
-            id: try local.fingerprint(), label: "Keep this device’s chat library", snapshot: local)]
-        for (index, snapshot) in ([remote.current].compactMap { $0 } + remote.conflicts).enumerated() {
+        var result = [
+            CloudChatChoice(
+                id: try local.fingerprint(), label: "Keep this device’s chat library",
+                snapshot: local)
+        ]
+        for (index, snapshot) in ([remote.current].compactMap { $0 } + remote.conflicts)
+            .enumerated()
+        {
             let id = try snapshot.fingerprint()
             if !result.contains(where: { $0.id == id }) {
-                result.append(CloudChatChoice(
-                    id: id, label: index == 0 ? "Use iCloud chat library" : "Use iCloud conflict copy \(index)",
-                    snapshot: snapshot))
+                result.append(
+                    CloudChatChoice(
+                        id: id,
+                        label: index == 0
+                            ? "Use iCloud chat library" : "Use iCloud conflict copy \(index)",
+                        snapshot: snapshot))
             }
         }
         choices = result
@@ -339,10 +357,13 @@ public final class ConversationCloudSync {
         let epoch = generation
         task = Task {
             do {
-                try await storage.write(choice.snapshot, replacing: expected, resolvingConflicts: true)
+                try await storage.write(
+                    choice.snapshot, replacing: expected, resolvingConflicts: true)
                 try Task.checkCancellation()
                 guard generation == epoch, enabled else { finish(epoch: epoch); return }
-                if choice.id != localID { try await applySnapshot(choice.snapshot, expected: localID) }
+                if choice.id != localID {
+                    try await applySnapshot(choice.snapshot, expected: localID)
+                }
                 try Task.checkCancellation()
                 guard generation == epoch, enabled else { finish(epoch: epoch); return }
                 baseFingerprint = try choice.snapshot.fingerprint()

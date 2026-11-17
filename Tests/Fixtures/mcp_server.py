@@ -26,6 +26,9 @@ class Handler(BaseHTTPRequestHandler):
         ):
             self.respond(400, {"error": "fixture metadata validation failed"})
             return
+        if self.path == "/bearer" and self.headers.get("Authorization") != "Bearer synthetic-key":
+            self.respond(401, {"error": "synthetic bearer key required"})
+            return
         if self.path == "/auth":
             self.respond(401, {"error": "fixture authentication required"})
             return

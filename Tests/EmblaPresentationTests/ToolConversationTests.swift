@@ -84,7 +84,8 @@ private let readSkillRequest = """
         .write(to: skill.appendingPathComponent("SKILL.md"))
         try Data("BLUE PENGUIN".utf8).write(to: skill.appendingPathComponent("references/fact.txt"))
         workspace = ToolWorkspace(
-            store: SkillStore(localRoot: root.appendingPathComponent("Skills")))
+            store: SkillStore(localRoot: root.appendingPathComponent("Skills")),
+            configuration: root.appendingPathComponent("servers.json"))
         backend = ToolBackendFixture(replies: replies, holdFirst: holdFirst)
         let backend = backend
         store = ConversationStore(root: root.appendingPathComponent("Chats"))

@@ -79,3 +79,5 @@ and model licenses remain separate; notices are retained in [third-party](third-
 The pinned Yams YAML parser has its [MIT notice](Sources/EmblaCore/Resources/Yams-LICENSE)
 in the shared resource bundle.
 Model weights are downloaded separately and are not bundled in this repository.
+
+See [shared settings](docs/settings-sync.md) for optional iCloud configuration and readable MCP key storage.

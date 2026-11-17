@@ -427,7 +427,9 @@ struct ContentView: View {
                     HStack {
                         Label(skill.name, systemImage: "sparkles").font(.caption)
                         Button("Remove skill", systemImage: "xmark.circle") {
-                            model.tools.clearSkill()
+                            do { try model.tools.selectSkill(nil, using: model.cloud) } catch {
+                                actionError = error.localizedDescription
+                            }
                         }
                         .labelStyle(.iconOnly).disabled(model.busy)
                     }.accessibilityIdentifier("composer-skill")
@@ -728,7 +730,11 @@ private struct ModelSettingsView: View {
                     + "iCloud Drive/EmblaChat/Chats. "
                     + "Select the EmblaChat folder; Skills contains portable skills you can select. "
                     + "Quick actions uses Actions/actions.json in the same folder. "
-                    + "Your drafts and model stay on this device. Choose or create EmblaChat in Files."
+                    + "MCP registrations, tool permissions, selected skill and API keys use "
+                    + "Settings/settings.json. Keys are readable by anyone with folder access. "
+                    + "Existing local settings may be uploaded after you confirm. "
+                    + "Off returns to device settings and keeps cloud files. "
+                    + "Drafts and model stay on this device. Choose or create EmblaChat in Files."
             case .cloudChoice:
                 return "This replaces all chats and project memory in the chosen location. "
                     + "Using an iCloud copy "
@@ -742,7 +748,7 @@ private struct ModelSettingsView: View {
     private var cloudSection: some View {
         Section("iCloud") {
             Toggle(
-                "Store chats and project memory in iCloud Drive",
+                "Store chats, memory and settings in iCloud Drive",
                 isOn: Binding(
                     get: { model.cloud.enabled },
                     set: { enabled in
@@ -751,22 +757,39 @@ private struct ModelSettingsView: View {
             )
             .disabled(!model.chatRestored || model.busy || model.cloud.resolving)
             .accessibilityIdentifier("icloud-toggle")
-            Text("Off by default. This setting applies to all chats and project memory.")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(
+                "Off by default. Applies to chats, project memory, settings and readable MCP keys."
+            )
+            .font(.caption).foregroundStyle(.secondary)
             Text(model.cloud.status).accessibilityIdentifier("icloud-status")
             if let error = model.cloud.error {
                 Text(error).foregroundStyle(.red).textSelection(.enabled)
                     .accessibilityIdentifier("icloud-error")
             }
             if model.cloud.enabled {
-                Button("Sync now") { model.cloud.refresh() }
-                    .disabled(model.cloud.syncing || model.busy || model.cloud.requiresScopeConsent)
+                Button("Sync now") {
+                    model.cloud.refresh()
+                    model.tools.reloadSkills(using: model.cloud)
+                }
+                .disabled(model.cloud.syncing || model.busy || model.cloud.requiresScopeConsent)
                 Button("Choose iCloud folder…") { activeAlert = .cloudConsent }
                     .disabled(model.cloud.syncing || model.busy)
                 Text(
                     "Turning this off stops new app writes and keeps existing cloud files. "
                         + "iCloud Drive may finish transfers already queued."
                 ).font(.caption).foregroundStyle(.secondary)
+            }
+            Text(model.tools.settingsStatus)
+            if let error = model.tools.settingsError {
+                Text(error).foregroundStyle(.red).textSelection(.enabled)
+            }
+            Button("Reload settings") { model.tools.reloadSkills(using: model.cloud) }
+                .disabled(model.busy || model.cloud.requiresScopeConsent)
+            ForEach(Array(model.tools.settingsChoices.enumerated()), id: \.offset) { index, label in
+                Button(label, role: .destructive) {
+                    model.tools.resolveSettings(index)
+                    model.tools.reloadSkills(using: model.cloud)
+                }.disabled(model.busy)
             }
             ForEach(model.cloud.choices) { choice in
                 Button {
@@ -944,9 +967,12 @@ private struct ContextUsageView: View {
                         LabeledContent("Used", value: "\(usage.inputTokens) tokens")
                             .accessibilityIdentifier("context-used")
                         LabeledContent("Capacity", value: "\(usage.capacity) tokens")
-                        LabeledContent("Enabled MCP tools", value:
-                            "\(model.tools.servers.reduce(0) { $0 + $1.enabledTools.count })")
-                            .accessibilityIdentifier("context-enabled-tools")
+                        LabeledContent(
+                            "Enabled MCP tools",
+                            value:
+                                "\(model.tools.servers.reduce(0) { $0 + $1.enabledTools.count })"
+                        )
+                        .accessibilityIdentifier("context-enabled-tools")
                         LabeledContent("Reply reserve", value: "\(usage.replyReserve) tokens")
                         LabeledContent(
                             "Auto-compaction threshold",
@@ -976,9 +1002,12 @@ private struct ContextUsageView: View {
                 }
                 Section("Compaction") {
                     if model.compaction.summarizedMessageCount > 0 {
-                        LabeledContent("Messages in saved summary", value:
-                            "\(model.compaction.summarizedMessageCount)")
-                            .accessibilityIdentifier("compaction-summary-count")
+                        LabeledContent(
+                            "Messages in saved summary",
+                            value:
+                                "\(model.compaction.summarizedMessageCount)"
+                        )
+                        .accessibilityIdentifier("compaction-summary-count")
                     }
                     Button("Compact now") {
                         model.compactNow()
