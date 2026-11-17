@@ -120,6 +120,9 @@ public final class QuickActionsModel {
             guard let name = action.skill else { throw QuickActionError.changed }
             try await model.tools.selectSkill(name, using: model.cloud)
         }
+        if action.autoSend {
+            _ = try await model.tools.validateSkill(using: model.cloud)
+        }
         try Task.checkCancellation()
         _ = try validatedAction(action, using: model.cloud)
         guard applicationID == request, model.conversationID == chat, model.prompt == draft,

@@ -601,3 +601,34 @@ private actor ActionFailingStore: ConversationStoring {
     #expect(fixture.model.messages[0].text == "Edited text retaining the same message ID")
     await fixture.finish()
 }
+
+@Test(arguments: [QuickAction.Kind.prompt, .skill], [false, true]) @MainActor
+func staleSkillFilesFailImmediateActionsBeforeDraftReplacement(
+    kind: QuickAction.Kind, invalid: Bool
+) async throws {
+    let fixture = try await ActionSubmissionFixture()
+    defer { fixture.clean() }
+    if kind == .prompt {
+        try await fixture.model.tools.selectSkill("example-skill", using: fixture.model.cloud)
+    }
+    let action = QuickAction(
+        id: "instant", label: "Instant", order: 0, type: kind, prompt: "Configured send",
+        skill: kind == .skill ? "example-skill" : nil, autoSend: true)
+    let actions = await loadedActionModel(action, cloud: fixture.model.cloud)
+    fixture.model.prompt = "Private draft"
+    guard case .needsConfirmation(let consent) = try await actions.apply(action, to: fixture.model)
+    else { Issue.record("Expected replacement confirmation"); return }
+    let file = fixture.root.appendingPathComponent("Skills/example-skill/SKILL.md")
+    if invalid {
+        try Data("Invalid skill without required frontmatter".utf8).write(to: file)
+    } else {
+        try FileManager.default.removeItem(at: file)
+    }
+    await #expect(throws: SkillFailure.self) {
+        try await actions.apply(action, to: fixture.model, replacing: consent)
+    }
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.model.prompt == "Private draft" && fixture.model.messages.isEmpty)
+    #expect(fixture.backend.calls == 0)
+    await fixture.finish()
+}

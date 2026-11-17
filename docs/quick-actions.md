@@ -17,9 +17,10 @@ same. Send is disabled while an action is preparing; a late
 skill-selection result cannot submit after an intervening turn, even if the draft text matches again.
 
 Immediate sending requires a verified model, available settings/skill and ready chat storage.
-Preflight failures are shown without changing the draft, and are never queued for a later
-send. Repeated taps cannot submit duplicates while selection or generation is underway.
-Once submitted, ordinary generation/tool/storage errors follow the normal Send behavior.
+The selected skill document is re-read before replacement/submission; a cached catalog entry
+alone cannot authorize an unavailable skill. Preflight failures leave the draft unchanged
+and are never queued for a later send. Repeated taps cannot submit duplicates while selection or generation is underway.
+After submission, file, generation, tool and storage errors follow normal Send behavior.
 The same rules apply inside projects. New Chat and model deletion retain action configuration.
 
 ## Files and storage mode
