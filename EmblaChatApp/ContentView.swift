@@ -992,7 +992,8 @@ private struct ContextUsageView: View {
                         "Summarizes older turns on this device, keeping the visible chat and "
                             + "latest two exchanges. Summaries can lose details. "
                             + "Use Stop during generation "
-                            + "to keep the previous committed summary. The ring rounds to whole percent; "
+                            + "to keep the previous committed summary. "
+                            + "The ring rounds to whole percent; "
                             + "small token savings can leave it unchanged."
                     )
                     .font(.caption).foregroundStyle(.secondary)

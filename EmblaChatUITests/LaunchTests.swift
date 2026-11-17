@@ -142,6 +142,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["Compact now"].exists)
         XCTAssertFalse(app.buttons["Compact now"].isEnabled)
         XCTAssertFalse(app.staticTexts["context-used"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["compaction-summary-count"].exists)
         app.buttons["Done"].tap()
         XCTAssertEqual(composer.value as? String, "Draft retained while viewing context")
         XCTAssertFalse(app.staticTexts["answer"].exists)
@@ -361,6 +362,11 @@ extension LaunchTests {
             let finished = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "exists == true"), object: app.buttons["Send"])
             XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 180), .completed)
+            // Send returns during the non-cancellable save.
+            // New Chat stays disabled until the operation settles.
+            let saved = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "enabled == true"), object: app.buttons["New Chat"])
+            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)
             XCTAssertFalse(app.staticTexts["chat-error"].exists)
         }
         func openContext(recover: Bool) throws -> Int {
@@ -393,6 +399,7 @@ extension LaunchTests {
         }
         _ = try openContext(recover: true)
         app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 45))
         let prompts = [
             "Compaction diagnostic test. Remember: the project codename is BLUE PENGUIN. "
                 + "Numeric test padding is not a fact: "
@@ -426,6 +433,7 @@ extension LaunchTests {
         XCTAssertFalse(app.buttons["Retry count"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["compaction-summary-count"].exists)
         app.buttons["Done"].tap()
+        waitForReply()
         composer.tap()
         composer.typeText("What is the project codename? Reply only with the codename.")
         app.buttons["Send"].tap()
