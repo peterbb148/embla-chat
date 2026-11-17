@@ -247,3 +247,42 @@ transport tests inject their own explicit policy; they do not depend on a runnin
 Debug UI tests may launch with `--network-policy-fixture` to exercise blocked dispatch and
 indicator transitions deterministically. Release ignores that argument and monitors the
 system path. See [offline privacy mode](offline-privacy.md) for the guarantee and its limits.
+
+## Tool-result continuation validation
+
+Run `swift test --force-resolved-versions` for chunk budgets, complete source coverage,
+incomplete/cancelled summaries, atomic-save failures, background/navigation races, restart
+recovery, multiple large results in one turn, smaller saved results that exceed the remaining
+budget, and history-compaction input budgets. Actual loopback JSON/SSE checks cover deadline
+normalization and the shared discovery deadline. A privacy interruption during an atomic
+projection save must prevent continuation even after reconnect. Character tokenizers and
+scripted generation in those tests are explicit fixtures, not model-quality evidence.
+
+The opt-in real-model recovery test uses existing verified model storage; it never downloads
+weights or calls a public server:
+
+```sh
+EMBLA_REAL_TOOL_RESULT_SUMMARY=1 \
+EMBLA_REAL_MODEL_ROOT="$PWD/build/VerificationModel" \
+swift test --force-resolved-versions \
+  --filter realModelRecoversAnOversizedSavedToolResultWithSourcesWithoutANetworkCall
+```
+
+On 2026-11-17 that actual Mac model test passed in 74.819 seconds: 18,910 source tokens became
+52 projected tokens, raw text was preserved, and the answer retained the exact BLUE PENGUIN
+fact and source URL. This synthetic saved-result case is real tokenizer/Metal/model evidence,
+not a live Tavily result or an iPhone/simulator performance claim.
+
+The simulator UI test `testToolResultSummaryNoticeAndFullOriginalSurviveRestart` selects an
+explicit Debug-only saved-history fixture and a per-test UUID. Chat, tool settings and quick
+actions use isolated temporary storage. It never substitutes a model backend or reads the
+normal profile. Release does not compile the fixture/launch switch. That check verifies
+notice/raw-result rendering and restart only; control-flow correctness comes from the package
+tests, and real summary quality from the opt-in Mac test. Reuse the existing iPhone 17 Pro
+simulator with parallel testing disabled; do not create another simulator for this check.
+
+A separate authenticated Tavily `pro` research smoke request through the updated native
+MCP client completed in 96.915 seconds and returned 16,743 bytes on 2026-11-17. It performed
+one public research request, with no automatic retry or substitute tool, and used the
+already configured key without logging it. This demonstrates a real response beyond the
+old 60-second resource cap; it is host HTTP evidence, not simulator/phone model evidence.

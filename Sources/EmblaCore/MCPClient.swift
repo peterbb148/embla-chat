@@ -104,9 +104,27 @@ public actor MCPClient {
     private let network: NetworkAccess
     private static let limit = 131_072
 
+    struct Timeouts: Sendable {
+        var discovery: TimeInterval = 60
+        var toolCall: TimeInterval = 20 * 60
+    }
+
+    private let timeouts: Timeouts
+
     public init(
         server: MCPServer, bearerToken: String? = nil, network: NetworkAccess = .shared
     ) throws {
+        try self.init(server: server, bearerToken: bearerToken, network: network, timeouts: Timeouts())
+    }
+
+    /// Internal timing injection keeps real HTTP deadline tests short; production uses fixed caps.
+    init(
+        server: MCPServer, bearerToken: String? = nil, network: NetworkAccess = .shared,
+        timeouts: Timeouts
+    ) throws {
+        precondition(timeouts.discovery.isFinite && timeouts.discovery > 0)
+        precondition(timeouts.toolCall.isFinite && timeouts.toolCall > 0)
+        self.timeouts = timeouts
         try server.validate()
         if let bearerToken, !bearerToken.utf8.allSatisfy({ (33...126).contains($0) }) {
             throw MCPFailure.credential
@@ -118,13 +136,14 @@ public actor MCPClient {
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
         configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
+        configuration.timeoutIntervalForRequest = max(timeouts.discovery, timeouts.toolCall)
+        configuration.timeoutIntervalForResource = max(timeouts.discovery, timeouts.toolCall)
         transport = NetworkTransport(configuration: configuration)
     }
 
     public func discover() async throws -> MCPDiscovery {
-        let information = try await request("server/discover")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(timeouts.discovery))
+        let information = try await request("server/discover", deadline: deadline)
         guard information["capabilities"]?["tools"]?.object != nil else {
             throw MCPFailure.toolsUnavailable
         }
@@ -136,7 +155,7 @@ public actor MCPClient {
         repeat {
             var params: [String: ToolJSON] = [:]
             if let cursor { params["cursor"] = .string(cursor) }
-            let page = try await request("tools/list", params: params)
+            let page = try await request("tools/list", params: params, deadline: deadline)
             guard case .array(let entries) = page["tools"] else {
                 throw MCPFailure.invalidResponse
             }
@@ -203,7 +222,41 @@ public actor MCPClient {
     }
 
     private func request(
-        _ method: String, params: [String: ToolJSON] = [:], headers: [String: String] = [:]
+        _ method: String, params: [String: ToolJSON] = [:], headers: [String: String] = [:],
+        deadline sharedDeadline: ContinuousClock.Instant? = nil
+    ) async throws -> ToolJSON {
+        try Task.checkCancellation()
+        let now = ContinuousClock.now
+        let duration = method == "tools/call" ? timeouts.toolCall : timeouts.discovery
+        let deadline = sharedDeadline ?? now.advanced(by: .seconds(duration))
+        guard deadline > now else { throw MCPFailure.requestTimedOut }
+        do {
+            return try await withThrowingTaskGroup(of: ToolJSON.self) { group in
+                group.addTask {
+                    try await self.performRequest(
+                        method, params: params, headers: headers, deadline: deadline)
+                }
+                group.addTask {
+                    try await ContinuousClock().sleep(until: deadline)
+                    throw MCPFailure.requestTimedOut
+                }
+                defer { group.cancelAll() }
+                guard let result = try await group.next() else { throw CancellationError() }
+                try Task.checkCancellation()
+                guard ContinuousClock.now < deadline else { throw MCPFailure.requestTimedOut }
+                return result
+            }
+        } catch {
+            if Task.isCancelled { throw CancellationError() }
+            if (error as? URLError)?.code == .timedOut { throw MCPFailure.requestTimedOut }
+            throw error
+        }
+    }
+
+    /// The deadline covers headers and the complete JSON/SSE response, including keep-alives.
+    private func performRequest(
+        _ method: String, params: [String: ToolJSON], headers: [String: String],
+        deadline: ContinuousClock.Instant
     ) async throws -> ToolJSON {
         try Task.checkCancellation()
         let id = UUID().uuidString
@@ -231,6 +284,11 @@ public actor MCPClient {
         }
         if let token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
+        try Task.checkCancellation()
+        let now = ContinuousClock.now
+        guard now < deadline else { throw MCPFailure.requestTimedOut }
+        let remaining = now.duration(to: deadline).components
+        request.timeoutInterval = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
         let (bytes, response) = try await transport.response(
             for: request, access: network, limit: Self.limit, overflow: MCPFailure.limit)
         defer { bytes.task.cancel() }
@@ -266,7 +324,7 @@ public actor MCPClient {
                 data.append(byte)
             }
             try bytes.task.check()
-            return try Self.result(data, id: id)
+            return try Self.resultBeforeDeadline(data, id: id, deadline: deadline)
         }
         guard type.hasPrefix("text/event-stream") else { throw MCPFailure.invalidResponse }
         var line = Data()
@@ -299,7 +357,7 @@ public actor MCPClient {
                     let message = try Self.decode(data)
                     if message["id"] != nil {
                         try bytes.task.check()
-                        return try Self.result(data, id: id)
+                        return try Self.resultBeforeDeadline(data, id: id, deadline: deadline)
                     }
                     guard message["jsonrpc"] == .string("2.0"),
                         message["method"]?.string?.hasPrefix("notifications/") == true
@@ -313,6 +371,15 @@ public actor MCPClient {
             }
         }
         throw MCPFailure.invalidResponse
+    }
+
+    private static func resultBeforeDeadline(
+        _ data: Data, id: String, deadline: ContinuousClock.Instant
+    ) throws -> ToolJSON {
+        let value = try result(data, id: id)
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else { throw MCPFailure.requestTimedOut }
+        return value
     }
 
     private static func decode(_ data: Data) throws -> ToolJSON {
@@ -430,7 +497,7 @@ struct MCPParameterHeader: Sendable, Equatable {
 public enum MCPFailure: Error, LocalizedError, Sendable {
     case endpoint, credential, credentialUnavailable, authentication, toolsUnavailable,
         invalidResponse, invalidHeaders,
-        limit
+        limit, requestTimedOut
     case http(Int), rpc(ToolJSON), httpRPC(Int, ToolJSON), toolError(ToolJSON)
 
     public var errorDescription: String? {
@@ -452,6 +519,8 @@ public enum MCPFailure: Error, LocalizedError, Sendable {
         case .invalidHeaders:
             return "The tool has an invalid MCP parameter-header declaration or value."
         case .limit: return "The server response exceeds the supported size or tool-list limit."
+        case .requestTimedOut:
+            return "The MCP request exceeded its time limit. Its outcome is unknown; retry explicitly if appropriate."
         case .http(let code):
             return "The MCP server returned HTTP \(code). No result was substituted."
         case .rpc(let code):

@@ -59,6 +59,12 @@ class Handler(BaseHTTPRequestHandler):
                 "data": {"field": "timezone", "reason": "Fixture detail"},
             }})
             return
+        if self.path == "/paged-discovery":
+            time.sleep(0.08)
+        if (self.path == "/delayed-tool" and request["method"] == "tools/call") or (
+            self.path == "/delayed-discovery" and request["method"] == "server/discover"
+        ):
+            time.sleep(0.4)
         if request["method"] == "server/discover":
             result = {"capabilities": {"tools": {}}, "resultType": "complete"}
         elif request["method"] == "tools/list":
@@ -91,10 +97,17 @@ class Handler(BaseHTTPRequestHandler):
                 result["isError"] = "true"
             elif self.path == "/numeric-overflow":
                 result["structuredContent"]["number"] = "fixture-excess-precision"
+        if self.path == "/paged-discovery" and request["method"] == "tools/list":
+            if params.get("cursor") is None:
+                result["nextCursor"] = "second-page"
+            else:
+                result["tools"][0]["name"] = "echo-second-page"
         response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
         if self.path == "/wrong-id":
             response["id"] = "not-the-request-id"
-        if self.path in {"/sse", "/sse-cr", "/sse-bom", "/slow", "/invalid-utf8"}:
+        if self.path in {"/sse", "/sse-cr", "/sse-bom", "/slow", "/invalid-utf8"} or (
+            self.path == "/progress-tool" and request["method"] == "tools/call"
+        ):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Connection", "close")
@@ -106,6 +119,11 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.wfile.write(b": fixture keep-alive\r\n\r\n")
                 self.wfile.flush()
+                if self.path == "/progress-tool":
+                    for _ in range(50):
+                        self.wfile.write(b": research still running\n\n")
+                        self.wfile.flush()
+                        time.sleep(0.02)
                 if self.path == "/slow":
                     for _ in range(50):
                         self.wfile.write(b": waiting\n\n")
@@ -120,7 +138,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b"data: " + payload + ending)
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
-                pass  # Expected native request cancellation, not a fabricated result.
+                with self.server.count_lock:
+                    counts = self.server.counts.setdefault(self.path, {})
+                    counts["disconnected"] = counts.get("disconnected", 0) + 1
         else:
             self.respond(200, response)
 

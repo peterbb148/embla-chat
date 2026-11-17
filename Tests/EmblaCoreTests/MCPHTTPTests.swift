@@ -26,12 +26,14 @@ import Testing
         }
 
         func client(
-            _ path: String, network: NetworkAccess = NetworkAccess(initialState: .satisfied)
+            _ path: String, network: NetworkAccess = NetworkAccess(initialState: .satisfied),
+            timeouts: MCPClient.Timeouts = .init()
         ) throws -> MCPClient {
             try MCPClient(
                 server: MCPServer(
                     name: "Synthetic HTTP fixture",
-                    endpoint: URL(string: "http://127.0.0.1:\(port)/\(path)")!), network: network)
+                    endpoint: URL(string: "http://127.0.0.1:\(port)/\(path)")!),
+                network: network, timeouts: timeouts)
         }
 
         func counts() async throws -> [String: [String: Int]] {
@@ -56,6 +58,101 @@ import Testing
             #expect(
                 result["structuredContent"]?["header"] == .string(MCPClient.header("København\n")))
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func discoverySharesOneAbsoluteDeadlineAcrossInformationAndCatalogPages() async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let enough = try fixture.client(
+            "paged-discovery", timeouts: .init(discovery: 2, toolCall: 2))
+        #expect(try await enough.discover().tools.count == 2)
+        let short = try fixture.client(
+            "paged-discovery", timeouts: .init(discovery: 0.2, toolCall: 2))
+        do {
+            _ = try await short.discover()
+            Issue.record("Each 80 ms RPC fits alone, but the three-RPC discovery exceeds 200 ms")
+        } catch MCPFailure.requestTimedOut {
+        } catch { Issue.record("Unexpected discovery error: \(error)") }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func toolCallCanOutliveTheShortDiscoveryDeadlineWithoutReissuingIt() async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        // Discovery is setup, not the operation under this short-budget assertion.
+        // Give it the normal budget so concurrent package tests cannot consume 200 ms.
+        let discovery = try fixture.client("delayed-tool")
+        let tool = try #require(try await discovery.discover().tools.first)
+        let client = try fixture.client(
+            "delayed-tool", timeouts: .init(discovery: 0.2, toolCall: 2))
+        let result = try await client.call(tool, arguments: ["text": .string("Delayed real response")])
+        #expect(result["content"] == .array([
+            .object(["type": .string("text"), "text": .string("Delayed real response")])
+        ]))
+        #expect(try await fixture.counts()["/delayed-tool"]?["tools/call"] == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func discoveryAndToolDeadlinesCoverHeadersAndActiveSSEKeepAlives() async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let discovery = try fixture.client(
+            "delayed-discovery", timeouts: .init(discovery: 0.1, toolCall: 2))
+        do {
+            _ = try await discovery.discover()
+            Issue.record("Delayed discovery must respect its short absolute deadline")
+        } catch MCPFailure.requestTimedOut {
+            // Both the explicit deadline and native URLSession expiry use this error.
+        } catch { Issue.record("Unexpected timeout error: \(error)") }
+        // Under load the absolute deadline may expire before dispatch. Both zero and
+        // one server requests are valid; retries are never allowed.
+        let discoveryRequests = try await fixture.counts()["/delayed-discovery"]?["server/discover"] ?? 0
+        #expect(discoveryRequests <= 1)
+        for path in ["delayed-tool", "progress-tool"] {
+            let client = try fixture.client(path, timeouts: .init(discovery: 1, toolCall: 0.2))
+            let tool = try #require(try await client.discover().tools.first)
+            do {
+                _ = try await client.call(tool, arguments: ["text": .string("Must expire")])
+                Issue.record("Tool request must expire even while SSE keep-alives arrive")
+            } catch MCPFailure.requestTimedOut {
+                // Both the explicit deadline and native URLSession expiry use this error.
+            } catch { Issue.record("Unexpected timeout error: \(error)") }
+            let sent = try await fixture.counts()["/" + path]?["tools/call"] ?? 0
+            #expect(sent <= 1)
+            // Discovery still works, and cannot replay a dispatched or pre-dispatch timeout.
+            _ = try await client.discover()
+            #expect((try await fixture.counts()["/" + path]?["tools/call"] ?? 0) == sent)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func extendedToolWaitStillCancelsItsSocketAndNeverReplaysOnReconnect(_ privacy: Bool)
+        async throws
+    {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let access = NetworkAccess(initialState: .satisfied)
+        let client = try fixture.client(
+            "progress-tool", network: access, timeouts: .init(discovery: 1, toolCall: 2))
+        let tool = try #require(try await client.discover().tools.first)
+        let pending = Task { try await client.call(tool, arguments: ["text": .string("Wait")]) }
+        let clock = ContinuousClock(); let started = clock.now
+        while try await fixture.counts()["/progress-tool"]?["tools/call"] != 1,
+            clock.now - started < .seconds(5)
+        { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(try await fixture.counts()["/progress-tool"]?["tools/call"] == 1)
+        if privacy { access.updatePath(.unsatisfied) } else { pending.cancel() }
+        do {
+            _ = try await pending.value
+            Issue.record("Cancelled tool call must not return a late result")
+        } catch {
+            if privacy { #expect(error as? NetworkAccessFailure == .offline) }
+            else { #expect(error is CancellationError || (error as? URLError)?.code == .cancelled) }
+        }
+        access.updatePath(.satisfied)
+        access.activateRequests(after: access.snapshot.revision)
+        while try await fixture.counts()["/progress-tool"]?["disconnected"] == nil,
+            clock.now - started < .seconds(5)
+        { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(try await fixture.counts()["/progress-tool"]?["disconnected"] != nil)
+        #expect(try await fixture.counts()["/progress-tool"]?["tools/call"] == 1)
     }
 
     @Test func mcpNativeClientRejectsWrongIDsAuthenticationRedirectsAndToolErrors() async throws {

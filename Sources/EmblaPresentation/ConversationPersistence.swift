@@ -30,6 +30,12 @@ public struct ConversationSnapshot: Codable, Sendable, Equatable {
             Set(messages.map(\.id)).count == messages.count,
             messages.allSatisfy({ message in
                 guard message.role != .system else { return false }
+                if let summary = message.toolResultSummary {
+                    guard message.role == .assistant, let toolName = message.toolName,
+                        !toolName.isEmpty, !message.text.isEmpty,
+                        !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    else { return false }
+                }
                 guard let metrics = message.generationMetrics else { return true }
                 return message.role == .assistant && metrics.promptTokens >= 0
                     && metrics.completionTokens >= 0

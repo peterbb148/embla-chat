@@ -269,6 +269,33 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
+    func testToolResultSummaryNoticeAndFullOriginalSurviveRestart() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--tool-result-summary-fixture"]
+        app.launchEnvironment["EMBLA_TOOL_SUMMARY_FIXTURE_ID"] = UUID().uuidString
+        app.launch()
+        func verifySavedResult() {
+            let notice = app.staticTexts["tool-result-summary-notice"].firstMatch
+            XCTAssertTrue(notice.waitForExistence(timeout: 10))
+            if app.buttons["Hide keyboard"].exists { app.buttons["Hide keyboard"].tap() }
+            let original = app.staticTexts.containing(
+                NSPredicate(format: "label CONTAINS %@", "ORIGINAL_RESULT_RETAINED")
+            ).firstMatch
+            XCTAssertTrue(original.exists)
+            XCTAssertTrue(app.staticTexts["Synthetic tool-summary UI fixture."].exists)
+            XCTAssertFalse(app.staticTexts["chat-error"].exists)
+        }
+        verifySavedResult()
+        app.terminate()
+        app.launch()
+        verifySavedResult()
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Isolated saved tool-result summary and full original"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testContextButtonExplainsUnavailableCountingAndCompaction() throws {
         let app = try launchCleanChat()
         let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch

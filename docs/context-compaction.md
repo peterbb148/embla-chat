@@ -15,13 +15,16 @@ The session loads an 8192-token context. Before each reply it counts the complet
 prompt using the pinned model tokenizer. Above 5888 tokens it attempts compaction, reserving
 1536 tokens for summary generation, 512 for the next response, and 256 tokens of headroom.
 The summarization prompt itself is separately checked by the session against the exact
-context limit. No character-count approximation or hidden truncation is used in production.
+context limit. With no eligible older prefix, a normal reply may continue only if it still
+fits the 512-token reply reserve plus 256-token headroom. Forced manual compaction still
+requires an older prefix. No character-count approximation or hidden truncation is used in production.
 
 The same local Embla model incorporates the previous summary and older turns into a new
 summary. Historical visible content and the prior summary are supplied as quoted JSON data,
 not replayed as active participant instructions. Summary sampling uses temperature 0 / top-p 1;
-normal replies keep their existing settings. The latest two exchanges and the current user message remain verbatim in inference
-context. Earlier requirements, facts, preferences, decisions and unresolved questions are
+normal replies keep their existing settings. The latest two ordinary exchanges and current
+user message remain verbatim in inference context. Large tool results can have a separately
+marked local summary for inference; their original text remains saved and visible. Earlier requirements, facts, preferences, decisions and unresolved questions are
 requested in the summary. Summaries can lose details; retaining the visible transcript does
 not mean every original detail remains available to the model after compaction.
 
@@ -82,3 +85,12 @@ retry and boundary-index tests cover that change. The full physical sequence abo
 not repeated for that filtering fix.
 Local and optional iCloud persistence subsequently shipped in PR #31, with iCloud off by default.
 See the [working-version audit](working-version-validation.md) for current acceptance evidence.
+
+## Tool-result projections
+
+[Large tool results](skills-and-tools.md#long-running-calls-and-large-results-86-87) are
+reduced through the same real local model before a continuation exceeds its exact budget.
+This is independent of the rolling history-summary boundary. The transcript retains raw
+results, while tokenizer counts and subsequent compaction use their committed local notes.
+Incomplete/cancelled summaries do not publish a projection. A completed summary becomes
+visible only after its atomic save; background/navigation cannot start a stale continuation.
