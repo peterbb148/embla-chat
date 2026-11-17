@@ -11,6 +11,10 @@ struct ContentView: View {
     @State private var confirmation: ChatConfirmation?
     @State private var quickActions = QuickActionsModel()
     @State private var actionError: String?
+    @State private var showQuickActions = false
+    @State private var transcriptHeight: CGFloat = 0
+    @State private var selectionTask: Task<Void, Never>?
+    @State private var selectionRequest = UUID()
     @State private var showHistory = false
     @State private var transcriptScroll = TranscriptScrollState()
     @FocusState private var composerFocused: Bool
@@ -32,17 +36,19 @@ struct ContentView: View {
     }
 
     private enum ChatConfirmation {
-        case replaceDraft(QuickAction)
+        case replaceDraft(QuickActionReplacement)
         var title: String {
             switch self {
-            case .replaceDraft: return "Replace draft?"
+            case .replaceDraft(let replacement):
+                return replacement.action.autoSend ? "Replace and send?" : "Replace draft?"
             }
         }
         var message: String {
             switch self {
-            case .replaceDraft:
-                return "Replace the current draft with this action's prompt? "
-                    + "You can edit it before sending."
+            case .replaceDraft(let replacement):
+                return replacement.action.autoSend
+                    ? "Replace the current draft and send this action's prompt immediately?"
+                    : "Replace the current draft with this action's prompt? You can edit it before sending."
             }
         }
     }
@@ -84,9 +90,14 @@ struct ContentView: View {
                                     sheet = .memory(projectID, model.conversationID, message)
                                 }.equatable()
                             }
+                            if actionsVisible { actionCloud.id("quick-actions") }
                             Color.clear.frame(height: 1).id("latest-message")
                         }
                         .padding(.horizontal, 20)
+                        .frame(
+                            minHeight: model.messages.isEmpty ? max(0, transcriptHeight - 32) : 0,
+                            alignment: .bottom
+                        )
                         .padding(.vertical, 16)
                     }
                     .frame(maxHeight: .infinity)
@@ -95,9 +106,10 @@ struct ContentView: View {
                     .onScrollGeometryChange(for: Viewport.self) { geometry in
                         Viewport(geometry)
                     } action: { old, new in
+                        if transcriptHeight != new.height { transcriptHeight = new.height }
                         transcriptScroll.geometryChanged(
                             offset: new.offset, nearBottom: new.nearBottom, bounds: new.bounds)
-                        if transcriptScroll.shouldScrollAutomatically
+                        if !actionsVisible && transcriptScroll.shouldScrollAutomatically
                             && (old.height != new.height || old.contentHeight != new.contentHeight)
                         {
                             reader.scrollTo("latest-message", anchor: .bottom)
@@ -110,12 +122,14 @@ struct ContentView: View {
                                 || phase == .decelerating,
                             offset: viewport.offset, nearBottom: viewport.nearBottom,
                             bounds: viewport.bounds)
-                        if phase == .idle && transcriptScroll.shouldScrollAutomatically {
+                        if phase == .idle && !actionsVisible
+                            && transcriptScroll.shouldScrollAutomatically
+                        {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
                     }
                     .overlay(alignment: .bottomTrailing) {
-                        if !transcriptScroll.followingOutput {
+                        if !actionsVisible && !transcriptScroll.followingOutput {
                             Button {
                                 transcriptScroll.resumeFollowing()
                                 reader.scrollTo("latest-message", anchor: .bottom)
@@ -129,12 +143,12 @@ struct ContentView: View {
                         }
                     }
                     .onChange(of: model.messages.last?.text) { _, _ in
-                        if transcriptScroll.shouldScrollAutomatically {
+                        if !actionsVisible && transcriptScroll.shouldScrollAutomatically {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
                     }
                     .onChange(of: model.messages.last?.reasoning) { _, _ in
-                        if transcriptScroll.shouldScrollAutomatically {
+                        if !actionsVisible && transcriptScroll.shouldScrollAutomatically {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
                     }
@@ -146,15 +160,28 @@ struct ContentView: View {
                         {
                             transcriptScroll.resumeFollowing()
                         }
-                        if transcriptScroll.shouldScrollAutomatically {
+                        if !actionsVisible && transcriptScroll.shouldScrollAutomatically {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
                     }
                     composer
                 }
+                .onChange(of: showQuickActions) { _, visible in
+                    if visible {
+                        transcriptScroll.resumeFollowing()
+                        Task { @MainActor in
+                            await Task.yield()
+                            if showQuickActions { reader.scrollTo("quick-actions", anchor: .top) }
+                        }
+                    }
+                }
                 .onChange(of: model.conversationID) { _, _ in
+                    cancelActionSelection()
+                    showQuickActions = false
                     transcriptScroll = TranscriptScrollState()
-                    reader.scrollTo("latest-message", anchor: .bottom)
+                    reader.scrollTo(
+                        model.messages.isEmpty ? "quick-actions" : "latest-message",
+                        anchor: model.messages.isEmpty ? .top : .bottom)
                 }
             }
             .navigationTitle("Embla Chat")
@@ -207,8 +234,10 @@ struct ContentView: View {
                 )
             ) {
                 switch confirmation {
-                case .replaceDraft(let action):
-                    Button("Replace draft") { Task { await selectAction(action, replacing: true) } }
+                case .replaceDraft(let replacement):
+                    Button(replacement.action.autoSend ? "Replace and send" : "Replace draft") {
+                        selectAction(replacement.action, replacing: replacement)
+                    }
                 case nil: EmptyView()
                 }
                 Button("Cancel", role: .cancel) {}
@@ -217,6 +246,7 @@ struct ContentView: View {
             }
             .task { model.check() }
             .task(id: QuickActionsModel.sourceKey(for: model.cloud)) {
+                cancelActionSelection()
                 quickActions.reload(using: model.cloud)
                 model.tools.reloadSkills(using: model.cloud)
             }
@@ -236,11 +266,13 @@ struct ContentView: View {
                 }
                 if phase == .inactive {
                     model.becameInactive()
+                    cancelActionSelection()
                     quickActions.pause()
                     model.tools.pause()
                 }
                 if phase == .background {
                     model.enteredBackground()
+                    cancelActionSelection()
                     quickActions.pause()
                     model.tools.pause()
                 }
@@ -364,47 +396,64 @@ struct ContentView: View {
         }
     }
 
-    private func selectAction(_ action: QuickAction, replacing: Bool = false) async {
+    private var actionsVisible: Bool { model.messages.isEmpty || showQuickActions }
+
+    private var actionCloud: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if quickActions.loadedSourceKey == QuickActionsModel.sourceKey(for: model.cloud) {
+                QuickActionCards(
+                    actions: quickActions.actions,
+                    enabled: model.chatRestored && !model.busy && !model.resetting
+                        && !model.cloud.resolving && !quickActions.applying,
+                    select: { selectAction($0) })
+            }
+            if let error = quickActions.error {
+                Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    .accessibilityIdentifier("quick-action-configuration-error")
+            }
+        }
+    }
+
+    private func cancelActionSelection() {
         actionError = nil
-        do {
-            let originalChat = model.conversationID
-            let originalDraft = model.prompt
-            _ = try quickActions.validatedAction(action, using: model.cloud)
-            let prompt =
-                action.type == .prompt
-                ? try quickActions.prompt(for: action, using: model.cloud)
-                : action.prompt ?? model.prompt
-            if !replacing && !model.prompt.isEmpty && model.prompt != prompt {
-                confirmation = .replaceDraft(action)
-                return
+        selectionRequest = UUID()
+        selectionTask?.cancel()
+        selectionTask = nil
+        quickActions.cancelApplication()
+        confirmation = nil
+    }
+
+    private func selectAction(_ action: QuickAction, replacing: QuickActionReplacement? = nil) {
+        guard selectionTask == nil, !quickActions.applying else { return }
+        let request = UUID()
+        selectionRequest = request
+        actionError = nil
+        selectionTask = Task {
+            defer { if selectionRequest == request { selectionTask = nil } }
+            do {
+                let result = try await quickActions.apply(action, to: model, replacing: replacing)
+                guard selectionRequest == request, !Task.isCancelled else { return }
+                switch result {
+                case .needsConfirmation(let replacement):
+                    confirmation = .replaceDraft(replacement)
+                case .applied:
+                    showQuickActions = false
+                    composerFocused = !action.autoSend
+                }
+            } catch {
+                guard selectionRequest == request, !Task.isCancelled else { return }
+                actionError = error.localizedDescription
             }
-            if action.type == .skill {
-                guard let name = action.skill else { throw SkillFailure.changed }
-                try await model.tools.selectSkill(name, using: model.cloud)
-            }
-            _ = try quickActions.validatedAction(action, using: model.cloud)
-            guard model.conversationID == originalChat, model.prompt == originalDraft else {
-                throw QuickActionError.changed
-            }
-            model.prompt = prompt
-            composerFocused = true
-        } catch { actionError = error.localizedDescription }
+        }
     }
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if model.messages.isEmpty {
-                if quickActions.loadedSourceKey == QuickActionsModel.sourceKey(for: model.cloud) {
-                    QuickActionCards(
-                        actions: quickActions.actions,
-                        enabled: model.chatRestored && !model.resetting && !model.cloud.resolving,
-                        select: { action in Task { await selectAction(action) } })
-                }
-                if let error = actionError ?? quickActions.error {
-                    Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
-                        .accessibilityIdentifier("quick-action-error")
-                }
+            if let actionError {
+                Text(actionError).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    .accessibilityIdentifier("quick-action-error")
             }
+            if quickActions.applying { ProgressView("Preparing action…").font(.caption) }
             if model.readyDirectory == nil {
                 Button {
                     composerFocused = false
@@ -467,6 +516,24 @@ struct ContentView: View {
                     ContextUsageButton(state: model.contextUsage) {
                         composerFocused = false
                         sheet = .context
+                    }
+                    if !model.messages.isEmpty {
+                        Button {
+                            composerFocused = false
+                            showQuickActions.toggle()
+                        } label: {
+                            Image(systemName: "bolt.fill").font(.title3)
+                                .frame(width: 44, height: 44)
+                        }
+                        .foregroundStyle(showQuickActions ? .primary : .secondary)
+                        .disabled(
+                            model.busy || model.resetting || !model.chatRestored
+                                || model.cloud.resolving || quickActions.applying
+                        )
+                        .accessibilityLabel(
+                            showQuickActions ? "Hide quick actions" : "Show quick actions"
+                        )
+                        .accessibilityIdentifier("quick-actions-toggle")
                     }
                     Spacer()
                     Button {

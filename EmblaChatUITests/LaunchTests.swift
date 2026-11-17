@@ -249,6 +249,13 @@ final class LaunchTests: XCTestCase {
         let email = app.buttons["action-draft-email"]
         let translate = app.buttons["action-translate"]
         XCTAssertTrue(email.waitForExistence(timeout: 10))
+        let bubbles = [email, translate, app.buttons["action-summarize"]]
+        for bubble in bubbles {
+            XCTAssertTrue(bubble.isHittable)
+            XCTAssertGreaterThanOrEqual(bubble.frame.minX, 0)
+            XCTAssertLessThanOrEqual(bubble.frame.maxX, app.frame.width)
+        }
+        XCTAssertGreaterThan(bubbles.last!.frame.minY, email.frame.minY)
         email.tap()
         let emailText = "Help me draft an email. Ask who it is for and what I want to say."
         let filled = XCTNSPredicateExpectation(
@@ -284,6 +291,78 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["actions-source"].label.contains("On My iPhone"))
         XCTAssertTrue(app.buttons["Reload actions"].isEnabled)
         XCTAssertFalse(app.staticTexts["actions-error"].exists)
+    }
+
+    /// Requires the explicitly seeded local archive described in docs/quick-actions.md.
+    /// It exercises presentation only; the saved assistant text identifies itself as a fixture.
+    @MainActor
+    func testQuickActionCloudFromExplicitFixture() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        let toggle = app.buttons["quick-actions-toggle"]
+        guard toggle.waitForExistence(timeout: 5), app.buttons["New Chat"].exists else {
+            throw XCTSkip("Seed the explicit quick-action UI fixture before selecting this test.")
+        }
+        let marker = "Saved UI fixture — not a model response."
+        guard app.staticTexts[marker].exists else {
+            throw XCTSkip("The current chat is not the explicit synthetic UI fixture.")
+        }
+        let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
+        XCTAssertEqual(composer.value as? String, "Fixture draft to protect")
+        toggle.tap()
+        let email = app.buttons["action-draft-email"]
+        XCTAssertTrue(email.waitForExistence(timeout: 5))
+        email.tap()
+        let replacement = app.alerts["Replace draft?"]
+        XCTAssertTrue(replacement.waitForExistence(timeout: 5))
+        replacement.buttons["Cancel"].tap()
+        XCTAssertEqual(composer.value as? String, "Fixture draft to protect")
+        email.tap()
+        replacement.buttons["Replace draft"].tap()
+        let emailText = "Help me draft an email. Ask who it is for and what I want to say."
+        expectation(for: NSPredicate(format: "value == %@", emailText), evaluatedWith: composer)
+        waitForExpectations(timeout: 10)
+        XCTAssertFalse(email.exists)
+        app.buttons["Hide keyboard"].tap()
+        XCTAssertTrue(app.staticTexts[marker].exists, "The selected action must retain the chat")
+        toggle.tap()
+        let immediate = app.buttons["action-instant-fixture"]
+        XCTAssertTrue(immediate.waitForExistence(timeout: 5))
+        immediate.tap()
+        let failure = app.staticTexts["quick-action-error"]
+        XCTAssertTrue(failure.waitForExistence(timeout: 5))
+        XCTAssertTrue(failure.label.contains("Download and verify"))
+        XCTAssertEqual(composer.value as? String, emailText)
+        XCTAssertEqual(app.staticTexts.matching(identifier: "user-message").count, 1)
+        app.buttons["New Chat"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Hide keyboard"].tap()
+        expectation(
+            for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
+        waitForExpectations(timeout: 5)
+        XCTAssertFalse(toggle.exists)
+        let ids =
+            ["draft-email", "translate", "summarize"]
+            + (0..<6).map { "fixture-\($0)" } + ["instant-fixture"]
+        var rows = Set<Int>()
+        for id in ids {
+            let bubble = app.buttons["action-\(id)"]
+            XCTAssertTrue(bubble.waitForExistence(timeout: 5))
+            XCTAssertTrue(bubble.isHittable, "All ten actions must be visible without scrolling")
+            XCTAssertGreaterThanOrEqual(bubble.frame.minX, 0)
+            XCTAssertLessThanOrEqual(bubble.frame.maxX, app.frame.width)
+            XCTAssertLessThanOrEqual(bubble.frame.maxY, composer.frame.minY)
+            rows.insert(Int(bubble.frame.minY))
+        }
+        XCTAssertGreaterThan(rows.count, 1)
+        let cloud = XCTAttachment(screenshot: app.screenshot())
+        cloud.name = "Ten configured action bubbles wrap above the composer"
+        cloud.lifetime = .keepAlways
+        add(cloud)
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(composer.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
     }
 
     @MainActor

@@ -16,7 +16,7 @@ saved chats through iCloud Drive. Model inference runs locally after the model i
 - Saved chat history, a sidebar and separate drafts for each conversation.
 - Projects with editable memory that you explicitly save from a chat.
 - Automatic context compaction, a usage indicator and manual compaction controls.
-- Configurable quick actions that fill editable prompts or select a skill.
+- Configurable quick-action bubbles for prompts and skills, with optional immediate sending.
 - Portable Agent Skills and automatic calls to registered, enabled MCP tools.
 - Model download, integrity verification and storage management.
 - Optional iCloud Drive synchronization, off by default.

@@ -1,6 +1,8 @@
+import CryptoKit
 import Foundation
 import Testing
 
+@testable import EmblaCore
 @testable import EmblaPresentation
 
 @Test func actionConfigurationValidatesOrderingIDsAndUnsupportedData() throws {
@@ -257,4 +259,290 @@ func changedSourceCompletesTheOldLoadWithoutPublishingStaleCards() async throws 
     model.reload(using: cloud)
     await model.waitUntilIdle()
     #expect(model.actions.first?.id == "local")
+}
+
+@Test func immediateActionFlagIsBackwardCompatibleAndRequiresAConfiguredPrompt() throws {
+    let legacy = """
+        {"formatVersion":1,"actions":[{"id":"old","label":"Old","order":0,
+        "enabled":true,"type":"prompt","prompt":"Legacy prompt"}]}
+        """
+    #expect(try QuickActionConfiguration.decode(Data(legacy.utf8)).actions[0].autoSend == false)
+    for value in ["\"true\"", "null", "1"] {
+        let bad = legacy.replacingOccurrences(
+            of: "\"prompt\":\"Legacy prompt\"",
+            with: "\"prompt\":\"Legacy prompt\",\"autoSend\":\(value)")
+        #expect(throws: QuickActionError.self) {
+            try QuickActionConfiguration.decode(Data(bad.utf8))
+        }
+    }
+    for action in [
+        QuickAction(id: "blank", label: "Blank", order: 0, prompt: " \n", autoSend: true),
+        QuickAction(
+            id: "skill", label: "Skill", order: 0, type: .skill,
+            skill: "example-skill", autoSend: true),
+    ] {
+        #expect(throws: QuickActionError.self) {
+            try QuickActionConfiguration(actions: [action]).validate()
+        }
+    }
+}
+
+/// Only the unit-test initializer supplies this backend; app constructors always use Embla Metal.
+private final class ActionSubmissionBackend: InferenceBackend, @unchecked Sendable {
+    let contextSize = 8_192
+    private let lock = NSLock()
+    private var count = 0
+    private var contexts: [[ConversationMessage]] = []
+    let hold: Bool
+    var calls: Int { lock.withLock { count } }
+    var encoded: [[ConversationMessage]] { lock.withLock { contexts } }
+    init(hold: Bool) { self.hold = hold }
+    func reset() {}
+    func encode(_ messages: [ConversationMessage]) throws -> [Int] {
+        lock.withLock { contexts.append(messages) }
+        return [1]
+    }
+    func generate(
+        prompt: [Int], options: GenerationOptions,
+        emit: @escaping @Sendable (GenerationDelta) -> Bool
+    ) throws -> GenerationMetrics {
+        lock.withLock { count += 1 }
+        if hold {
+            while emit(.reasoning("Synthetic action wait")) { Thread.sleep(forTimeInterval: 0.01) }
+        } else {
+            _ = emit(.answer("Synthetic action answer"))
+        }
+        return GenerationMetrics(
+            finishReason: "stop", promptTokens: 1, completionTokens: 1,
+            promptMilliseconds: 1, decodeMilliseconds: 1)
+    }
+}
+
+private actor ActionFailingStore: ConversationStoring {
+    func load() -> ConversationArchive? { nil }
+    func save(_ archive: ConversationArchive) throws { throw CocoaError(.fileWriteOutOfSpace) }
+}
+
+@MainActor private struct ActionSubmissionFixture {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let data = Data("Synthetic action model fixture".utf8)
+    let manifest: ModelManifest
+    let backend: ActionSubmissionBackend
+    let model: LocalInferenceModel
+    let store: ConversationStore
+
+    init(ready: Bool = true, hold: Bool = false, failStorage: Bool = false) async throws {
+        manifest = ModelManifest(
+            repository: "test/actions", revision: "fixture",
+            files: [
+                .init(
+                    path: "config.json", sizeBytes: Int64(data.count),
+                    sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+            ])
+        let skill = root.appendingPathComponent("Skills/example-skill")
+        try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+        try Data(
+            "---\nname: example-skill\ndescription: Synthetic action skill\n---\nSKILL_FIXTURE_INSTRUCTIONS"
+                .utf8
+        )
+        .write(to: skill.appendingPathComponent("SKILL.md"))
+        backend = ActionSubmissionBackend(hold: hold)
+        let backend = backend
+        store = ConversationStore(root: root.appendingPathComponent("Chats"))
+        model = LocalInferenceModel(
+            repository: ModelRepository(
+                root: root.appendingPathComponent("Model"), manifest: manifest),
+            manifest: manifest, session: InferenceSession { _, _ in backend },
+            chatStore: failStorage ? ActionFailingStore() : store,
+            tools: ToolWorkspace(
+                store: SkillStore(localRoot: root.appendingPathComponent("Skills")),
+                configuration: root.appendingPathComponent("servers.json")))
+        if ready { try install() }
+        model.check(); await model.waitUntilIdle()
+        model.tools.reloadSkills(using: model.cloud); await model.tools.waitUntilIdle()
+    }
+
+    func install() throws {
+        let directory = root.appendingPathComponent("Model/fixture")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: directory.appendingPathComponent("config.json"))
+    }
+
+    func finish() async {
+        model.enteredBackground()
+        await model.waitUntilIdle()
+        await model.waitForScheduledPersistence()
+    }
+
+    func clean() { model.stop(); try? FileManager.default.removeItem(at: root) }
+}
+
+@MainActor private func loadedActionModel(_ action: QuickAction, cloud: ConversationCloudSync) async
+    -> QuickActionsModel
+{
+    let storage = ActionsFixture()
+    await storage.changeLocal(QuickActionConfiguration(actions: [action]))
+    let actions = QuickActionsModel(storage: storage)
+    actions.reload(using: cloud)
+    await actions.waitUntilIdle()
+    return actions
+}
+
+@Test @MainActor func actionReplacementConsentTracksTheExactChatAndDraft() async throws {
+    let fixture = try await ActionSubmissionFixture(ready: false)
+    defer { fixture.clean() }
+    let action = QuickAction(id: "draft", label: "Draft", order: 0, prompt: "Configured prompt")
+    let actions = await loadedActionModel(action, cloud: fixture.model.cloud)
+    let chatID = fixture.model.conversationID
+    fixture.model.prompt = "Original unsent draft"
+    guard case .needsConfirmation(let consent) = try await actions.apply(action, to: fixture.model)
+    else { Issue.record("Replacing a draft must require consent"); return }
+    #expect(fixture.model.prompt == "Original unsent draft" && fixture.model.messages.isEmpty)
+    #expect(fixture.backend.calls == 0)  // Cancel is simply not applying the confirmation.
+    fixture.model.prompt = "A newer unsent draft"
+    await #expect(throws: QuickActionError.self) {
+        try await actions.apply(action, to: fixture.model, replacing: consent)
+    }
+    #expect(fixture.model.prompt == "A newer unsent draft")
+    guard case .needsConfirmation(let fresh) = try await actions.apply(action, to: fixture.model)
+    else { Issue.record("A fresh draft needs fresh consent"); return }
+    #expect(try await actions.apply(action, to: fixture.model, replacing: fresh) == .applied)
+    #expect(fixture.model.prompt == "Configured prompt")
+    #expect(fixture.model.conversationID == chatID && fixture.model.messages.isEmpty)
+    await fixture.model.waitForScheduledPersistence()
+    #expect(try await fixture.store.load()?.draft == "Configured prompt")
+    fixture.model.newChat(); await fixture.model.waitUntilIdle()
+    fixture.model.prompt = "Another chat's draft"
+    await #expect(throws: QuickActionError.self) {
+        try await actions.apply(action, to: fixture.model, replacing: fresh)
+    }
+    #expect(fixture.model.prompt == "Another chat's draft")
+    await fixture.finish()
+}
+
+@Test @MainActor func immediateActionUsesNormalSendOnlyAfterConsentAndRejectsDuplicateTaps()
+    async throws
+{
+    let fixture = try await ActionSubmissionFixture(hold: true)
+    defer { fixture.clean() }
+    let action = QuickAction(
+        id: "send", label: "Send", order: 0,
+        prompt: "Explicit configured prompt", autoSend: true)
+    let actions = await loadedActionModel(action, cloud: fixture.model.cloud)
+    fixture.model.prompt = "Private unsent draft"
+    let chatID = fixture.model.conversationID
+    guard case .needsConfirmation(let consent) = try await actions.apply(action, to: fixture.model)
+    else { Issue.record("Immediate replacement must ask before sending"); return }
+    #expect(fixture.model.messages.isEmpty && fixture.backend.calls == 0)
+    #expect(fixture.model.prompt == "Private unsent draft")
+    #expect(try await actions.apply(action, to: fixture.model, replacing: consent) == .applied)
+    await #expect(throws: QuickActionError.self) {
+        try await actions.apply(action, to: fixture.model)
+    }
+    for _ in 0..<1_000 {
+        if fixture.backend.calls > 0 { break }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(fixture.backend.calls == 1 && fixture.model.conversationID == chatID)
+    #expect(
+        fixture.model.messages.filter { $0.role == .user }.map(\.text)
+            == ["Explicit configured prompt"])
+    fixture.model.stop(); await fixture.model.waitUntilIdle()
+    #expect(
+        try await fixture.store.load()?.snapshot.messages.filter { $0.role == .user }.count == 1)
+    await fixture.finish()
+}
+
+@Test @MainActor func unavailableImmediateActionPreservesDraftAndNeverQueuesALaterSend()
+    async throws
+{
+    let fixture = try await ActionSubmissionFixture(ready: false)
+    defer { fixture.clean() }
+    let action = QuickAction(
+        id: "instant", label: "Instant", order: 0,
+        prompt: "Configured send", autoSend: true)
+    let actions = await loadedActionModel(action, cloud: fixture.model.cloud)
+    fixture.model.prompt = "Keep this exact draft"
+    await #expect(throws: QuickActionError.self) {
+        try await actions.apply(action, to: fixture.model)
+    }
+    #expect(fixture.model.prompt == "Keep this exact draft" && fixture.model.messages.isEmpty)
+    try fixture.install()
+    fixture.model.check(); await fixture.model.waitUntilIdle()
+    #expect(fixture.model.readyDirectory != nil && fixture.backend.calls == 0)
+    #expect(fixture.model.prompt == "Keep this exact draft")
+    await fixture.finish()
+}
+
+@Test @MainActor func skillActionsValidateBeforeDraftMutationAndCanSubmitExplicitPrompts()
+    async throws
+{
+    let fixture = try await ActionSubmissionFixture()
+    defer { fixture.clean() }
+    let missing = QuickAction(
+        id: "missing", label: "Missing", order: 0, type: .skill,
+        prompt: "Configured skill prompt", skill: "missing-skill", autoSend: true)
+    let failed = await loadedActionModel(missing, cloud: fixture.model.cloud)
+    await #expect(throws: SkillFailure.self) { try await failed.apply(missing, to: fixture.model) }
+    #expect(fixture.model.prompt.isEmpty && fixture.model.messages.isEmpty)
+    let valid = QuickAction(
+        id: "valid", label: "Valid", order: 0, type: .skill,
+        prompt: "Explicit skill prompt", skill: "example-skill", autoSend: true)
+    let actions = await loadedActionModel(valid, cloud: fixture.model.cloud)
+    #expect(try await actions.apply(valid, to: fixture.model) == .applied)
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.model.error == nil && fixture.backend.calls == 1)
+    #expect(fixture.model.tools.selectedSkill?.name == "example-skill")
+    #expect(
+        fixture.backend.encoded.flatMap { $0 }.contains {
+            $0.content.contains("SKILL_FIXTURE_INSTRUCTIONS")
+        })
+    await fixture.finish()
+}
+
+@Test @MainActor func storageFailuresBlockActionsBeforeReplacingOrSendingADraft() async throws {
+    let fixture = try await ActionSubmissionFixture(failStorage: true)
+    defer { fixture.clean() }
+    let action = QuickAction(
+        id: "blocked", label: "Blocked", order: 0,
+        prompt: "Blocked prompt", autoSend: true)
+    let actions = await loadedActionModel(action, cloud: fixture.model.cloud)
+    fixture.model.prompt = "Draft survives storage error"
+    await fixture.model.waitForScheduledPersistence()
+    try #require(fixture.model.storageError != nil)
+    await #expect(throws: QuickActionError.self) {
+        try await actions.apply(action, to: fixture.model)
+    }
+    #expect(fixture.model.prompt == "Draft survives storage error")
+    #expect(fixture.backend.calls == 0 && fixture.model.messages.isEmpty)
+    await fixture.finish()
+}
+
+@Test @MainActor func changedOrCancelledActionsNeverMutateTheDraftOrSubmit() async throws {
+    let fixture = try await ActionSubmissionFixture()
+    defer { fixture.clean() }
+    let action = QuickAction(
+        id: "instant", label: "Instant", order: 0, prompt: "Configured send", autoSend: true)
+    let storage = ActionsFixture()
+    await storage.changeLocal(QuickActionConfiguration(actions: [action]))
+    let actions = QuickActionsModel(storage: storage)
+    actions.reload(using: fixture.model.cloud); await actions.waitUntilIdle()
+    fixture.model.prompt = "Unchanged draft"
+    guard case .needsConfirmation(let consent) = try await actions.apply(action, to: fixture.model)
+    else { Issue.record("Expected draft replacement confirmation"); return }
+    await storage.changeLocal(QuickActionConfiguration(actions: []))
+    actions.reload(using: fixture.model.cloud); await actions.waitUntilIdle()
+    await #expect(throws: QuickActionError.self) {
+        try await actions.apply(action, to: fixture.model, replacing: consent)
+    }
+    await storage.changeLocal(QuickActionConfiguration(actions: [action]))
+    actions.reload(using: fixture.model.cloud); await actions.waitUntilIdle()
+    let pending = Task { @MainActor in
+        withUnsafeCurrentTask { $0?.cancel() }
+        return try await actions.apply(action, to: fixture.model, replacing: consent)
+    }
+    await #expect(throws: CancellationError.self) { try await pending.value }
+    #expect(fixture.model.prompt == "Unchanged draft" && fixture.model.messages.isEmpty)
+    #expect(fixture.backend.calls == 0 && !actions.applying)
+    await fixture.finish()
 }
