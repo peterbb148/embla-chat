@@ -5,6 +5,10 @@ import Foundation
 struct SyncedResourceCache: Sendable {
     let root: URL
 
+    func group(_ name: String, bookmark: Data) -> SyncedResourceCache {
+        SyncedResourceCache(root: location(name, bookmark: bookmark))
+    }
+
     func read(_ name: String, bookmark: Data) throws -> Data {
         let file = location(name, bookmark: bookmark)
         guard FileManager.default.fileExists(atPath: file.path) else {

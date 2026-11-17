@@ -98,17 +98,18 @@ private final class SnapshotSettingsFixture: SharedSettingsStoring, @unchecked S
     // Explicit cache fixture: no personal iCloud or File Provider access is claimed.
     let listing = ["documents": ["saved-skill": skillData], "errors": [:]]
     try cache.write(JSONEncoder().encode(listing), name: "listing", bookmark: bookmark)
-    try cache.write(
-        Data("Previously loaded supporting file".utf8),
-        name: "resource:saved-skill:\(skill.fingerprint):reference.txt", bookmark: bookmark)
+    let skillStore = SkillStore(
+        localRoot: root.appendingPathComponent("OffSkills"),
+        network: policy, cacheRoot: skillCacheRoot)
+    try skillStore.rememberResource(
+        "reference.txt", skill: skill, bookmark: bookmark,
+        data: Data("Previously loaded supporting file".utf8))
 
     policy.updatePath(.unsatisfied)
     cloud.connectivityChanged()
     let factoryCalls = Mutex(0)
     let restarted = ToolWorkspace(
-        store: SkillStore(
-            localRoot: root.appendingPathComponent("OffSkills"), network: policy,
-            cacheRoot: skillCacheRoot),
+        store: skillStore,
         configuration: configuration, network: policy,
         settingsFactory: { _ in
             factoryCalls.withLock { $0 += 1 }; return provider
@@ -151,9 +152,11 @@ private final class SnapshotSettingsFixture: SharedSettingsStoring, @unchecked S
     #expect(try restarted.specifications(using: cloud).map(\.name) == ["read_skill_file"])
     #expect(try restarted.remoteTools(forRequest: true).isEmpty)
     // A later live refresh can change its listing without changing the prepared turn.
-    try cache.write(
-        JSONEncoder().encode(["documents": [String: Data](), "errors": [:]]),
-        name: "listing", bookmark: bookmark)
+    let extra = Data(
+        "---\nname: other-skill\ndescription: New skill.\n---\nOther instructions.".utf8)
+    try await skillStore.publishListing(
+        SkillStore.Listing(documents: ["saved-skill": skillData, "other-skill": extra]),
+        replacing: try skillStore.previousListingForRefresh(bookmark), bookmark: bookmark)
     let resumedInvocation = try restarted.invocation(
         server: "skill", name: "read_skill_file", arguments: ["path": .string("reference.txt")])
     #expect(
@@ -191,9 +194,9 @@ private final class SnapshotSettingsFixture: SharedSettingsStoring, @unchecked S
     let changed = try SkillDocument.decode(changedData, directoryName: "saved-skill")
     let listing = ["documents": ["saved-skill": changedData], "errors": [:]]
     try cache.write(JSONEncoder().encode(listing), name: "listing", bookmark: bookmark)
-    try cache.write(
-        Data("Stale resource".utf8), name: "resource:saved-skill:\(old.fingerprint):reference.txt",
-        bookmark: bookmark)
+    try store.rememberResource(
+        "reference.txt", skill: old, bookmark: bookmark,
+        data: Data("Stale resource".utf8))
     await #expect(throws: SkillFailure.self) {
         try await store.resource("reference.txt", skill: old, source: .cachedCloud(bookmark))
     }
@@ -380,9 +383,7 @@ extension QuickActionStore {
         JSONEncoder().encode(SkillStore.Listing(documents: ["saved-skill": bytes])),
         name: "listing", bookmark: bookmark)
     for path in ["removed.txt", "retained.txt"] {
-        try cache.write(
-            Data(path.utf8), name: "resource:saved-skill:\(skill.fingerprint):\(path)",
-            bookmark: bookmark)
+        try store.rememberResource(path, skill: skill, bookmark: bookmark, data: Data(path.utf8))
     }
     try store.invalidateResource(
         "removed.txt", skill: skill, bookmark: bookmark, after: CocoaError(.fileReadUnknown))
@@ -454,5 +455,74 @@ extension QuickActionStore {
         try store.observeSkillsDirectoryFailure(code, bookmark: bookmark)
         #expect(try await store.entries(.cachedCloud(bookmark)).isEmpty)
         #expect(try await store.entries(.cachedCloud(other)).first?.document != nil)
+    }
+}
+
+@Test func identicalSkillRecreationCannotResurrectAnEarlierResourcesCache() async throws {
+    let root = try snapshotRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = SkillStore(
+        localRoot: root.appendingPathComponent("OffSkills"),
+        cacheRoot: root.appendingPathComponent("Cache"))
+    let bookmark = Data("synthetic recreation lifecycle".utf8)
+    let bytes = Data(
+        "---\nname: saved-skill\ndescription: Saved.\n---\nIdentical instructions.".utf8)
+    let otherBytes = Data(
+        "---\nname: other-skill\ndescription: Other.\n---\nRetained instructions.".utf8)
+    let skill = try await store.observeSkill(
+        .success(bytes), name: "saved-skill", bookmark: bookmark)
+    let other = try await store.observeSkill(
+        .success(otherBytes), name: "other-skill", bookmark: bookmark)
+    try store.rememberResource(
+        "reference.txt", skill: skill, bookmark: bookmark, data: Data("Removed generation".utf8))
+    try store.rememberResource(
+        "reference.txt", skill: other, bookmark: bookmark,
+        data: Data("Unrelated retained file".utf8))
+    // A successful catalog reload observes one removed skill, preserving other skills' files.
+    try await store.publishListing(
+        SkillStore.Listing(documents: ["other-skill": otherBytes]),
+        replacing: try store.previousListingForRefresh(bookmark), bookmark: bookmark)
+    let recreated = try await store.observeSkill(
+        .success(bytes), name: "saved-skill", bookmark: bookmark)
+    #expect(recreated.fingerprint == skill.fingerprint)
+    await #expect(throws: SyncedResourceFailure.self) {
+        try await store.resource("reference.txt", skill: recreated, source: .cachedCloud(bookmark))
+    }
+    #expect(
+        try await store.resource("reference.txt", skill: other, source: .cachedCloud(bookmark))
+            == "Unrelated retained file")
+    // A confirmed missing SKILL.md followed by identical recreation is a new lifecycle too.
+    try store.rememberResource(
+        "reference.txt", skill: skill, bookmark: bookmark, data: Data("Before deletion".utf8))
+    await #expect(throws: CocoaError.self) {
+        try await store.observeSkill(
+            .failure(CocoaError(.fileReadNoSuchFile)), name: "saved-skill", bookmark: bookmark)
+    }
+    _ = try await store.observeSkill(.success(bytes), name: "saved-skill", bookmark: bookmark)
+    await #expect(throws: SyncedResourceFailure.self) {
+        try await store.resource("reference.txt", skill: skill, source: .cachedCloud(bookmark))
+    }
+    // Changing instructions and later restoring old bytes cannot revive old supporting files.
+    try store.rememberResource(
+        "reference.txt", skill: skill, bookmark: bookmark, data: Data("Before edit".utf8))
+    let edited = Data(
+        "---\nname: saved-skill\ndescription: Saved.\n---\nChanged instructions.".utf8)
+    _ = try await store.observeSkill(.success(edited), name: "saved-skill", bookmark: bookmark)
+    _ = try await store.observeSkill(.success(bytes), name: "saved-skill", bookmark: bookmark)
+    await #expect(throws: SyncedResourceFailure.self) {
+        try await store.resource("reference.txt", skill: skill, source: .cachedCloud(bookmark))
+    }
+    // Confirmed removal of the entire Skills directory clears every resource in that folder.
+    try store.rememberResource(
+        "reference.txt", skill: skill, bookmark: bookmark,
+        data: Data("Before directory removal".utf8))
+    try store.observeSkillsDirectoryFailure(ENOENT, bookmark: bookmark)
+    _ = try await store.observeSkill(.success(bytes), name: "saved-skill", bookmark: bookmark)
+    _ = try await store.observeSkill(.success(otherBytes), name: "other-skill", bookmark: bookmark)
+    for current in [skill, other] {
+        await #expect(throws: SyncedResourceFailure.self) {
+            try await store.resource(
+                "reference.txt", skill: current, source: .cachedCloud(bookmark))
+        }
     }
 }

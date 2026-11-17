@@ -124,7 +124,7 @@ actor SkillStore {
         }
         if case .cloud(let bookmark) = source {
             try network.check()
-            try cache.write(JSONEncoder().encode(listing), name: "listing", bookmark: bookmark)
+            try publishListing(listing, replacing: previous, bookmark: bookmark)
         }
         return entries
     }
@@ -151,8 +151,8 @@ actor SkillStore {
         guard path.split(separator: "/").first != "scripts",
             path.components(separatedBy: "/").allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") })
         else { throw SkillFailure.unsupportedResource }
-        let key = "resource:" + skill.name + ":" + skill.fingerprint + ":" + path
-        let data = try cache.read(key, bookmark: bookmark)
+        let data = try resourceCache(skill.name, bookmark: bookmark).read(
+            skill.fingerprint + ":" + path, bookmark: bookmark)
         guard data.count <= 65_536, let text = String(data: data, encoding: .utf8) else {
             throw SkillFailure.unsupportedResource
         }
@@ -165,7 +165,6 @@ actor SkillStore {
         guard path.split(separator: "/").first != "scripts" else {
             throw SkillFailure.unsupportedResource
         }
-        let key = "resource:" + skill.name + ":" + skill.fingerprint + ":" + path
         let text: String
         do {
             text = try withRoot(source) { root, descriptor in
@@ -196,7 +195,7 @@ actor SkillStore {
         }
         if case .cloud(let bookmark) = source {
             try network.check()
-            try cache.write(Data(text.utf8), name: key, bookmark: bookmark)
+            try rememberResource(path, skill: skill, bookmark: bookmark, data: Data(text.utf8))
         }
         return text
     }
@@ -212,9 +211,29 @@ actor SkillStore {
         if !deleted {
             guard case SkillFailure.unsupportedResource = error else { return }
         }
-        try cache.remove(
-            "resource:" + skill.name + ":" + skill.fingerprint + ":" + path,
-            bookmark: bookmark)
+        try resourceCache(skill.name, bookmark: bookmark).remove(
+            skill.fingerprint + ":" + path, bookmark: bookmark)
+    }
+
+    private nonisolated func resourceCache(_ name: String, bookmark: Data) -> SyncedResourceCache {
+        cache.group("resources", bookmark: bookmark).group(name, bookmark: bookmark)
+    }
+
+    nonisolated func rememberResource(
+        _ path: String, skill: SkillDocument, bookmark: Data,
+        data: Data
+    ) throws {
+        try resourceCache(skill.name, bookmark: bookmark).write(
+            data, name: skill.fingerprint + ":" + path, bookmark: bookmark)
+    }
+
+    /// A new lifecycle cannot reuse supporting files from an earlier identical SKILL.md.
+    func publishListing(_ listing: Listing, replacing previous: Listing, bookmark: Data) throws {
+        for name in Set(previous.documents.keys).union(listing.documents.keys)
+        where previous.documents[name] != listing.documents[name] {
+            try cache.group("resources", bookmark: bookmark).remove(name, bookmark: bookmark)
+        }
+        try cache.write(JSONEncoder().encode(listing), name: "listing", bookmark: bookmark)
     }
 
     /// Every authoritative instruction read updates future offline state, including resource reads.
@@ -226,7 +245,7 @@ actor SkillStore {
         updated.documents[name] = nil
         updated.errors[name] = nil
         let entry = updated.record(read, name: name, previous: previous)
-        try cache.write(JSONEncoder().encode(updated), name: "listing", bookmark: bookmark)
+        try publishListing(updated, replacing: previous, bookmark: bookmark)
         if let document = entry.document { return document }
         // Re-throw the actual read/parse error, never the retained cache's successful document.
         return try SkillDocument.decode(read.get(), directoryName: name)
@@ -235,6 +254,7 @@ actor SkillStore {
     /// Missing/replaced directory facts invalidate metadata; transient I/O remains recoverable.
     nonisolated func observeSkillsDirectoryFailure(_ code: Int32, bookmark: Data) throws {
         guard [ENOENT, ENOTDIR, ELOOP].contains(code) else { return }
+        try cache.remove("resources", bookmark: bookmark)
         try cache.write(JSONEncoder().encode(Listing()), name: "listing", bookmark: bookmark)
     }
 
