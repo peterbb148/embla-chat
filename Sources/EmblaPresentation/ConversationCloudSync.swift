@@ -119,8 +119,8 @@ public final class ConversationCloudSync {
         }
         if requiresScopeConsent {
             status =
-                "iCloud paused. Confirm syncing chats, project memory, settings "
-                + "and readable MCP keys in Settings."
+                "iCloud paused. Review iCloud sync to include saved chats, project memory, "
+                + "settings and readable MCP keys."
         }
     }
 

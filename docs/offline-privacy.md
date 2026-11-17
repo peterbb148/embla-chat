@@ -69,3 +69,11 @@ a full-screen landscape capture was inspected because app-element captures crop 
 with the extra indicator window in the local XCTest environment. These are policy-injection checks,
 not evidence that the simulator changed physical radios. Physical Wi-Fi/cellular/airplane-mode
 checks and actual personal-iCloud provider transfer remain outstanding (#78 and #45).
+
+Phone testing exposed confusing Settings wording. A satisfied path now displays **Network
+connection available**; individual service failures retain their actual errors. Older iCloud
+consent has a direct **Review iCloud sync** action rather than directing users back to the
+screen they already opened. This review still requires explicit confirmation and never
+changes the global choice automatically. The connected-phone baseline showed the downloaded
+model preserved, successful iCloud sync after user confirmation, and successful Time.Now
+metadata refresh with three enabled tools. Radio-transition checks are tracked in #78.

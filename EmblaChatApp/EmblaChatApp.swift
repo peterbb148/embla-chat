@@ -61,7 +61,7 @@ final class AppConnectivity {
         switch snapshot.path {
         case .unsatisfied: "Privacy mode — network paused"
         case .unknown: "Checking connectivity"
-        case .requiresConnection: "Connection required — availability unverified"
+        case .requiresConnection: "Connection required"
         case .satisfied: snapshot.allowsRequests ? nil : "Preparing network access"
         }
     }

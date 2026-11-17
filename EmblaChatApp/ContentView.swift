@@ -723,9 +723,12 @@ private struct ModelSettingsView: View {
                     }
                 }
                 Section("Connectivity") {
-                    Text(connectivity.label ?? "Network available — server reachability unverified")
+                    Text(connectivity.label ?? "Network connection available")
+                        .accessibilityIdentifier("connectivity-settings-status")
                     Text(
-                        "When offline, downloaded-model chat and device files remain available. New network requests and iCloud access are paused. Your iCloud switch stays unchanged. Apple may resume transfers already handed to iCloud Drive; the green outline does not control those system transfers. Failed tool calls require an explicit retry."
+                        "In privacy mode, chat stays on this device while internet tools "
+                            + "and new iCloud access pause. Your iCloud setting stays unchanged. "
+                            + "Previously queued iCloud transfers may resume later."
                     )
                     .font(.caption).foregroundStyle(.secondary)
                 }
@@ -891,6 +894,10 @@ private struct ModelSettingsView: View {
             )
             .font(.caption).foregroundStyle(.secondary)
             Text(model.cloud.status).accessibilityIdentifier("icloud-status")
+            if model.cloud.requiresScopeConsent {
+                Button("Review iCloud sync") { activeAlert = .cloudConsent }
+                    .disabled(!connectivity.snapshot.allowsRequests || model.busy)
+            }
             if let error = model.cloud.error {
                 Text(error).foregroundStyle(.red).textSelection(.enabled)
                     .accessibilityIdentifier("icloud-error")

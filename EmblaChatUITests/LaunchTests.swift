@@ -110,6 +110,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(app.buttons["Download model"].exists)
         app.buttons["Chat history"].tap()
         app.buttons["Settings"].tap()
+        XCTAssertTrue(app.staticTexts["Network connection available"].waitForExistence(timeout: 10))
         reveal(app.buttons["Download model"], in: app)
         XCTAssertTrue(app.buttons["Download model"].exists)
         XCTAssertTrue(app.buttons["Download model"].isEnabled)
