@@ -296,7 +296,10 @@ private final class FailingSettingsFixture: SharedSettingsStoring {
     first.reloadSkills(using: cloud); await first.waitUntilIdle()
     try first.selectSkill("test-skill", using: cloud)
     let second = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)
-    second.reloadSkills(using: cloud); await second.waitUntilIdle()
+    second.reloadSkills(using: cloud)
+    let loadingRevision = second.revision
+    await second.waitUntilIdle()
+    #expect(second.revision != loadingRevision)
     #expect(second.selectedSkill?.name == "test-skill")
     try second.selectSkill(nil, using: cloud)
     let third = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)

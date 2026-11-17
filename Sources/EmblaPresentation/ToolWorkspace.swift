@@ -126,6 +126,7 @@ public final class ToolWorkspace {
                         }
                         selectedSkill = skill
                     }
+                    revision = UUID()
                 } catch {
                     guard skillRequestID == current, !Task.isCancelled else { return }
                     self.error = error.localizedDescription
