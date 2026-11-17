@@ -66,7 +66,8 @@ Choosing a version replaces the whole settings document, including its keys and 
 Review the file if you need to combine configurations before choosing. No automatic merge
 or last-writer-wins policy silently drops registrations.
 
-Writes compare the entire previously read document and conflict versions inside file
+Reads and writes run on a storage actor so a stalled provider cannot block the UI or Off.
+Results are applied only to the same active source/revision. Writes compare the entire previously read document and conflict versions inside file
 coordination. A stale save fails and asks for reload; it does not overwrite another device's
 edit. A deleted previously observed document prompts a choice between retained settings
 and an explicitly empty configuration. Invalid/oversized JSON or broken credential bindings
@@ -93,7 +94,7 @@ profiles differ. Removing a shared key does not delete a separate local-profile 
 | iCloud switch, scope consent, folder grant | Device-local. Another device must explicitly enable access; configuration cannot enable its own cloud access |
 | Active chat, drafts, editor text, keyboard/sidebar state | Device-local/transient; not shared settings |
 | Downloaded model, verification/progress, runtime/session/metrics | Device-local. Fixed model and generation policy are code, not user-configurable preferences |
-| Tool schemas, live clients, selected skill contents | Derived device-local data, not shared registration authority. Catalog cache is keyed by the full shared-settings fingerprint, including credential changes |
+| Tool schemas, live clients, selected skill contents | Derived device-local data, not shared registration authority. Catalog cache is keyed by each connection fingerprint, including endpoint and credential changes; name/permission edits retain validated schemas |
 | Registry search, browsing cursor, errors, in-progress work | Transient; not user configuration |
 
 Skill selection is a global preference; changing chats preserves it. A missing/invalid

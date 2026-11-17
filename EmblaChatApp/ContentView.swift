@@ -208,7 +208,7 @@ struct ContentView: View {
             ) {
                 switch confirmation {
                 case .replaceDraft(let action):
-                    Button("Replace draft") { selectAction(action, replacing: true) }
+                    Button("Replace draft") { Task { await selectAction(action, replacing: true) } }
                 case nil: EmptyView()
                 }
                 Button("Cancel", role: .cancel) {}
@@ -364,9 +364,11 @@ struct ContentView: View {
         }
     }
 
-    private func selectAction(_ action: QuickAction, replacing: Bool = false) {
+    private func selectAction(_ action: QuickAction, replacing: Bool = false) async {
         actionError = nil
         do {
+            let originalChat = model.conversationID
+            let originalDraft = model.prompt
             _ = try quickActions.validatedAction(action, using: model.cloud)
             let prompt =
                 action.type == .prompt
@@ -378,7 +380,10 @@ struct ContentView: View {
             }
             if action.type == .skill {
                 guard let name = action.skill else { throw SkillFailure.changed }
-                try model.tools.selectSkill(name, using: model.cloud)
+                try await model.tools.selectSkill(name, using: model.cloud)
+            }
+            guard model.conversationID == originalChat, model.prompt == originalDraft else {
+                throw QuickActionError.changed
             }
             model.prompt = prompt
             composerFocused = true
@@ -392,7 +397,7 @@ struct ContentView: View {
                     QuickActionCards(
                         actions: quickActions.actions,
                         enabled: model.chatRestored && !model.resetting && !model.cloud.resolving,
-                        select: { selectAction($0) })
+                        select: { action in Task { await selectAction(action) } })
                 }
                 if let error = actionError ?? quickActions.error {
                     Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -427,8 +432,12 @@ struct ContentView: View {
                     HStack {
                         Label(skill.name, systemImage: "sparkles").font(.caption)
                         Button("Remove skill", systemImage: "xmark.circle") {
-                            do { try model.tools.selectSkill(nil, using: model.cloud) } catch {
-                                actionError = error.localizedDescription
+                            Task {
+                                do {
+                                    try await model.tools.selectSkill(nil, using: model.cloud)
+                                } catch {
+                                    actionError = error.localizedDescription
+                                }
                             }
                         }
                         .labelStyle(.iconOnly).disabled(model.busy)
@@ -787,8 +796,10 @@ private struct ModelSettingsView: View {
                 .disabled(model.busy || model.cloud.requiresScopeConsent)
             ForEach(Array(model.tools.settingsChoices.enumerated()), id: \.offset) { index, label in
                 Button(label, role: .destructive) {
-                    model.tools.resolveSettings(index)
-                    model.tools.reloadSkills(using: model.cloud)
+                    Task {
+                        await model.tools.resolveSettings(index)
+                        model.tools.reloadSkills(using: model.cloud)
+                    }
                 }.disabled(model.busy)
             }
             ForEach(model.cloud.choices) { choice in

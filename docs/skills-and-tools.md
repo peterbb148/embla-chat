@@ -267,9 +267,10 @@ that answer-quality defect. Requested-field validation is not proof of every gen
 
 Local context planning reuses the validated saved catalog after pause/restart (#71), not a
 live connection. Send still prepares actual clients and refreshes missing connections before
-generation, and dispatch requires a live client plus the enabled/schema checks. Metadata
-persists atomically with the registration; changing its endpoint or credential invalidates
-it, durably before changing the credential; a failed invalidation leaves the old credential
-and schemas intact. Planning only reconnects servers missing metadata. Count retry supports
+generation, and dispatch requires a live client plus the enabled/schema checks. With local settings, metadata persists atomically with the registration and is invalidated
+durably before changing a credential. With shared settings, endpoint-bound keys/registrations
+are committed together; connection-fingerprinted schemas stay cached on the device.
+Name/permission-only edits preserve the catalog. Failed writes leave the previous
+configuration available. Planning only reconnects servers missing metadata. Count retry supports
 Stop and cancels on inactivity. This does not send chats or credentials to the registry. Optional shared credential storage
 is governed by the separate expanded iCloud consent.

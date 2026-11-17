@@ -27,6 +27,19 @@ struct SharedServer: Codable, Equatable, Sendable {
         credential = token.map { SharedCredential(endpoint: server.endpoint, bearerToken: $0) }
     }
 
+    var connectionFingerprint: String {
+        get throws {
+            var connection = self
+            connection.name = ""
+            connection.enabledTools = []
+            connection.enableToolsOnFirstDiscovery = false
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            return SHA256.hash(data: try encoder.encode(connection))
+                .map { String(format: "%02x", $0) }.joined()
+        }
+    }
+
     var registration: MCPServer {
         MCPServer(
             id: id, name: name, endpoint: endpoint, enabledTools: Set(enabledTools),
@@ -78,13 +91,13 @@ struct SharedSettings: Codable, Equatable, Sendable {
     }
 }
 
-struct SharedSettingsRead: Equatable {
+struct SharedSettingsRead: Equatable, Sendable {
     var current: SharedSettings?
     var conflicts: [SharedSettings] = []
 }
 
 /// Synchronous coordinated transactions also make checking-and-writing one indivisible operation.
-protocol SharedSettingsStoring {
+protocol SharedSettingsStoring: Sendable {
     var identity: String { get }
     func read() throws -> SharedSettingsRead
     func write(_ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool) throws
@@ -211,9 +224,9 @@ private struct SettingsMigrationReceipt: Codable {
 }
 
 /// Writes go directly to the selected shared document; no hidden offline write queue exists.
-@MainActor final class SharedSettingsSession {
+actor SharedSettingsSession {
     let storage: any SharedSettingsStoring
-    let receipt: URL
+    nonisolated let receipt: URL
     private(set) var current: SharedSettings?
     private(set) var choices: [SharedSettings] = []
     private var read = SharedSettingsRead()
@@ -225,6 +238,7 @@ private struct SettingsMigrationReceipt: Codable {
     }
 
     func refresh(local: SharedSettings) throws -> SharedSettings {
+        try Task.checkCancellation()
         self.local = local
         let remote = try storage.read()
         let saved: SettingsMigrationReceipt?
@@ -235,15 +249,15 @@ private struct SettingsMigrationReceipt: Codable {
         } else {
             saved = nil
         }
-        let migrated =
-            try saved?.source == storage.identity
-            && saved?.localFingerprint == local.fingerprint
+        let knownSource = saved?.source == storage.identity
+        let migrated = try knownSource && saved?.localFingerprint == local.fingerprint
+        let changedLocal = knownSource && !migrated
         read = remote
         choices = []
         if !remote.conflicts.isEmpty
-            || (remote.current == nil && (current != nil || migrated))
+            || (remote.current == nil && (current != nil || knownSource))
             || (!migrated && remote.current != nil && remote.current != local
-                && (!local.servers.isEmpty || local.selectedSkill != nil))
+                && (changedLocal || !local.servers.isEmpty || local.selectedSkill != nil))
         {
             let retained = migrated ? (current ?? local) : local
             choices = [retained] + [remote.current ?? SharedSettings()] + remote.conflicts
@@ -257,15 +271,20 @@ private struct SettingsMigrationReceipt: Codable {
         return value
     }
 
-    func commit(_ value: SharedSettings) throws {
-        guard current != nil, choices.isEmpty else { throw SharedSettingsError.conflict }
+    func commit(_ value: SharedSettings, replacing expected: SharedSettings) throws {
+        try Task.checkCancellation()
+        guard current == expected else { throw SharedSettingsError.changed }
+        guard choices.isEmpty else { throw SharedSettingsError.conflict }
         try storage.write(value, replacing: read, resolve: false)
         current = value
         read = SharedSettingsRead(current: value)
     }
 
-    func resolve(_ index: Int) throws -> SharedSettings {
-        guard choices.indices.contains(index) else { throw SharedSettingsError.changed }
+    func resolve(_ index: Int, expected: SharedSettings) throws -> SharedSettings {
+        try Task.checkCancellation()
+        guard choices.indices.contains(index), choices[index] == expected else {
+            throw SharedSettingsError.changed
+        }
         let value = choices[index]
         try storage.write(value, replacing: read, resolve: true)
         try saveReceipt(local)

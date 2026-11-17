@@ -31,11 +31,13 @@ struct SkillsView: View {
                 Text(model.tools.selectedSkill?.name ?? "None")
                     .accessibilityIdentifier("selected-skill")
                 Button("Use no skill") {
-                    do {
-                        try model.tools.selectSkill(nil, using: model.cloud)
-                        model.toolConfigurationChanged()
-                    } catch { self.error = error.localizedDescription }
-                }.disabled(model.busy)
+                    Task {
+                        do {
+                            try await model.tools.selectSkill(nil, using: model.cloud)
+                            model.toolConfigurationChanged()
+                        } catch { self.error = error.localizedDescription }
+                    }
+                }.disabled(model.busy || model.tools.settingsLoading || model.tools.settingsWriting)
             }
             Section("Available skills") {
                 if model.tools.skills.isEmpty {
@@ -70,13 +72,17 @@ struct SkillsView: View {
                                     Text(skill.instructions).textSelection(.enabled)
                                 }
                                 Button("Use this skill") {
-                                    do {
-                                        try model.tools.selectSkill(
-                                            skill.name, using: model.cloud)
-                                        model.toolConfigurationChanged()
-                                        dismiss()
-                                    } catch { self.error = error.localizedDescription }
-                                }.disabled(model.busy)
+                                    Task {
+                                        do {
+                                            try await model.tools.selectSkill(
+                                                skill.name, using: model.cloud)
+                                            model.toolConfigurationChanged()
+                                            dismiss()
+                                        } catch { self.error = error.localizedDescription }
+                                    }
+                                }.disabled(
+                                    model.busy || model.tools.settingsLoading
+                                        || model.tools.settingsWriting)
                             }.navigationTitle(skill.name)
                         }
                     } else {
@@ -145,7 +151,7 @@ struct MCPSettingsView: View {
             }
         }
         .navigationTitle("MCP Servers")
-        .disabled(model.busy)
+        .disabled(model.busy || model.tools.settingsLoading || model.tools.settingsWriting)
         .sheet(item: $newServer) { server in
             NavigationStack { MCPServerEditor(model: model, initial: server) }
         }
@@ -180,25 +186,28 @@ private struct MCPServerEditor: View {
                 )
                 .font(.caption).foregroundStyle(.secondary)
                 Button("Save server") {
-                    do {
-                        guard let url = URL(string: endpoint) else { throw MCPFailure.endpoint }
-                        let isNew = !model.tools.servers.contains(where: { $0.id == initial.id })
-                        if isNew && requiresBearerToken && token.isEmpty {
-                            error = "This server requires a bearer token from its provider."
-                            return
-                        }
-                        let current =
-                            model.tools.servers.first(where: { $0.id == initial.id }) ?? initial
-                        try model.tools.saveServer(
-                            MCPServer(
-                                id: initial.id, name: name,
-                                endpoint: url, enabledTools: current.enabledTools),
-                            newToken: token.isEmpty ? nil : token)
-                        token = ""
-                        error = nil
-                        model.toolConfigurationChanged()
-                        if isNew { model.tools.discover(initial.id) }
-                    } catch { self.error = error.localizedDescription }
+                    Task {
+                        do {
+                            guard let url = URL(string: endpoint) else { throw MCPFailure.endpoint }
+                            let isNew = !model.tools.servers.contains(where: { $0.id == initial.id }
+                            )
+                            if isNew && requiresBearerToken && token.isEmpty {
+                                error = "This server requires a bearer token from its provider."
+                                return
+                            }
+                            let current =
+                                model.tools.servers.first(where: { $0.id == initial.id }) ?? initial
+                            try await model.tools.saveServer(
+                                MCPServer(
+                                    id: initial.id, name: name,
+                                    endpoint: url, enabledTools: current.enabledTools),
+                                newToken: token.isEmpty ? nil : token)
+                            token = ""
+                            error = nil
+                            model.toolConfigurationChanged()
+                            if isNew { model.tools.discover(initial.id) }
+                        } catch { self.error = error.localizedDescription }
+                    }
                 }
                 Text("New servers connect after saving and enable all discovered tools.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -217,11 +226,13 @@ private struct MCPServerEditor: View {
                                         .enabledTools.contains(toolName) == true
                                 },
                                 set: { enabled in
-                                    do {
-                                        try model.tools.setEnabled(
-                                            enabled, tool: toolName, serverID: initial.id)
-                                        model.toolConfigurationChanged()
-                                    } catch { self.error = error.localizedDescription }
+                                    Task {
+                                        do {
+                                            try await model.tools.setEnabled(
+                                                enabled, tool: toolName, serverID: initial.id)
+                                            model.toolConfigurationChanged()
+                                        } catch { self.error = error.localizedDescription }
+                                    }
                                 }
                             )
                         ) {
@@ -250,8 +261,10 @@ private struct MCPServerEditor: View {
                 }
                 Section {
                     Button("Remove saved token", role: .destructive) {
-                        do { try model.tools.clearCredential(initial.id) } catch {
-                            self.error = error.localizedDescription
+                        Task {
+                            do { try await model.tools.clearCredential(initial.id) } catch {
+                                self.error = error.localizedDescription
+                            }
                         }
                     }
                     Button("Delete server…", role: .destructive) { confirmDelete = true }
@@ -262,21 +275,26 @@ private struct MCPServerEditor: View {
             }
         }
         .navigationTitle(name.isEmpty ? "MCP server" : name)
-        .disabled(model.busy)
+        .disabled(model.busy || model.tools.settingsLoading || model.tools.settingsWriting)
         .onAppear {
             name = initial.name; endpoint = initial.endpoint.absoluteString
         }
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         .alert("Delete this MCP server?", isPresented: $confirmDelete) {
             Button("Delete", role: .destructive) {
-                do {
-                    try model.tools.removeServer(initial.id); model.toolConfigurationChanged();
-                    dismiss()
-                } catch { self.error = error.localizedDescription }
+                Task {
+                    do {
+                        try await model.tools.removeServer(initial.id);
+                        model.toolConfigurationChanged();
+                        dismiss()
+                    } catch { self.error = error.localizedDescription }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Removes its local settings and Keychain token. Existing chat records remain.")
+            Text(
+                "Removes its registration and key from the active settings profile. Existing chat records remain."
+            )
         }
     }
 }

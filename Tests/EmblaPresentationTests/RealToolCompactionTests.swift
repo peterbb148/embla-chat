@@ -22,7 +22,7 @@ func realToolChatRecoversMetadataAndCompactsAutomaticallyThenOfflineAfterRestart
     var server = MCPServer(name: "Time.Now", endpoint: URL(string: "https://time.now/mcp")!,
         enabledTools: ["get_current_time", "list_timezones", "lookup_ip_time"])
     server.enableToolsOnFirstDiscovery = false
-    try setup.saveServer(server)  // Older settings have enabled names but no saved schemas.
+    try await setup.saveServer(server)  // Older settings have enabled names but no saved schemas.
     let tokenizer = EmblaPromptTokenizer()
     let recovery = LocalInferenceModel(repository: repository, manifest: manifest,
         session: EmblaRuntime.makeSession(),

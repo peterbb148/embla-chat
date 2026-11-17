@@ -96,7 +96,7 @@ private let readSkillRequest = """
             tools: workspace)
         model.check(); await model.waitUntilIdle()
         workspace.reloadSkills(using: model.cloud); await workspace.waitUntilIdle()
-        try workspace.selectSkill("example-skill", using: model.cloud)
+        try await workspace.selectSkill("example-skill", using: model.cloud)
     }
 
     func clean() { try? FileManager.default.removeItem(at: root) }

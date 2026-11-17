@@ -53,7 +53,7 @@ private func settingsDocument(_ name: String = "Synthetic server") -> SharedSett
 }
 
 @Test @MainActor func sharedSettingsMigrationAndSecondInstallationRetainCredentialsAndPermissions()
-    throws
+    async throws
 {
     let root = try settingsRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -62,23 +62,23 @@ private func settingsDocument(_ name: String = "Synthetic server") -> SharedSett
         storage: store, receipt: root.appendingPathComponent("first.json"))
     var original = settingsDocument()
     original.selectedSkill = "concise-writing"
-    #expect(try first.refresh(local: original) == original)
+    #expect(try await first.refresh(local: original) == original)
     let second = SharedSettingsSession(
         storage: store, receipt: root.appendingPathComponent("second.json"))
-    #expect(try second.refresh(local: SharedSettings()) == original)
+    #expect(try await second.refresh(local: SharedSettings()) == original)
     var changed = original
     changed.servers[0].credential?.bearerToken = "replacement-synthetic-key"
     changed.servers[0].enabledTools = []
-    try first.commit(changed)
-    #expect(try second.refresh(local: SharedSettings()) == changed)
+    try await first.commit(changed, replacing: await first.current!)
+    #expect(try await second.refresh(local: SharedSettings()) == changed)
     changed.servers = []
-    try second.commit(changed)
-    #expect(try first.refresh(local: original) == changed)
+    try await second.commit(changed, replacing: await second.current!)
+    #expect(try await first.refresh(local: original) == changed)
     let receipt = try String(contentsOf: first.receipt, encoding: .utf8)
     #expect(!receipt.contains("synthetic-key") && !receipt.contains("bearerToken"))
 }
 
-@Test @MainActor func concurrentSettingsWritesAndMigrationNeverSilentlyOverwrite() throws {
+@Test @MainActor func concurrentSettingsWritesAndMigrationNeverSilentlyOverwrite() async throws {
     let root = try settingsRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let store = SettingsFileFixture(file: root.appendingPathComponent("settings.json"))
@@ -87,47 +87,55 @@ private func settingsDocument(_ name: String = "Synthetic server") -> SharedSett
     let second = SharedSettingsSession(
         storage: store, receipt: root.appendingPathComponent("second.json"))
     let original = settingsDocument()
-    _ = try first.refresh(local: original)
-    _ = try second.refresh(local: SharedSettings())
+    _ = try await first.refresh(local: original)
+    _ = try await second.refresh(local: SharedSettings())
     var changed = original
     changed.servers[0].name = "First edit"
-    try first.commit(changed)
+    try await first.commit(changed, replacing: await first.current!)
     var stale = original
     stale.servers[0].name = "Stale edit"
-    #expect(throws: SharedSettingsError.self) { try second.commit(stale) }
+    await #expect(throws: SharedSettingsError.self) {
+        try await second.commit(stale, replacing: await second.current!)
+    }
     #expect(try store.read().current == changed)
     let migration = SharedSettingsSession(
         storage: store, receipt: root.appendingPathComponent("third.json"))
     let different = settingsDocument("Unmigrated device")
-    #expect(throws: SharedSettingsError.self) { try migration.refresh(local: different) }
-    #expect(migration.choices == [different, changed])
-    #expect(try migration.resolve(1) == changed)
-    #expect(try migration.refresh(local: different) == changed)
+    await #expect(throws: SharedSettingsError.self) {
+        try await migration.refresh(local: different)
+    }
+    #expect(await migration.choices == [different, changed])
+    #expect(try await migration.resolve(1, expected: await migration.choices[1]) == changed)
+    #expect(try await migration.refresh(local: different) == changed)
     // An Off-profile edit is not ignored on re-enable.
     var editedOff = different
     editedOff.servers[0].name = "Changed while Off"
-    #expect(throws: SharedSettingsError.self) { try migration.refresh(local: editedOff) }
-    #expect(migration.choices.first == editedOff)
+    await #expect(throws: SharedSettingsError.self) {
+        try await migration.refresh(local: editedOff)
+    }
+    #expect(await migration.choices.first == editedOff)
 }
 
-@Test @MainActor func deletedOrInvalidSharedSettingsRequireAnExplicitDecision() throws {
+@Test @MainActor func deletedOrInvalidSharedSettingsRequireAnExplicitDecision() async throws {
     let root = try settingsRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let store = SettingsFileFixture(file: root.appendingPathComponent("settings.json"))
     let session = SharedSettingsSession(
         storage: store, receipt: root.appendingPathComponent("receipt.json"))
     let original = settingsDocument()
-    _ = try session.refresh(local: original)
+    _ = try await session.refresh(local: original)
     try FileManager.default.removeItem(at: store.file)
-    #expect(throws: SharedSettingsError.self) { try session.refresh(local: original) }
+    await #expect(throws: SharedSettingsError.self) { try await session.refresh(local: original) }
     #expect(!FileManager.default.fileExists(atPath: store.file.path))
-    #expect(try session.resolve(1).servers.isEmpty)
+    #expect(try await session.resolve(1, expected: await session.choices[1]).servers.isEmpty)
     try Data("broken JSON".utf8).write(to: store.file)
-    #expect(throws: (any Error).self) { try session.refresh(local: original) }
+    await #expect(throws: (any Error).self) { try await session.refresh(local: original) }
     #expect(try Data(contentsOf: store.file) == Data("broken JSON".utf8))
 }
 
-@Test @MainActor func workspaceFollowsCloudScopeAndNeverUsesDeviceKeysForSharedServers() throws {
+@Test @MainActor func workspaceFollowsCloudScopeAndNeverUsesDeviceKeysForSharedServers()
+    async throws
+{
     let root = try settingsRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let localFile = root.appendingPathComponent("servers.json")
@@ -137,36 +145,36 @@ private func settingsDocument(_ name: String = "Synthetic server") -> SharedSett
         configuration: localFile, credentials: vault,
         settingsFactory: { _ in sharedFile })
     let local = MCPServer(name: "Local", endpoint: URL(string: "https://example.invalid/local")!)
-    try workspace.saveServer(local)
+    try await workspace.saveServer(local)
     let cloud = ConversationCloudSync()
-    workspace.reloadSettings(using: cloud)
+    await workspace.reloadSettings(using: cloud)
     #expect(!FileManager.default.fileExists(atPath: sharedFile.file.path))
     cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
     // The source guard blocks operations until the selected profile is loaded.
-    #expect(throws: SharedSettingsError.self) { try workspace.saveServer(local) }
-    workspace.reloadSettings(using: cloud)
+    await #expect(throws: SharedSettingsError.self) { try await workspace.saveServer(local) }
+    await workspace.reloadSettings(using: cloud)
     #expect(workspace.settingsError == nil)
     #expect(
         try sharedFile.read().current?.servers.first?.credential?.bearerToken == "synthetic-key")
-    try workspace.clearCredential(local.id)
+    try await workspace.clearCredential(local.id)
     #expect(try workspace.token(for: local) == nil)  // no fallback to device Keychain
     #expect(vault.token == "synthetic-key")
     cloud.restore(enabled: false, bookmark: nil, base: nil)
-    workspace.reloadSettings(using: cloud)
+    await workspace.reloadSettings(using: cloud)
     #expect(workspace.servers == [local])
     #expect(try workspace.token(for: local) == "synthetic-key")
     // Corrupt cloud files must not be touched/read with the switch Off.
     try Data("bad JSON".utf8).write(to: sharedFile.file)
-    workspace.reloadSettings(using: cloud)
+    await workspace.reloadSettings(using: cloud)
     #expect(workspace.settingsError == nil)
     cloud.restore(
         enabled: true, bookmark: Data("synthetic grant".utf8), base: nil, consentVersion: 1)
-    workspace.reloadSettings(using: cloud)
+    await workspace.reloadSettings(using: cloud)
     #expect(workspace.settingsError != nil && workspace.servers.isEmpty)
     #expect(try Data(contentsOf: sharedFile.file) == Data("bad JSON".utf8))
 }
 
-private final class FailingSettingsFixture: SharedSettingsStoring {
+private final class FailingSettingsFixture: SharedSettingsStoring, @unchecked Sendable {
     var identity = "synthetic failure store"
     var document = settingsDocument()
     var rejectWrites = false
@@ -178,7 +186,8 @@ private final class FailingSettingsFixture: SharedSettingsStoring {
     }
 }
 
-@Test @MainActor func failedSharedCredentialSaveKeepsThePreviouslyUsableConfiguration() throws {
+@Test @MainActor func failedSharedCredentialSaveKeepsThePreviouslyUsableConfiguration() async throws
+{
     let root = try settingsRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let provider = FailingSettingsFixture()
@@ -189,18 +198,20 @@ private final class FailingSettingsFixture: SharedSettingsStoring {
         credentials: vault, settingsFactory: { _ in provider })
     let cloud = ConversationCloudSync()
     cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
-    workspace.reloadSettings(using: cloud)
+    await workspace.reloadSettings(using: cloud)
     let server = try #require(workspace.servers.first)
     provider.rejectWrites = true
-    #expect(throws: CocoaError.self) { try workspace.saveServer(server, newToken: "replacement") }
+    await #expect(throws: CocoaError.self) {
+        try await workspace.saveServer(server, newToken: "replacement")
+    }
     #expect(try workspace.token(for: server) == "synthetic-test-key")
-    #expect(throws: CocoaError.self) { try workspace.clearCredential(server.id) }
+    await #expect(throws: CocoaError.self) { try await workspace.clearCredential(server.id) }
     #expect(try workspace.token(for: server) == "synthetic-test-key")
     #expect(provider.document.servers.count == 1)
     provider.rejectWrites = false
     var replacement = server
     replacement.endpoint = URL(string: "https://replacement.invalid/mcp")!
-    try workspace.saveServer(replacement, newToken: "new-endpoint-key")
+    try await workspace.saveServer(replacement, newToken: "new-endpoint-key")
     #expect(provider.document.servers[0].enabledTools.isEmpty)
     #expect(!provider.document.servers[0].enableToolsOnFirstDiscovery)
     #expect(provider.document.servers[0].credential?.endpoint == replacement.endpoint)
@@ -241,19 +252,23 @@ private final class FailingSettingsFixture: SharedSettingsStoring {
         let server = MCPServer(
             name: "Synthetic authenticated server",
             endpoint: URL(string: "http://127.0.0.1:\(port)/bearer")!)
-        try first.saveServer(server, newToken: "synthetic-key")
+        try await first.saveServer(server, newToken: "synthetic-key")
         let cloud = ConversationCloudSync()
         cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
-        first.reloadSettings(using: cloud)
+        await first.reloadSettings(using: cloud)
         first.discover(server.id); await first.waitUntilIdle()
         #expect(first.error == nil)
         #expect(first.servers.first?.enabledTools == ["echo"])
+        try await first.setEnabled(false, tool: "echo", serverID: server.id)
+        #expect(first.visibleToolNames(for: server.id) == ["echo"])
+        try await first.setEnabled(true, tool: "echo", serverID: server.id)
+        #expect(first.discovered[server.id]?.count == 1)
         let secondVault = SettingsCredentialFixture()
         secondVault.token = "wrong-local-key-must-not-be-used"
         let second = ToolWorkspace(
             configuration: secondRoot.appendingPathComponent("servers.json"),
             credentials: secondVault, settingsFactory: { _ in file })
-        second.reloadSettings(using: cloud)
+        await second.reloadSettings(using: cloud)
         second.discover(server.id); await second.waitUntilIdle()
         #expect(second.error == nil)
         let result = try await second.remoteCall(
@@ -271,11 +286,11 @@ private final class FailingSettingsFixture: SharedSettingsStoring {
         let restarted = ToolWorkspace(
             configuration: secondRoot.appendingPathComponent("servers.json"),
             credentials: secondVault, settingsFactory: { _ in file })
-        restarted.reloadSettings(using: cloud)
+        await restarted.reloadSettings(using: cloud)
         #expect(try restarted.remoteTools().count == 1)
         #expect(restarted.discovered.isEmpty)
-        try first.clearCredential(server.id)
-        second.reloadSettings(using: cloud)
+        try await first.clearCredential(server.id)
+        await second.reloadSettings(using: cloud)
         second.discover(server.id); await second.waitUntilIdle()
         #expect(second.error != nil)  // actual 401, never the device key or a guessed success
         #expect(second.discovered.isEmpty)
@@ -294,22 +309,141 @@ private final class FailingSettingsFixture: SharedSettingsStoring {
     let cloud = ConversationCloudSync()
     let first = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)
     first.reloadSkills(using: cloud); await first.waitUntilIdle()
-    try first.selectSkill("test-skill", using: cloud)
+    try await first.selectSkill("test-skill", using: cloud)
     let second = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)
     second.reloadSkills(using: cloud)
     let loadingRevision = second.revision
     await second.waitUntilIdle()
     #expect(second.revision != loadingRevision)
     #expect(second.selectedSkill?.name == "test-skill")
-    try second.selectSkill(nil, using: cloud)
+    try await second.selectSkill(nil, using: cloud)
     let third = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)
     third.reloadSkills(using: cloud); await third.waitUntilIdle()
     #expect(third.selectedSkill == nil)
-    try third.selectSkill("test-skill", using: cloud)
+    try await third.selectSkill("test-skill", using: cloud)
     try FileManager.default.removeItem(at: folder)
     third.reloadSkills(using: cloud); await third.waitUntilIdle()
     #expect(throws: SkillFailure.self) { try third.instructions(using: cloud) }
     // An unavailable selected file can be explicitly deselected, never silently omitted.
-    try third.selectSkill(nil, using: cloud)
+    try await third.selectSkill(nil, using: cloud)
     #expect(try third.instructions(using: cloud).isEmpty)
+}
+
+@Test @MainActor func emptyOffProfileAndDeletedCloudStillRequireMigrationChoices() async throws {
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = SettingsFileFixture(file: root.appendingPathComponent("settings.json"))
+    let receipt = root.appendingPathComponent("receipt.json")
+    let original = settingsDocument()
+    let first = SharedSettingsSession(storage: store, receipt: receipt)
+    _ = try await first.refresh(local: original)
+    let reopened = SharedSettingsSession(storage: store, receipt: receipt)
+    await #expect(throws: SharedSettingsError.self) {
+        try await reopened.refresh(local: SharedSettings())
+    }
+    #expect(try store.read().current == original)
+    _ = try await reopened.resolve(1, expected: await reopened.choices[1])
+    try FileManager.default.removeItem(at: store.file)
+    let another = SharedSettingsSession(storage: store, receipt: receipt)
+    await #expect(throws: SharedSettingsError.self) {
+        try await another.refresh(local: original)
+    }
+    #expect(!FileManager.default.fileExists(atPath: store.file.path))
+}
+
+@Test(arguments: ["servers.json", "skill.json"]) @MainActor
+func localProfileReloadNeverClearsAnUnreadConfigurationError(fileName: String) async throws {
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("servers.json")
+    let workspace = ToolWorkspace(configuration: file, credentials: SettingsCredentialFixture())
+    let server = settingsDocument().servers[0].registration
+    try await workspace.saveServer(server)
+    let cloud = ConversationCloudSync()
+    await workspace.reloadSettings(using: cloud)
+    let bad = root.appendingPathComponent(fileName)
+    let original =
+        fileName == "skill.json"
+        ? try JSONEncoder().encode(String?.none)
+        : try Data(contentsOf: file)
+    try Data("Malformed local configuration".utf8).write(to: bad)
+    await workspace.reloadSettings(using: cloud)
+    #expect(workspace.settingsError != nil)
+    await workspace.reloadSettings(using: cloud)
+    #expect(workspace.settingsError != nil)
+    await #expect(throws: SkillFailure.self) { try await workspace.saveServer(server) }
+    #expect(try Data(contentsOf: bad) == Data("Malformed local configuration".utf8))
+    try original.write(to: bad)
+    await workspace.reloadSettings(using: cloud)
+    #expect(workspace.settingsError == nil)
+    try await workspace.saveServer(server)
+}
+
+private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Sendable {
+    let identity = "synthetic blocked provider"
+    let gate = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var entered = false
+    private var onMain = false
+    var started: Bool { lock.withLock { entered } }
+    var usedMainThread: Bool { lock.withLock { onMain } }
+    func read() -> SharedSettingsRead {
+        lock.withLock {
+            entered = true; onMain = Thread.isMainThread
+        }
+        _ = gate.wait(timeout: .now() + 3)
+        return SharedSettingsRead(current: SharedSettings())
+    }
+    func write(_ value: SharedSettings, replacing: SharedSettingsRead, resolve: Bool) throws {
+        throw SharedSettingsError.changed
+    }
+}
+
+@Test @MainActor func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult()
+    async throws
+{
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provider = BlockedSettingsFixture()
+    let workspace = ToolWorkspace(
+        configuration: root.appendingPathComponent("servers.json"),
+        credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
+    let local = settingsDocument("Local profile").servers[0].registration
+    try await workspace.saveServer(local)
+    let cloud = ConversationCloudSync()
+    cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
+    let clock = ContinuousClock()
+    let start = clock.now
+    let pending = Task { await workspace.reloadSettings(using: cloud) }
+    while !provider.started && clock.now - start < .seconds(4) {
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    #expect(provider.started && !provider.usedMainThread)
+    #expect(clock.now - start < .seconds(1))
+    cloud.restore(enabled: false, bookmark: nil, base: nil)
+    await workspace.reloadSettings(using: cloud)
+    #expect(workspace.servers == [local] && workspace.settingsError == nil)
+    provider.gate.signal()
+    await pending.value
+    #expect(workspace.servers == [local] && workspace.settingsError == nil)
+    #expect(!workspace.settingsLoading)
+}
+
+@Test @MainActor func absentSharedSkillCatalogStillAllowsPersistingNone() async throws {
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let provider = FailingSettingsFixture()
+    provider.document = SharedSettings(selectedSkill: "missing-skill")
+    let workspace = ToolWorkspace(
+        store: SkillStore(localRoot: root.appendingPathComponent("Skills")),
+        configuration: root.appendingPathComponent("servers.json"),
+        credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
+    let cloud = ConversationCloudSync()
+    cloud.restore(enabled: true, bookmark: Data("unresolvable synthetic grant".utf8), base: nil)
+    workspace.reloadSkills(using: cloud); await workspace.waitUntilIdle()
+    #expect(workspace.skillSourceKey == nil && workspace.error != nil)
+    #expect(workspace.settingsError == nil)
+    try await workspace.selectSkill(nil, using: cloud)
+    #expect(provider.document.selectedSkill == nil)
+    #expect(try workspace.instructions(using: cloud).isEmpty)
 }
