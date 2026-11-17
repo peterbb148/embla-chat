@@ -6,6 +6,8 @@ import Observation
 public final class QuickActionsModel {
     public private(set) var actions: [QuickAction] = []
     public private(set) var loading = false
+    public private(set) var applying = false
+    @ObservationIgnored private var applicationID = UUID()
     public private(set) var error: String?
     public private(set) var sourceDescription = "On My iPhone / Embla Chat / Actions/actions.json"
     public private(set) var loadedSourceKey: String?
@@ -51,6 +53,7 @@ public final class QuickActionsModel {
     }
 
     public func pause() {
+        cancelApplication()
         foreground = false
         cancelWorker()
         requestID = UUID()
@@ -82,6 +85,79 @@ public final class QuickActionsModel {
             actions.contains(action)
         else { throw QuickActionError.changed }
         return action
+    }
+
+    /// Draft-only and immediate actions share the same preflight, consent and Send path.
+    public func apply(
+        _ action: QuickAction, to model: LocalInferenceModel,
+        replacing: QuickActionReplacement? = nil
+    ) async throws -> QuickActionApplication {
+        try Task.checkCancellation()
+        guard !applying else {
+            throw QuickActionError.notReady("Wait for the current action to finish.")
+        }
+        _ = try validatedAction(action, using: model.cloud)
+        try QuickActionConfiguration(actions: [action]).validate()
+        try requireActionReady(action, model: model)
+        let chat = model.conversationID
+        let transcript = model.messages
+        let draft = model.prompt
+        let prompt = action.prompt ?? draft
+        if let replacing {
+            guard replacing.action == action, replacing.conversationID == chat,
+                replacing.messages == transcript, replacing.draft == draft
+            else { throw QuickActionError.changed }
+        } else if !draft.isEmpty && draft != prompt {
+            return .needsConfirmation(
+                QuickActionReplacement(
+                    action: action, conversationID: chat, messages: transcript, draft: draft))
+        }
+        let request = UUID()
+        applicationID = request
+        applying = true
+        defer { if applicationID == request { applying = false } }
+        if action.type == .skill {
+            guard let name = action.skill else { throw QuickActionError.changed }
+            try await model.tools.selectSkill(name, using: model.cloud)
+        }
+        if action.autoSend {
+            _ = try await model.tools.validateSkill(using: model.cloud)
+        }
+        try Task.checkCancellation()
+        _ = try validatedAction(action, using: model.cloud)
+        guard applicationID == request, model.conversationID == chat, model.prompt == draft,
+            model.messages == transcript
+        else {
+            throw QuickActionError.changed
+        }
+        try requireActionReady(action, model: model)
+        if action.autoSend { try model.tools.validateSelectedPreference() }
+        model.prompt = prompt
+        if action.autoSend { model.run() }
+        return .applied
+    }
+
+    /// Invalidates a pending UI selection; its late completion cannot change another draft.
+    public func cancelApplication() {
+        applicationID = UUID()
+        applying = false
+    }
+
+    private func requireActionReady(_ action: QuickAction, model: LocalInferenceModel) throws {
+        guard model.chatRestored, !model.busy, !model.resetting, !model.cloud.resolving,
+            model.storageError == nil, !model.tools.settingsLoading, !model.tools.settingsWriting
+        else {
+            throw QuickActionError.notReady(
+                model.storageError
+                    ?? "Wait for the current operation or resolve storage in Settings.")
+        }
+        if action.autoSend {
+            guard model.readyDirectory != nil else {
+                throw QuickActionError.notReady(
+                    "Download and verify the model in Settings before sending an action.")
+            }
+            if action.type == .prompt { try model.tools.validateSelectedPreference() }
+        }
     }
 
     private func start(using cloud: ConversationCloudSync, create: Bool) {

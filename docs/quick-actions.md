@@ -1,10 +1,27 @@
-# Quick actions (#37)
+# Quick actions
 
-Quick-action cards appear above the composer on an empty chat. Tapping a prompt fills the
-composer; edit it and press Send when ready. It never submits automatically or starts a
-new chat. A different nonempty draft requires Replace draft confirmation; Cancel keeps it.
-The same rule applies inside a project. Starting another chat and deleting model weights
-leave the action configuration intact.
+Quick actions appear as naturally sized, wrapping bubbles in an empty chat. All enabled
+entries remain in configured order; there is no sideways carousel or ranked subset. Large
+catalogs can use the transcript's normal vertical scrolling. In an ongoing chat, tap the
+lightning button beside the context indicator to show or hide the same bubbles. Selecting
+one keeps the current chat and closes the chooser after successful application. Normal Send
+also closes the chooser when the new user turn is appended, restoring response auto-scrolling.
+
+By default, a prompt fills the composer for editing. Set `autoSend` to `true` to send its
+configured prompt immediately through the normal Send path; these bubbles have a small
+send arrow. A different nonempty draft requires **Replace draft** or **Replace and send**
+confirmation. Cancel keeps the draft and sends nothing. Confirmation belongs to the exact
+chat, transcript, draft and loaded action: navigating, adding another turn, editing the draft
+or changing sources invalidates it. Edited messages invalidate it even when their IDs stay the
+same. Send is disabled while an action is preparing; a late
+skill-selection result cannot submit after an intervening turn, even if the draft text matches again.
+
+Immediate sending requires a verified model, available settings/skill and ready chat storage.
+The selected skill document is re-read before replacement/submission; a cached catalog entry
+alone cannot authorize an unavailable skill. Preflight failures leave the draft unchanged
+and are never queued for a later send. Repeated taps cannot submit duplicates while selection or generation is underway.
+After submission, file, generation, tool and storage errors follow normal Send behavior.
+The same rules apply inside projects. New Chat and model deletion retain action configuration.
 
 ## Files and storage mode
 
@@ -53,6 +70,7 @@ Copy [the starter file](../examples/actions.json), then edit the fields below:
       "label": "Draft an email",
       "order": 10,
       "enabled": true,
+      "autoSend": false,
       "type": "prompt",
       "prompt": "Help me draft an email. Ask who it is for and what I want to say."
     }
@@ -68,6 +86,7 @@ Copy [the starter file](../examples/actions.json), then edit the fields below:
 | `label` | Required nonempty display text. |
 | `order` | Required integer; ascending order, with file order breaking ties. |
 | `enabled` | Required Boolean; false entries are omitted from the cards. |
+| `autoSend` | Optional Boolean, missing defaults to false. True sends immediately and requires a nonempty configured prompt for either action type. Null and other types are invalid. |
 | `type` | Required `prompt` or `skill`; unknown values are rejected. |
 | `prompt` | Required nonempty string for prompt actions; exact text is preserved. |
 | `skill` | Required name of a valid copied skill for skill actions. |
@@ -78,8 +97,9 @@ This is Embla's format, rather than an automatic import of another app's proprie
 
 Skill cards explicitly select a valid copied skill from the current Skills source. An optional
 `prompt` fills the draft with replacement confirmation; without one the existing draft is kept.
-No action submits, runs scripts or registers/enables an MCP server. Missing/changed/invalid skills
-fail visibly. Credentials do not belong in action JSON; see [skills and MCP](skills-and-tools.md).
+An immediate skill action must supply its own nonempty prompt; it never submits an unrelated
+existing draft. Actions do not run scripts or register/enable MCP servers. Registered tools
+can run automatically through the ordinary Send path. Missing/changed/invalid skills fail visibly. Credentials do not belong in action JSON; see [skills and MCP](skills-and-tools.md).
 
 ## Evidence boundary
 
@@ -94,11 +114,13 @@ without downloaded weights or fake assistant replies. Real model inference and p
 behavior have separate host/device evidence; a filled composer is not a generated response.
 Actual new-format iCloud provider checks remain explicitly deferred to #45 by the user.
 
-At the Epic 4 checkpoint, the package suite reported 133 tests, and all nine production UI tests
-passed on the existing iPhone 17 Pro/iOS 27.2. The focused action case also retains app-only
-screenshots in its xcresult; inspection shows the horizontally scrolling cards, filled
-composer above the keyboard, and native replacement confirmation. No assistant response is
-fabricated. The actual simulator actions.json matches the portable example structurally.
+The wrapping-cloud UI checks cover the starter catalog without weights. An additional
+explicit saved-archive fixture exercises ten bubbles, the ongoing-chat toggle, draft Cancel
+and replacement, same-chat retention, and an immediate action rejected before draft mutation
+because the model is absent. The assistant fixture is labelled as saved synthetic UI data;
+it is not generated output. The fixture-only test skips unless that archive is deliberately
+seeded; a default-suite skip does not establish this coverage. Package fixtures separately
+exercise actual Send orchestration, duplicate rejection, skill instructions and storage failure.
 
 Compiled-product inspection caught Xcode omitting UIFileSharingEnabled when provided only
 as a generated build setting. The app now uses an explicit partial Info.plist merged with
@@ -106,3 +128,22 @@ the generated values, following [Apple's build-setting behavior](https://develop
 Both sharing keys are true in the built simulator app. CI checks the actual Release bundle
 keys before running UI tests, so source-only declarations cannot silently regress this path.
 Actual personal-iCloud configuration transfer is not claimed; it stays deferred to #45.
+
+## Repeating the explicit simulator fixture
+
+Use the existing test simulator with iCloud Off and no model weights. Build the UI-test
+product first using the commands in [development](development.md), then run:
+
+```sh
+python3 scripts/test-action-cloud.py --device EXISTING_SIMULATOR_UDID \
+  --derived-data build/Epic4Simulator
+```
+
+This explicitly installs the built app, temporarily replaces its local archive and actions
+with synthetic UI fixtures, and runs only `testQuickActionCloudFromExplicitFixture`. It
+creates no simulator. It restores the original archive, action configuration and first-run initialization marker
+even if the test fails, looking up the
+container again because Xcode can relocate it. Logs and screenshots stay under ignored
+`build/action-cloud-*`. Temporary private backups are deleted after success; failed runs
+retain them there for recovery. A skipped fixture test is treated as failure by the helper.
+No model output or personal iCloud replication is inferred from this presentation test.

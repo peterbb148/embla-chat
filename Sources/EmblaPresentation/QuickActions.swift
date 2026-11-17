@@ -1,6 +1,6 @@
 import Foundation
 
-/// Human-editable prompts and explicit portable skill references; never auto-submitted.
+/// Human-editable prompts and portable skill references; immediate sending is explicit opt-in.
 public struct QuickAction: Codable, Sendable, Equatable, Identifiable {
     public enum Kind: String, Codable, Sendable { case prompt, skill }
     public let id: String
@@ -10,10 +10,11 @@ public struct QuickAction: Codable, Sendable, Equatable, Identifiable {
     public let type: Kind
     public let prompt: String?
     public let skill: String?
+    public let autoSend: Bool
 
     public init(
         id: String, label: String, order: Int, enabled: Bool = true,
-        type: Kind = .prompt, prompt: String? = nil, skill: String? = nil
+        type: Kind = .prompt, prompt: String? = nil, skill: String? = nil, autoSend: Bool = false
     ) {
         self.id = id
         self.label = label
@@ -22,7 +23,39 @@ public struct QuickAction: Codable, Sendable, Equatable, Identifiable {
         self.type = type
         self.prompt = prompt
         self.skill = skill
+        self.autoSend = autoSend
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, label, order, enabled, type, prompt, skill, autoSend
+    }
+
+    /// Older files keep draft-only behavior; a supplied flag must be a Boolean.
+    public init(from decoder: any Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        id = try fields.decode(String.self, forKey: .id)
+        label = try fields.decode(String.self, forKey: .label)
+        order = try fields.decode(Int.self, forKey: .order)
+        enabled = try fields.decode(Bool.self, forKey: .enabled)
+        type = try fields.decode(Kind.self, forKey: .type)
+        prompt = try fields.decodeIfPresent(String.self, forKey: .prompt)
+        skill = try fields.decodeIfPresent(String.self, forKey: .skill)
+        autoSend =
+            fields.contains(.autoSend) ? try fields.decode(Bool.self, forKey: .autoSend) : false
+    }
+}
+
+/// Replacement consent belongs to one exact action, chat, transcript and unchanged draft.
+public struct QuickActionReplacement: Sendable, Equatable {
+    public let action: QuickAction
+    public let conversationID: UUID
+    public let messages: [ChatMessage]
+    public let draft: String
+}
+
+public enum QuickActionApplication: Sendable, Equatable {
+    case applied
+    case needsConfirmation(QuickActionReplacement)
 }
 
 public struct QuickActionConfiguration: Codable, Sendable, Equatable {
@@ -50,6 +83,14 @@ public struct QuickActionConfiguration: Codable, Sendable, Equatable {
             }
             guard !action.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw QuickActionError.invalidAction("Action '\(action.id)' needs a label.")
+            }
+            if action.autoSend {
+                guard let prompt = action.prompt,
+                    !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else {
+                    throw QuickActionError.invalidAction(
+                        "Immediate-send action '\(action.id)' needs a nonempty configured prompt.")
+                }
             }
             let content = action.type == .prompt ? action.prompt : action.skill
             guard let content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -106,6 +147,7 @@ public struct QuickActionConfiguration: Codable, Sendable, Equatable {
 }
 
 public enum QuickActionError: Error, LocalizedError, Sendable {
+    case notReady(String)
     case unsupportedVersion
     case duplicateID(String)
     case invalidAction(String)
@@ -113,6 +155,7 @@ public enum QuickActionError: Error, LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case .notReady(let message): return message
         case .unsupportedVersion: return "actions.json needs formatVersion 1."
         case .duplicateID(let id):
             return "actions.json contains duplicate id '\(id)'. Use unique ids."
