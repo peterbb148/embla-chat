@@ -232,3 +232,11 @@ swift test --filter realToolChatRecoversMetadataAndCompactsAutomaticallyThenOffl
 
 The history is explicitly synthetic; tokenization, summaries, saved state and recall use
 the actual runtime. Default tests skip it. Simulator UI checks do not prove inference.
+
+The blocked settings-provider regressions share one serialized suite, including the
+present/missing-file cases and the canceled-preparation case.
+Each deliberately holds a synchronous read until the main-actor test disables iCloud; allowing
+multiple reads to occupy a small CI worker's executor at once can starve that test driver. The
+fixture has no elapsed-time release that could permit a write before Off. Explicit release
+and deferred cleanup retain the off-main-thread and zero-late-write assertions. This is a
+test scheduling constraint, not a change to production settings behavior (#80).

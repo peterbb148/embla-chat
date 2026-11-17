@@ -445,7 +445,7 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
         lock.withLock {
             entered = true; onMain = Thread.isMainThread
         }
-        _ = gate.wait(timeout: .now() + 30)
+        gate.wait()
         lock.withLock { finished = true }
         return SharedSettingsRead(current: missing ? nil : SharedSettings())
     }
@@ -457,38 +457,6 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
         lock.withLock { written += 1 }
         throw SharedSettingsError.changed
     }
-}
-
-@Test(arguments: [false, true]) @MainActor
-func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: Bool)
-    async throws
-{
-    let root = try settingsRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let provider = BlockedSettingsFixture(missing: missing)
-    let workspace = ToolWorkspace(
-        configuration: root.appendingPathComponent("servers.json"),
-        credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
-    let local = settingsDocument("Local profile").servers[0].registration
-    try await workspace.saveServer(local)
-    let cloud = ConversationCloudSync()
-    cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
-    cloud.persist = {}
-    let clock = ContinuousClock()
-    let start = clock.now
-    let pending = Task { await workspace.reloadSettings(using: cloud) }
-    while !provider.started && clock.now - start < .seconds(30) {
-        try await Task.sleep(for: .milliseconds(1))
-    }
-    #expect(provider.started && !provider.usedMainThread)
-    #expect(!provider.readFinished)
-    cloud.disable()
-    provider.gate.signal()
-    await pending.value
-    #expect(provider.writes == 0)
-    await workspace.reloadSettings(using: cloud)
-    #expect(workspace.servers == [local] && workspace.settingsError == nil)
-    #expect(!workspace.settingsLoading)
 }
 
 @Test @MainActor func absentSharedSkillCatalogStillAllowsPersistingNone() async throws {
@@ -626,28 +594,68 @@ func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: 
     #expect(saved.credential?.bearerToken == "synthetic-newer-key")
 }
 
-@Test @MainActor func cancellingPreparationReturnsWhileProviderReadRemainsBlocked() async throws {
-    let root = try settingsRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
-    let provider = BlockedSettingsFixture(missing: true)
-    defer { provider.gate.signal() }
-    let workspace = ToolWorkspace(
-        configuration: root.appendingPathComponent("servers.json"),
-        credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
-    let cloud = ConversationCloudSync()
-    await workspace.reloadSettings(using: cloud)
-    cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
-    let pending = Task { try await workspace.prepare(using: cloud) }
-    let clock = ContinuousClock()
-    let start = clock.now
-    while !provider.started && clock.now - start < .seconds(30) {
-        try await Task.sleep(for: .milliseconds(1))
+// Every test that deliberately blocks a provider belongs here: concurrent blocked reads
+// can exhaust a small CI worker's cooperative pool before either driver can signal its read.
+@Suite(.serialized)
+struct BlockedSettingsProviderTests {
+    @Test(arguments: [false, true]) @MainActor
+    func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: Bool)
+        async throws
+    {
+        let root = try settingsRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let provider = BlockedSettingsFixture(missing: missing)
+        defer { provider.gate.signal() }
+        let workspace = ToolWorkspace(
+            configuration: root.appendingPathComponent("servers.json"),
+            credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
+        let local = settingsDocument("Local profile").servers[0].registration
+        try await workspace.saveServer(local)
+        let cloud = ConversationCloudSync()
+        cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
+        cloud.persist = {}
+        let clock = ContinuousClock()
+        let start = clock.now
+        let pending = Task { await workspace.reloadSettings(using: cloud) }
+        while !provider.started && clock.now - start < .seconds(30) {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(provider.started)
+        #expect(!provider.usedMainThread)
+        #expect(!provider.readFinished)
+        cloud.disable()
+        provider.gate.signal()
+        await pending.value
+        #expect(provider.writes == 0)
+        await workspace.reloadSettings(using: cloud)
+        #expect(workspace.servers == [local] && workspace.settingsError == nil)
+        #expect(!workspace.settingsLoading)
     }
-    try #require(provider.started)
-    pending.cancel()
-    await #expect(throws: CancellationError.self) { try await pending.value }
-    #expect(!provider.readFinished && provider.writes == 0)
-    provider.gate.signal()
-    await workspace.waitUntilIdle()
-    #expect(provider.writes == 0)
+
+    @Test @MainActor func cancellingPreparationReturnsWhileProviderReadRemainsBlocked() async throws
+    {
+        let root = try settingsRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let provider = BlockedSettingsFixture(missing: true)
+        defer { provider.gate.signal() }
+        let workspace = ToolWorkspace(
+            configuration: root.appendingPathComponent("servers.json"),
+            credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
+        let cloud = ConversationCloudSync()
+        await workspace.reloadSettings(using: cloud)
+        cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
+        let pending = Task { try await workspace.prepare(using: cloud) }
+        let clock = ContinuousClock()
+        let start = clock.now
+        while !provider.started && clock.now - start < .seconds(30) {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        try #require(provider.started)
+        pending.cancel()
+        await #expect(throws: CancellationError.self) { try await pending.value }
+        #expect(!provider.readFinished && provider.writes == 0)
+        provider.gate.signal()
+        await workspace.waitUntilIdle()
+        #expect(provider.writes == 0)
+    }
 }
