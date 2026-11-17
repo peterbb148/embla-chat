@@ -240,3 +240,10 @@ multiple reads to occupy a small CI worker's executor at once can starve that te
 fixture has no elapsed-time release that could permit a write before Off. Explicit release
 and deferred cleanup retain the off-main-thread and zero-late-write assertions. This is a
 test scheduling constraint, not a change to production settings behavior (#80).
+
+The app's shared `NetworkAccess` uses the system path monitor. Network admission waits for
+its scene to hide the privacy outline and acknowledge the current transition. Headless
+transport tests inject their own explicit policy; they do not depend on a running app scene.
+Debug UI tests may launch with `--network-policy-fixture` to exercise blocked dispatch and
+indicator transitions deterministically. Release ignores that argument and monitors the
+system path. See [offline privacy mode](offline-privacy.md) for the guarantee and its limits.

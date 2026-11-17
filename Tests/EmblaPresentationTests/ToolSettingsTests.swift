@@ -45,7 +45,9 @@ private final class MemoryCredentialFixture: MCPCredentialStoring, @unchecked Se
     #expect(MCPCredentialID(server: old) != MCPCredentialID(server: replacement))
 }
 
-@Test @MainActor func staleEnabledToolsCanBeRevokedWithoutDiscoveryOrDeletingTheServer() async throws {
+@Test @MainActor func staleEnabledToolsCanBeRevokedWithoutDiscoveryOrDeletingTheServer()
+    async throws
+{
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -77,7 +79,8 @@ private final class MemoryCredentialFixture: MCPCredentialStoring, @unchecked Se
     #expect(workspace.error != nil)
     #expect(throws: SkillFailure.self) { try workspace.remoteTools() }
     await #expect(throws: SkillFailure.self) {
-        try await workspace.prepare(using: ConversationCloudSync())
+        try await workspace.prepare(
+            using: ConversationCloudSync(network: .init(initialState: .satisfied)))
     }
     #expect(try Data(contentsOf: file) == original)
 }
@@ -100,7 +103,7 @@ private final class MemoryCredentialFixture: MCPCredentialStoring, @unchecked Se
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let workspace = ToolWorkspace(store: SkillStore(localRoot: root))
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     workspace.reloadSkills(using: cloud)
     #expect(workspace.loadingSkills)
     cloud.restore(enabled: true, bookmark: nil, base: nil, consentVersion: 0)
@@ -109,7 +112,6 @@ private final class MemoryCredentialFixture: MCPCredentialStoring, @unchecked Se
     #expect(!workspace.loadingSkills && workspace.skills.isEmpty && workspace.selectedSkill == nil)
     #expect(workspace.error != nil && workspace.skillSourceKey == nil)
 }
-
 
 /// Typed discovery fixtures exercise persistence/authorization, not a replacement network client.
 private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
@@ -120,7 +122,9 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     }
 }
 
-@Test @MainActor func initialDiscoveryEnablesAllOnceAndPreservesLaterChoicesAcrossRestart() async throws {
+@Test @MainActor func initialDiscoveryEnablesAllOnceAndPreservesLaterChoicesAcrossRestart()
+    async throws
+{
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -131,7 +135,8 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     try await workspace.saveServer(server)
     #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == true)
     #expect(workspace.servers.first?.enabledTools.isEmpty == true)
-    try await workspace.acceptDiscoveredTools(discoveredFixtureTools(["one", "two"]), serverID: server.id)
+    try await workspace.acceptDiscoveredTools(
+        discoveredFixtureTools(["one", "two"]), serverID: server.id)
     #expect(workspace.servers.first?.enabledTools == Set(["one", "two"]))
     #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
     try await workspace.setEnabled(false, tool: "one", serverID: server.id)
@@ -141,8 +146,9 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     #expect(reopened.servers.first?.enabledTools == Set(["two"]))
     // The editor reconstructs a value with initializer defaults; saving must not reset consent.
     try await reopened.saveServer(
-        MCPServer(id: server.id, name: "Renamed fixture", endpoint: server.endpoint,
-                  enabledTools: ["two"]))
+        MCPServer(
+            id: server.id, name: "Renamed fixture", endpoint: server.endpoint,
+            enabledTools: ["two"]))
     try await reopened.acceptDiscoveredTools(
         discoveredFixtureTools(["one", "two", "three"]), serverID: server.id)
     #expect(reopened.servers.first?.enabledTools == Set(["two"]))
@@ -150,16 +156,19 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     #expect(ToolWorkspace(configuration: file).servers.first?.enabledTools == Set(["two"]))
 }
 
-@Test @MainActor func legacyRegistrationsAndEndpointEditsNeverGainImplicitPermissions() async throws {
+@Test @MainActor func legacyRegistrationsAndEndpointEditsNeverGainImplicitPermissions() async throws
+{
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let file = root.appendingPathComponent("servers.json")
     let id = UUID()
-    let legacy: [[String: Any]] = [[
-        "id": id.uuidString, "name": "Legacy fixture",
-        "endpoint": "https://example.invalid/mcp", "enabledTools": ["one"],
-    ]]
+    let legacy: [[String: Any]] = [
+        [
+            "id": id.uuidString, "name": "Legacy fixture",
+            "endpoint": "https://example.invalid/mcp", "enabledTools": ["one"],
+        ]
+    ]
     try JSONSerialization.data(withJSONObject: legacy).write(to: file)
     let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
     #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == false)
@@ -189,7 +198,8 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     let original = try Data(contentsOf: file)
     try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
     await #expect(throws: (any Error).self) {
-        try await workspace.acceptDiscoveredTools(discoveredFixtureTools(["one"]), serverID: server.id)
+        try await workspace.acceptDiscoveredTools(
+            discoveredFixtureTools(["one"]), serverID: server.id)
     }
     #expect(workspace.servers.first?.enableToolsOnFirstDiscovery == true)
     #expect(workspace.servers.first?.enabledTools.isEmpty == true)
@@ -210,10 +220,12 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     defer { try? FileManager.default.removeItem(at: root) }
     let file = root.appendingPathComponent("servers.json")
     let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
-    let server = MCPServer(name: "Synthetic planning server",
+    let server = MCPServer(
+        name: "Synthetic planning server",
         endpoint: URL(string: "https://example.invalid/mcp")!)
     try await workspace.saveServer(server)
-    try await workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    try await workspace.acceptDiscoveredTools(
+        discoveredFixtureTools(["clock"]), serverID: server.id)
     workspace.pause()
     #expect(try workspace.remoteTools().map(\.name) == ["clock"])
     let reopened = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
@@ -230,17 +242,21 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     defer { try? FileManager.default.removeItem(at: root) }
     let file = root.appendingPathComponent("servers.json")
     let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
-    let server = MCPServer(name: "Synthetic planning server",
+    let server = MCPServer(
+        name: "Synthetic planning server",
         endpoint: URL(string: "https://example.invalid/mcp")!)
     try await workspace.saveServer(server)
-    try await workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    try await workspace.acceptDiscoveredTools(
+        discoveredFixtureTools(["clock"]), serverID: server.id)
     try await workspace.saveServer(workspace.servers[0], newToken: "synthetic-new-credential")
     #expect(workspace.servers[0].lastDiscoveredTools == nil)
     #expect(ToolWorkspace(configuration: file).servers[0].lastDiscoveredTools == nil)
-    try await workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    try await workspace.acceptDiscoveredTools(
+        discoveredFixtureTools(["clock"]), serverID: server.id)
     try await workspace.clearCredential(server.id)
     #expect(workspace.servers[0].lastDiscoveredTools == nil)
-    try await workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    try await workspace.acceptDiscoveredTools(
+        discoveredFixtureTools(["clock"]), serverID: server.id)
     var changed = workspace.servers[0]
     changed.endpoint = URL(string: "https://other.example.invalid/mcp")!
     try await workspace.saveServer(changed)
@@ -253,19 +269,23 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
     let file = root.appendingPathComponent("servers.json")
-    let server = MCPServer(name: "Synthetic corrupt catalog",
+    let server = MCPServer(
+        name: "Synthetic corrupt catalog",
         endpoint: URL(string: "https://example.invalid/mcp")!, enabledTools: ["clock"])
-    var object = try #require(JSONSerialization.jsonObject(
-        with: JSONEncoder().encode([server])) as? [[String: Any]])
+    var object = try #require(
+        JSONSerialization.jsonObject(
+            with: JSONEncoder().encode([server])) as? [[String: Any]])
     object[0]["lastDiscoveredTools"] = [
-        ["name": "clock", "description": "Invalid saved schema", "inputSchema": false]]
+        ["name": "clock", "description": "Invalid saved schema", "inputSchema": false]
+    ]
     let corrupt = try JSONSerialization.data(withJSONObject: object)
     try corrupt.write(to: file)
     let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
     #expect(workspace.error != nil)
     #expect(throws: SkillFailure.self) { try workspace.remoteTools() }
     await #expect(throws: SkillFailure.self) {
-        try await workspace.prepare(using: ConversationCloudSync())
+        try await workspace.prepare(
+            using: ConversationCloudSync(network: .init(initialState: .satisfied)))
     }
     #expect(try Data(contentsOf: file) == corrupt)
 }
@@ -285,10 +305,12 @@ func failedMetadataInvalidationLeavesTheCredentialAndItsSchemasUnchanged(
     let file = root.appendingPathComponent("servers.json")
     let vault = MemoryCredentialFixture()
     let workspace = ToolWorkspace(configuration: file, credentials: vault)
-    let server = MCPServer(name: "Credential-bound synthetic catalog",
+    let server = MCPServer(
+        name: "Credential-bound synthetic catalog",
         endpoint: URL(string: "https://example.invalid/mcp")!)
     try await workspace.saveServer(server, newToken: "synthetic-original")
-    try await workspace.acceptDiscoveredTools(discoveredFixtureTools(["clock"]), serverID: server.id)
+    try await workspace.acceptDiscoveredTools(
+        discoveredFixtureTools(["clock"]), serverID: server.id)
     let original = try Data(contentsOf: file)
     let originalServer = workspace.servers[0]
     try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
@@ -296,7 +318,8 @@ func failedMetadataInvalidationLeavesTheCredentialAndItsSchemasUnchanged(
         switch mutation {
         case .clear: try await workspace.clearCredential(server.id)
         case .removeServer: try await workspace.removeServer(server.id)
-        case .replace: try await workspace.saveServer(originalServer, newToken: "synthetic-replacement")
+        case .replace:
+            try await workspace.saveServer(originalServer, newToken: "synthetic-replacement")
         }
     }
     #expect(vault.read(MCPCredentialID(server: server)) == "synthetic-original")

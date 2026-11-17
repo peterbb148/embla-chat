@@ -150,7 +150,7 @@ private func settingsDocument(_ name: String = "Synthetic server") -> SharedSett
         settingsFactory: { _ in sharedFile })
     let local = MCPServer(name: "Local", endpoint: URL(string: "https://example.invalid/local")!)
     try await workspace.saveServer(local)
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     await workspace.reloadSettings(using: cloud)
     #expect(!FileManager.default.fileExists(atPath: sharedFile.file.path))
     cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
@@ -204,7 +204,7 @@ private final class FailingSettingsFixture: SharedSettingsStoring, @unchecked Se
     let workspace = ToolWorkspace(
         configuration: root.appendingPathComponent("servers.json"),
         credentials: vault, settingsFactory: { _ in provider })
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
     await workspace.reloadSettings(using: cloud)
     let server = try #require(workspace.servers.first)
@@ -261,7 +261,7 @@ private final class FailingSettingsFixture: SharedSettingsStoring, @unchecked Se
             name: "Synthetic authenticated server",
             endpoint: URL(string: "http://127.0.0.1:\(port)/bearer")!)
         try await first.saveServer(server, newToken: "synthetic-key")
-        let cloud = ConversationCloudSync()
+        let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
         cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
         await first.reloadSettings(using: cloud)
         first.discover(server.id); await first.waitUntilIdle()
@@ -354,7 +354,7 @@ private final class FailingSettingsFixture: SharedSettingsStoring, @unchecked Se
     try Data("---\nname: test-skill\ndescription: Synthetic settings test\n---\nBe concise.".utf8)
         .write(to: folder.appendingPathComponent("SKILL.md"))
     let file = root.appendingPathComponent("servers.json")
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     let first = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)
     first.reloadSkills(using: cloud); await first.waitUntilIdle()
     try await first.selectSkill("test-skill", using: cloud)
@@ -407,7 +407,7 @@ func localProfileReloadNeverClearsAnUnreadConfigurationError(fileName: String) a
     let workspace = ToolWorkspace(configuration: file, credentials: SettingsCredentialFixture())
     let server = settingsDocument().servers[0].registration
     try await workspace.saveServer(server)
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     await workspace.reloadSettings(using: cloud)
     let bad = root.appendingPathComponent(fileName)
     let original =
@@ -468,7 +468,7 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
         store: SkillStore(localRoot: root.appendingPathComponent("Skills")),
         configuration: root.appendingPathComponent("servers.json"),
         credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     cloud.restore(enabled: true, bookmark: Data("unresolvable synthetic grant".utf8), base: nil)
     workspace.reloadSkills(using: cloud); await workspace.waitUntilIdle()
     #expect(workspace.skillSourceKey == nil && workspace.error != nil)
@@ -486,7 +486,7 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
     let workspace = ToolWorkspace(
         configuration: root.appendingPathComponent("servers.json"),
         credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
     await workspace.reloadSettings(using: cloud)
     var oldForm = try #require(workspace.servers.first)
@@ -566,7 +566,7 @@ private final class BlockedSettingsFixture: SharedSettingsStoring, @unchecked Se
     let workspace = ToolWorkspace(
         configuration: root.appendingPathComponent("servers.json"),
         credentials: SettingsCredentialFixture(), settingsFactory: { _ in file })
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
     await workspace.refreshSettingsAndSkills(using: cloud)
     let baseline = try workspace.captureServerEdit(original.servers[0].id)
@@ -611,7 +611,7 @@ struct BlockedSettingsProviderTests {
             credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
         let local = settingsDocument("Local profile").servers[0].registration
         try await workspace.saveServer(local)
-        let cloud = ConversationCloudSync()
+        let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
         cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
         cloud.persist = {}
         let clock = ContinuousClock()
@@ -641,7 +641,7 @@ struct BlockedSettingsProviderTests {
         let workspace = ToolWorkspace(
             configuration: root.appendingPathComponent("servers.json"),
             credentials: SettingsCredentialFixture(), settingsFactory: { _ in provider })
-        let cloud = ConversationCloudSync()
+        let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
         await workspace.reloadSettings(using: cloud)
         cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
         let pending = Task { try await workspace.prepare(using: cloud) }

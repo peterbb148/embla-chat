@@ -25,9 +25,11 @@ public struct MCPRegistryPage: Sendable {
 /// Anonymous reads from the official catalog, separate from registered-server credentials.
 public actor MCPRegistryClient {
     private let session: URLSession
+    private let network: NetworkAccess
     private static let limit = 2_097_152
 
-    public init() {
+    public init(network: NetworkAccess = .shared) {
+        self.network = network
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.urlCredentialStorage = nil
@@ -38,14 +40,20 @@ public actor MCPRegistryClient {
             configuration: configuration, delegate: RegistryNoRedirect(), delegateQueue: nil)
     }
 
-    init(session: URLSession) { self.session = session }
+    init(session: URLSession, network: NetworkAccess = NetworkAccess(initialState: .satisfied)) {
+        self.session = session
+        self.network = network
+    }
     deinit { session.invalidateAndCancel() }
 
     /// A nonempty cursor is opaque; keep the same search and version filter on every page.
     public func page(search: String = "", cursor: String? = nil) async throws -> MCPRegistryPage {
         try Task.checkCancellation()
         let request = Self.request(search: search, cursor: cursor)
-        let (bytes, response) = try await session.bytes(for: request)
+        let operation = NetworkByteRequest(
+            access: network, limit: Self.limit, overflow: MCPRegistryFailure.tooLarge)
+        let (bytes, response) = try await operation.response(
+            for: request, configuration: session.configuration)
         defer { bytes.task.cancel() }
         try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse else {
@@ -63,14 +71,17 @@ public actor MCPRegistryClient {
             guard data.count < Self.limit else { throw MCPRegistryFailure.tooLarge }
             data.append(byte)
         }
+        try bytes.task.check()
         return try Self.decode(data)
     }
 
     static func request(search: String, cursor: String?) -> URLRequest {
         var components = URLComponents(
             string: "https://registry.modelcontextprotocol.io/v0.1/servers")!
-        var items = [URLQueryItem(name: "version", value: "latest"),
-                     URLQueryItem(name: "limit", value: "20")]
+        var items = [
+            URLQueryItem(name: "version", value: "latest"),
+            URLQueryItem(name: "limit", value: "20"),
+        ]
         if !search.isEmpty { items.append(URLQueryItem(name: "search", value: search)) }
         if let cursor { items.append(URLQueryItem(name: "cursor", value: cursor)) }
         components.queryItems = items

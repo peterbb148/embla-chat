@@ -1,6 +1,8 @@
 import Foundation
 import Observation
 
+import EmblaCore
+
 public struct CloudLocalConversation: Sendable {
     public let snapshot: ConversationLibrary
     public let hasDraft: Bool
@@ -35,6 +37,7 @@ enum CloudSyncPolicy {
 /// Optional cloud orchestration. No provider is opened or called while disabled.
 @MainActor @Observable
 public final class ConversationCloudSync {
+    public let network: NetworkAccess
     public private(set) var enabled = false
     public private(set) var requiresScopeConsent = false
     public private(set) var consentVersion = 2
@@ -69,12 +72,21 @@ public final class ConversationCloudSync {
     @ObservationIgnored private var conflictLocal: String?
 
     /// Internal consumers share the existing grant only after consent is actually durable.
-    var authorizedFolderBookmark: Data? { folderAccessReady && enabled ? bookmark : nil }
+    var authorizedFolderBookmark: Data? {
+        folderAccessReady && enabled && network.snapshot.allowsRequests ? bookmark : nil
+    }
 
-    public init() { factory = { ICloudConversationStore(bookmark: $0) } }
+    public init(network: NetworkAccess = .shared) {
+        self.network = network
+        factory = { ICloudConversationStore(bookmark: $0, network: network) }
+    }
 
     /// Only tests can inject a provider; production always uses the user-granted iCloud folder.
-    init(factory: @escaping @Sendable (Data) -> any CloudConversationStorage) {
+    init(
+        factory: @escaping @Sendable (Data) -> any CloudConversationStorage,
+        network: NetworkAccess = NetworkAccess(initialState: .satisfied)
+    ) {
+        self.network = network
         self.factory = factory
     }
 
@@ -90,13 +102,18 @@ public final class ConversationCloudSync {
         self.bookmark = bookmark
         baseFingerprint = base
         baseNeedsSave = false
-        storage = enabled && !requiresScopeConsent ? bookmark.map(factory) : nil
+        storage =
+            enabled && !requiresScopeConsent && network.snapshot.allowsRequests
+            ? bookmark.map(factory) : nil
         folderAccessReady = storage != nil
-        error = enabled && bookmark == nil ? CloudConversationError.permission.localizedDescription : nil
+        error =
+            enabled && bookmark == nil
+            ? CloudConversationError.permission.localizedDescription : nil
         status = enabled ? "Waiting to synchronize…" : "iCloud is off."
         if error != nil { status = "iCloud folder access is unavailable." }
         if requiresScopeConsent {
-            status = "iCloud paused. Confirm syncing chats, project memory, settings "
+            status =
+                "iCloud paused. Confirm syncing chats, project memory, settings "
                 + "and readable MCP keys in Settings."
         }
     }
@@ -104,7 +121,10 @@ public final class ConversationCloudSync {
     /// Called only after explicit consent and successful Files folder selection.
     public func enable(folder: URL) async {
         let bookmark: Data
-        do { bookmark = try ICloudConversationStore.bookmark(for: folder) } catch {
+        do {
+            try network.check()
+            bookmark = try ICloudConversationStore.bookmark(for: folder)
+        } catch {
             folderSelectionFailed(error)
             return
         }
@@ -143,7 +163,8 @@ public final class ConversationCloudSync {
                 enabled = storedEnabled
                 storage = nil
                 self.error = error.localizedDescription
-                status = storedEnabled
+                status =
+                    storedEnabled
                     ? "iCloud stopped; the saved setting is still on. "
                         + "Choose a folder or turn off before closing."
                     : "Could not save the iCloud preference. iCloud remains off."
@@ -152,6 +173,10 @@ public final class ConversationCloudSync {
         }
         guard configurationRevision == configuration, enabled else { return }
         storedEnabled = true
+        guard network.snapshot.allowsRequests else {
+            status = "iCloud is paused while network access is unavailable; the setting remains on."
+            return
+        }
         storage = factory(bookmark)
         folderAccessReady = true
         resume()
@@ -180,9 +205,12 @@ public final class ConversationCloudSync {
                 guard configurationRevision == configuration, !enabled else { return }
                 settingsSaved(enabled: false)
             } catch {
-                guard configurationRevision == configuration, !enabled, offPreferencePending else { return }
+                guard configurationRevision == configuration, !enabled, offPreferencePending else {
+                    return
+                }
                 self.error = error.localizedDescription
-                status = storedEnabled
+                status =
+                    storedEnabled
                     ? "iCloud stopped; the saved setting is still on and may resume after reopening. "
                         + "Retry before closing."
                     : "iCloud stopped, but the preference could not be saved. Retry before closing."
@@ -213,7 +241,7 @@ public final class ConversationCloudSync {
     }
 
     func resume() {
-        guard foreground, enabled, storage != nil else { return }
+        guard foreground, enabled, network.snapshot.allowsRequests, storage != nil else { return }
         paused = false
         if timer == nil {
             timer = Task { [weak self] in
@@ -225,6 +253,23 @@ public final class ConversationCloudSync {
             }
         }
         requestSync()
+    }
+
+    /// Availability never changes the saved global preference or selects a different folder.
+    public func connectivityChanged() {
+        guard enabled else { return }
+        settingsScopeWillChange?()
+        pause()
+        storage = nil
+        folderAccessReady = false
+        guard enabled, !requiresScopeConsent else { return }
+        guard network.snapshot.allowsRequests else {
+            status = "iCloud is paused while network access is unavailable; the setting remains on."
+            return
+        }
+        storage = bookmark.map(factory)
+        folderAccessReady = storage != nil
+        resume()
     }
 
     func pause() {
@@ -246,7 +291,9 @@ public final class ConversationCloudSync {
     }
 
     func requestSync() {
-        guard foreground, !paused, enabled, let storage, choices.isEmpty else { return }
+        guard network.snapshot.allowsRequests, foreground, !paused, enabled,
+            let storage, choices.isEmpty
+        else { return }
         guard task == nil else { needsSync = true; return }
         guard let local = current?(), local.canReplace else {
             needsSync = true
@@ -271,7 +318,9 @@ public final class ConversationCloudSync {
     private func synchronize(
         local: CloudLocalConversation, storage: any CloudConversationStorage, epoch: UUID
     ) async throws {
+        try network.check()
         let remote = try await storage.read()
+        try network.check()
         try Task.checkCancellation()
         guard generation == epoch, enabled else { return }
         guard let latest = current?(), latest.canReplace,
@@ -283,6 +332,7 @@ public final class ConversationCloudSync {
         case .identical:
             baseFingerprint = try latest.snapshot.fingerprint()
         case .upload:
+            try network.check()
             try await storage.write(latest.snapshot, replacing: remote, resolvingConflicts: false)
             try Task.checkCancellation()
             guard generation == epoch, enabled else { return }
@@ -306,22 +356,33 @@ public final class ConversationCloudSync {
         guard generation == epoch, enabled else { return }
         error = nil
         let same = try current?()?.snapshot.fingerprint() == remote.current?.fingerprint()
-        status = remote.uploaded && same
+        status =
+            remote.uploaded && same
             ? "Synced with iCloud Drive." : "Saved to iCloud Drive; upload confirmation pending."
-        if let now = current?(), try now.snapshot.fingerprint() != baseFingerprint { needsSync = true }
+        if let now = current?(), try now.snapshot.fingerprint() != baseFingerprint {
+            needsSync = true
+        }
     }
 
     private func showConflict(local: ConversationLibrary, remote: CloudConversationRead) throws {
         conflictRead = remote
         conflictLocal = try local.fingerprint()
-        var result = [CloudChatChoice(
-            id: try local.fingerprint(), label: "Keep this device’s chat library", snapshot: local)]
-        for (index, snapshot) in ([remote.current].compactMap { $0 } + remote.conflicts).enumerated() {
+        var result = [
+            CloudChatChoice(
+                id: try local.fingerprint(), label: "Keep this device’s chat library",
+                snapshot: local)
+        ]
+        for (index, snapshot) in ([remote.current].compactMap { $0 } + remote.conflicts)
+            .enumerated()
+        {
             let id = try snapshot.fingerprint()
             if !result.contains(where: { $0.id == id }) {
-                result.append(CloudChatChoice(
-                    id: id, label: index == 0 ? "Use iCloud chat library" : "Use iCloud conflict copy \(index)",
-                    snapshot: snapshot))
+                result.append(
+                    CloudChatChoice(
+                        id: id,
+                        label: index == 0
+                            ? "Use iCloud chat library" : "Use iCloud conflict copy \(index)",
+                        snapshot: snapshot))
             }
         }
         choices = result
@@ -331,6 +392,10 @@ public final class ConversationCloudSync {
 
     /// The UI confirms this replacement, including discarding the current unsent draft if needed.
     public func resolve(choiceID: String) {
+        do { try network.check() } catch {
+            self.error = error.localizedDescription
+            return
+        }
         guard enabled, task == nil, let storage, let expected = conflictRead,
             let choice = choices.first(where: { $0.id == choiceID }),
             let local = current?(), local.canReplace,
@@ -344,10 +409,14 @@ public final class ConversationCloudSync {
         let epoch = generation
         task = Task {
             do {
-                try await storage.write(choice.snapshot, replacing: expected, resolvingConflicts: true)
+                try network.check()
+                try await storage.write(
+                    choice.snapshot, replacing: expected, resolvingConflicts: true)
                 try Task.checkCancellation()
                 guard generation == epoch, enabled else { finish(epoch: epoch); return }
-                if choice.id != localID { try await applySnapshot(choice.snapshot, expected: localID) }
+                if choice.id != localID {
+                    try await applySnapshot(choice.snapshot, expected: localID)
+                }
                 try Task.checkCancellation()
                 guard generation == epoch, enabled else { finish(epoch: epoch); return }
                 baseFingerprint = try choice.snapshot.fingerprint()

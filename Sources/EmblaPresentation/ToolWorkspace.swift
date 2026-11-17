@@ -41,6 +41,9 @@ public struct MCPServerEditBaseline: Equatable, Sendable {
 /// MCP configuration follows the explicit global storage choice; discovery remains device-local.
 @MainActor @Observable
 public final class ToolWorkspace {
+    public let network: NetworkAccess
+    private(set) var requestAllowsNetwork: Bool?
+    private(set) var requestHasNetworkDependency = false
     public private(set) var skills: [SkillEntry] = []
     public private(set) var selectedSkill: SkillDocument?
     public private(set) var servers: [MCPServer] = []
@@ -82,7 +85,9 @@ public final class ToolWorkspace {
     @ObservationIgnored private var skillRequestID = UUID()
     @ObservationIgnored private var connectRequestID = UUID()
 
-    public init() {
+    public init(network: NetworkAccess = .shared) {
+        self.network = network
+        settingsFactory = { SharedSettingsFile(bookmark: $0, network: network) }
         credentials = MCPCredentials()
         do {
             let files = FileManager.default
@@ -97,7 +102,8 @@ public final class ToolWorkspace {
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try support.setResourceValues(values)
-            store = SkillStore(localRoot: documents.appendingPathComponent("Skills"))
+            store = SkillStore(
+                localRoot: documents.appendingPathComponent("Skills"), network: network)
             configuration = support.appendingPathComponent("servers.json")
             try readConfiguration()
         } catch {
@@ -110,10 +116,12 @@ public final class ToolWorkspace {
     init(
         store: SkillStore? = nil, configuration: URL? = nil,
         credentials: any MCPCredentialStoring = MCPCredentials(),
+        network: NetworkAccess = NetworkAccess(initialState: .satisfied),
         settingsFactory: @escaping (Data) -> any SharedSettingsStoring = {
             SharedSettingsFile(bookmark: $0)
         }
     ) {
+        self.network = network
         self.credentials = credentials
         self.settingsFactory = settingsFactory
         self.store = store
@@ -154,6 +162,7 @@ public final class ToolWorkspace {
                 try Task.checkCancellation()
                 guard skillRequestID == current, QuickActionsModel.sourceKey(for: cloud) == key
                 else { return }
+                if cloud.enabled && !network.snapshot.allowsRequests { return }
                 try requireSettingsReady()
                 guard let store else { return }
                 let entries = try await store.entries(source(cloud))
@@ -214,6 +223,7 @@ public final class ToolWorkspace {
 
     /// Re-reads the exact selected file before any generation can consume its instructions.
     func validateSkill(using cloud: ConversationCloudSync) async throws -> SkillDocument? {
+        if cloud.enabled { try network.check() }
         try validateSelectedPreference()
         guard let selectedSkill else { return nil }
         guard let store, skillSourceKey == QuickActionsModel.sourceKey(for: cloud) else {
@@ -231,6 +241,15 @@ public final class ToolWorkspace {
 
     /// User registration/enabling authorizes reconnecting for a submitted message, not at startup.
     func prepare(using cloud: ConversationCloudSync, serverIDs: Set<UUID>? = nil) async throws {
+        requestAllowsNetwork = network.snapshot.allowsRequests
+        requestHasNetworkDependency =
+            requestAllowsNetwork == true
+            && (cloud.enabled
+                || servers.contains { !$0.enabledTools.isEmpty || $0.enableToolsOnFirstDiscovery })
+        if requestAllowsNetwork == false && cloud.enabled {
+            connectivityChanged(using: cloud)
+            return
+        }
         if settingsSourceKey != nil {
             reloadSkills(using: cloud)
             try await waitForSkillPreparation()
@@ -249,6 +268,13 @@ public final class ToolWorkspace {
         var expected = revision
         _ = try await validateSkill(using: cloud)
         guard revision == expected else { throw SkillFailure.changed }
+        guard requestAllowsNetwork == true else { return }
+        requestHasNetworkDependency =
+            cloud.enabled
+            || servers.contains {
+                !$0.enabledTools.isEmpty || $0.enableToolsOnFirstDiscovery
+            }
+        try validateRequestNetwork()
         for server in servers
         where
             (!server.enabledTools.isEmpty || server.enableToolsOnFirstDiscovery)
@@ -257,7 +283,7 @@ public final class ToolWorkspace {
             if let serverIDs, !serverIDs.contains(server.id) { continue }
             try Task.checkCancellation()
             let client = try MCPClient(
-                server: server, bearerToken: token(for: server))
+                server: server, bearerToken: token(for: server), network: network)
             let result = try await client.discover()
             try Task.checkCancellation()
             guard revision == expected else { throw SkillFailure.changed }
@@ -273,6 +299,7 @@ public final class ToolWorkspace {
     func readResource(_ path: String, skill: SkillDocument, using cloud: ConversationCloudSync)
         async throws -> String
     {
+        if cloud.enabled { try network.check() }
         guard let store, selectedSkill == skill,
             skillSourceKey == QuickActionsModel.sourceKey(for: cloud)
         else { throw SkillFailure.changed }
@@ -410,7 +437,10 @@ public final class ToolWorkspace {
     }
 
     public func discover(_ id: UUID) {
-        do { try requireSettingsReady() } catch { self.error = error.localizedDescription; return }
+        do {
+            try network.check()
+            try requireSettingsReady()
+        } catch { self.error = error.localizedDescription; return }
         connectTask?.cancel()
         guard let server = servers.first(where: { $0.id == id }) else { return }
         clients[id] = nil
@@ -425,7 +455,7 @@ public final class ToolWorkspace {
             defer { if connectRequestID == request { connecting = nil; connectTask = nil } }
             do {
                 let client = try MCPClient(
-                    server: server, bearerToken: token(for: server))
+                    server: server, bearerToken: token(for: server), network: network)
                 let result = try await client.discover()
                 try Task.checkCancellation()
                 guard revision == current else { throw SkillFailure.changed }
@@ -496,6 +526,45 @@ public final class ToolWorkspace {
         return saved.union(Set((discovered[serverID] ?? []).map(\.name))).sorted()
     }
 
+    func permitsNetwork(forRequest: Bool) -> Bool {
+        network.snapshot.allowsRequests && (!forRequest || requestAllowsNetwork != false)
+    }
+
+    func resetRequestPreparation() {
+        requestAllowsNetwork = nil
+        requestHasNetworkDependency = false
+    }
+
+    func cloudFeaturesPaused(using cloud: ConversationCloudSync, forRequest: Bool) -> Bool {
+        cloud.enabled && !permitsNetwork(forRequest: forRequest)
+    }
+
+    func validateRequestNetwork() throws {
+        if requestHasNetworkDependency { try network.check() }
+    }
+
+    /// Revokes live connections without changing saved registrations or local skill access.
+    public func connectivityChanged(using cloud: ConversationCloudSync) {
+        connectTask?.cancel()
+        connectRequestID = UUID()
+        connectTask = nil
+        connecting = nil
+        clients = [:]
+        discovered = [:]
+        guard cloud.enabled && !network.snapshot.allowsRequests else { return }
+        skillTask?.cancel()
+        skillRequestID = UUID()
+        skillTask = nil
+        loadingSkills = false
+        selectedSkill = nil
+        skills = []
+        skillSourceKey = nil
+        revokeSettingsAccess()
+        sharedRequested = true
+        servers = []
+        settingsStatus = "iCloud settings and skills are paused; local chat remains available."
+    }
+
     public func pause() {
         sharedAccess?.revoke()
         shared = nil
@@ -516,6 +585,12 @@ public final class ToolWorkspace {
 
     /// Older settings need an explicit connection once before local planning can use metadata.
     func preparePlanningMetadata(using cloud: ConversationCloudSync) async throws {
+        requestAllowsNetwork = network.snapshot.allowsRequests
+        requestHasNetworkDependency = cloud.enabled && network.snapshot.allowsRequests
+        if !network.snapshot.allowsRequests {
+            try await prepare(using: cloud)
+            return
+        }
         if settingsSourceKey != nil {
             reloadSkills(using: cloud)
             try await waitForSkillPreparation()
@@ -533,7 +608,8 @@ public final class ToolWorkspace {
     }
 
     /// Local planning uses validated saved metadata; live calls still require successful prepare.
-    func remoteTools() throws -> [ModelToolSpecification] {
+    func remoteTools(forRequest: Bool = false) throws -> [ModelToolSpecification] {
+        guard permitsNetwork(forRequest: forRequest) else { return [] }
         try requireSettingsReady()
         if let setupError {
             throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)
@@ -568,6 +644,8 @@ public final class ToolWorkspace {
         -> ToolJSON
     {
         try Task.checkCancellation()
+        try network.check()
+        guard permitsNetwork(forRequest: true) else { throw NetworkAccessFailure.requestPaused }
         try requireSettingsReady()
         guard let server = servers.first(where: { $0.id == serverID }),
             server.enabledTools.contains(name), let client = clients[serverID],
@@ -625,6 +703,17 @@ extension ToolWorkspace {
         }
         sharedRequested = cloud.enabled
         settingsSourceKey = key
+        if cloud.enabled && !network.snapshot.allowsRequests {
+            sharedAccess?.revoke()
+            shared = nil
+            sharedAccess = nil
+            sharedDocument = nil
+            servers = []
+            preferredSkill = nil
+            settingsError = nil
+            settingsStatus = "iCloud settings are paused; the saved configuration is kept."
+            return
+        }
         do {
             guard let configuration else { throw SharedSettingsError.unavailable }
             if cloud.enabled {
@@ -632,7 +721,7 @@ extension ToolWorkspace {
                     !cloud.requiresScopeConsent
                 else { throw SharedSettingsError.unavailable }
                 if shared == nil {
-                    let access = SettingsAccessLease()
+                    let access = SettingsAccessLease(network: network)
                     sharedAccess = access
                     shared = SharedSettingsSession(
                         storage: settingsFactory(bookmark),
@@ -756,6 +845,7 @@ extension ToolWorkspace {
     }
 
     private func requireSettingsReady() throws {
+        if sharedRequested { try network.check() }
         if settingsLoading || settingsWriting { throw SharedSettingsError.unavailable }
         if let setupError {
             throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)

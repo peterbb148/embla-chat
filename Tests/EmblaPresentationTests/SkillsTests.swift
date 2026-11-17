@@ -72,7 +72,7 @@ private let sampleSkill = """
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let workspace = ToolWorkspace(store: SkillStore(localRoot: root))
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     cloud.restore(enabled: true, bookmark: nil, base: nil, consentVersion: 0)
     workspace.reloadSkills(using: cloud)
     await workspace.waitUntilIdle()

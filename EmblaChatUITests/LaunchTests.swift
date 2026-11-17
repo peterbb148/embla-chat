@@ -34,6 +34,61 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
+    func testPrivacyIndicatorCoversSheetsAndDoesNotBlockKeyboardOrNavigation() throws {
+        try verifyPrivacyIndicator(dark: false)
+    }
+
+    @MainActor
+    func testPrivacyIndicatorInDarkAppearance() throws {
+        try verifyPrivacyIndicator(dark: true)
+    }
+
+    @MainActor
+    private func verifyPrivacyIndicator(dark: Bool) throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--network-policy-fixture", "-AppleInterfaceStyle", dark ? "Dark" : "Light",
+        ]
+        app.launch()
+        let status = app.staticTexts["connectivity-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertEqual(status.label, "Privacy mode — network paused")
+        let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let keyboard = XCTAttachment(screenshot: app.screenshot())
+        keyboard.name = "Privacy border with keyboard"
+        keyboard.lifetime = .keepAlways
+        add(keyboard)
+        app.buttons["Hide keyboard"].tap()
+        app.buttons["Chat history"].tap()
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        let sheet = XCTAttachment(screenshot: app.screenshot())
+        sheet.name = "Privacy border above Settings"
+        sheet.lifetime = .keepAlways
+        add(sheet)
+        app.buttons["Done"].tap()
+        app.buttons["Context usage"].tap()
+        XCTAssertTrue(app.navigationBars["Context"].waitForExistence(timeout: 5))
+        let context = XCTAttachment(screenshot: app.screenshot())
+        context.name = "Privacy border above Context"
+        context.lifetime = .keepAlways
+        add(context)
+        app.buttons["Done"].tap()
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["test-connectivity"].tap()
+        let connected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: status)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 10), .completed)
+        app.buttons["test-connectivity"].tap()
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertEqual(status.label, "Privacy mode — network paused")
+    }
+
+    @MainActor
     func testModelControlsAreInSettings() throws {
         let app = try launchCleanChat()
         XCTAssertTrue(app.buttons["Chat history"].waitForExistence(timeout: 10))
@@ -127,7 +182,8 @@ final class LaunchTests: XCTestCase {
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertTrue(app.alerts["Enable iCloud Drive?"].waitForExistence(timeout: 5))
         let disclosure = app.alerts.staticTexts.containing(
-            NSPredicate(format: "label CONTAINS %@", "Keys are readable by anyone with folder access"))
+            NSPredicate(
+                format: "label CONTAINS %@", "Keys are readable by anyone with folder access"))
         XCTAssertTrue(disclosure.firstMatch.exists)
         app.alerts.buttons["Cancel"].tap()
         XCTAssertEqual(toggle.value as? String, "0")
@@ -388,7 +444,8 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["registry-search-hint"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Retry"].exists)
         app.buttons.matching(
-            NSPredicate(format: "label IN %@", ["Close", "Cancel"])).firstMatch.tap()
+            NSPredicate(format: "label IN %@", ["Close", "Cancel"])
+        ).firstMatch.tap()
         app.navigationBars["Server registry"].buttons["MCP Servers"].tap()
         reveal(app.buttons["Add MCP server"], in: app)
         app.buttons["Add MCP server"].tap()
@@ -408,7 +465,8 @@ final class LaunchTests: XCTestCase {
             app.swipeDown()
         }
         let refreshed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@ AND enabled == true", fixtureName), object: name)
+            predicate: NSPredicate(format: "value == %@ AND enabled == true", fixtureName),
+            object: name)
         XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 10), .completed)
         let connect = app.buttons["Connect and discover tools"]
         reveal(connect, in: app)
@@ -433,112 +491,123 @@ extension LaunchTests {
     func testPhysicalPhoneCompactionWithRegisteredToolsAfterRestart() throws {
         continueAfterFailure = false
         #if targetEnvironment(simulator)
-        throw XCTSkip("Actual-model compaction is exercised only on a connected physical phone.")
+            throw XCTSkip(
+                "Actual-model compaction is exercised only on a connected physical phone.")
         #else
-        let app = XCUIApplication()
-        app.launch()
-        let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
-        XCTAssertTrue(composer.waitForExistence(timeout: 30))
-        app.buttons["Chat history"].tap()
-        let newChat = app.buttons["sidebar-new-chat"]
-        let navigable = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "enabled == true"), object: newChat)
-        XCTAssertEqual(XCTWaiter.wait(for: [navigable], timeout: 45), .completed)
-        newChat.tap()
-        let cleared = XCTNSPredicateExpectation(
-            predicate: NSPredicate(
-                format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
-            object: composer)
-        XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 30), .completed)
-        XCTAssertFalse(app.staticTexts["user-message"].exists)
+            let app = XCUIApplication()
+            app.launch()
+            let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
+            XCTAssertTrue(composer.waitForExistence(timeout: 30))
+            app.buttons["Chat history"].tap()
+            let newChat = app.buttons["sidebar-new-chat"]
+            let navigable = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "enabled == true"), object: newChat)
+            XCTAssertEqual(XCTWaiter.wait(for: [navigable], timeout: 45), .completed)
+            newChat.tap()
+            let cleared = XCTNSPredicateExpectation(
+                predicate: NSPredicate(
+                    format: "enabled == true AND (value == %@ OR value == %@)", "", "Message"),
+                object: composer)
+            XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 30), .completed)
+            XCTAssertFalse(app.staticTexts["user-message"].exists)
 
-        func waitForReply() {
-            let finished = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "exists == true"), object: app.buttons["Send"])
-            XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 180), .completed)
-            // Send returns during the non-cancellable save.
-            // New Chat stays disabled until the operation settles.
-            let saved = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "enabled == true"), object: app.buttons["New Chat"])
-            XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)
-            XCTAssertFalse(app.staticTexts["chat-error"].exists)
-        }
-        func openContext(recover: Bool) throws -> Int {
-            app.buttons["Context usage"].tap()
-            XCTAssertTrue(app.navigationBars["Context"].waitForExistence(timeout: 10))
-            if recover && app.buttons["Retry count"].waitForExistence(timeout: 3) {
-                app.buttons["Retry count"].tap()
+            func waitForReply() {
+                let finished = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "exists == true"), object: app.buttons["Send"])
+                XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 180), .completed)
+                // Send returns during the non-cancellable save.
+                // New Chat stays disabled until the operation settles.
+                let saved = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "enabled == true"),
+                    object: app.buttons["New Chat"])
+                XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)
+                XCTAssertFalse(app.staticTexts["chat-error"].exists)
             }
-            let row = app.descendants(matching: .any)
-                .matching(identifier: "context-used").firstMatch
-            XCTAssertTrue(row.waitForExistence(timeout: 45))
-            let toolsRow = app.descendants(matching: .any)
-                .matching(identifier: "context-enabled-tools").firstMatch
-            XCTAssertTrue(toolsRow.exists, "Enabled MCP tools must be part of this regression")
-            let toolText = ([toolsRow.label, toolsRow.value as? String ?? ""]
-                + toolsRow.staticTexts.allElementsBoundByIndex.map(\.label)).joined(separator: " ")
-            let number = try NSRegularExpression(pattern: "([0-9]+)")
-            let toolCount = try XCTUnwrap(number.firstMatch(
-                in: toolText, range: NSRange(toolText.startIndex..., in: toolText)))
-            let enabled = try XCTUnwrap(Int((toolText as NSString).substring(
-                with: toolCount.range(at: 1))))
-            XCTAssertGreaterThan(enabled, 0, "Configure and enable an MCP server before this test")
-            let parts = [row.label, row.value as? String ?? ""]
-                + row.staticTexts.allElementsBoundByIndex.map(\.label)
-            let text = parts.joined(separator: " ")
-            let regex = try NSRegularExpression(pattern: "([0-9]+) tokens")
-            let match = try XCTUnwrap(regex.firstMatch(
-                in: text, range: NSRange(text.startIndex..., in: text)))
-            return try XCTUnwrap(Int((text as NSString).substring(with: match.range(at: 1))))
-        }
-        _ = try openContext(recover: true)
-        app.buttons["Done"].tap()
-        XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 45))
-        let prompts = [
-            "Compaction diagnostic test. Remember: the project codename is BLUE PENGUIN. "
-                + "Numeric test padding is not a fact: "
-                + String(repeating: "0 1 2 3 4 5 6 7 8 9 ", count: 10)
-                + "Reply only Noted.",
-            "Diagnostic note two. Keep the earlier project fact. Reply only Noted.",
-            "Diagnostic note three. Reply only Noted.",
-            "Diagnostic note four. Reply only Noted.",
-        ]
-        for prompt in prompts {
-            composer.tap(); composer.typeText(prompt)
+            func openContext(recover: Bool) throws -> Int {
+                app.buttons["Context usage"].tap()
+                XCTAssertTrue(app.navigationBars["Context"].waitForExistence(timeout: 10))
+                if recover && app.buttons["Retry count"].waitForExistence(timeout: 3) {
+                    app.buttons["Retry count"].tap()
+                }
+                let row = app.descendants(matching: .any)
+                    .matching(identifier: "context-used").firstMatch
+                XCTAssertTrue(row.waitForExistence(timeout: 45))
+                let toolsRow = app.descendants(matching: .any)
+                    .matching(identifier: "context-enabled-tools").firstMatch
+                XCTAssertTrue(toolsRow.exists, "Enabled MCP tools must be part of this regression")
+                let toolText =
+                    ([toolsRow.label, toolsRow.value as? String ?? ""]
+                    + toolsRow.staticTexts.allElementsBoundByIndex.map(\.label)).joined(
+                        separator: " ")
+                let number = try NSRegularExpression(pattern: "([0-9]+)")
+                let toolCount = try XCTUnwrap(
+                    number.firstMatch(
+                        in: toolText, range: NSRange(toolText.startIndex..., in: toolText)))
+                let enabled = try XCTUnwrap(
+                    Int(
+                        (toolText as NSString).substring(
+                            with: toolCount.range(at: 1))))
+                XCTAssertGreaterThan(
+                    enabled, 0, "Configure and enable an MCP server before this test")
+                let parts =
+                    [row.label, row.value as? String ?? ""]
+                    + row.staticTexts.allElementsBoundByIndex.map(\.label)
+                let text = parts.joined(separator: " ")
+                let regex = try NSRegularExpression(pattern: "([0-9]+) tokens")
+                let match = try XCTUnwrap(
+                    regex.firstMatch(
+                        in: text, range: NSRange(text.startIndex..., in: text)))
+                return try XCTUnwrap(Int((text as NSString).substring(with: match.range(at: 1))))
+            }
+            _ = try openContext(recover: true)
+            app.buttons["Done"].tap()
+            XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 45))
+            let prompts = [
+                "Compaction diagnostic test. Remember: the project codename is BLUE PENGUIN. "
+                    + "Numeric test padding is not a fact: "
+                    + String(repeating: "0 1 2 3 4 5 6 7 8 9 ", count: 10)
+                    + "Reply only Noted.",
+                "Diagnostic note two. Keep the earlier project fact. Reply only Noted.",
+                "Diagnostic note three. Reply only Noted.",
+                "Diagnostic note four. Reply only Noted.",
+            ]
+            for prompt in prompts {
+                composer.tap(); composer.typeText(prompt)
+                app.buttons["Send"].tap()
+                waitForReply()
+            }
+            let before = try openContext(recover: false)
+            XCTAssertTrue(app.buttons["Compact now"].isEnabled)
+            app.buttons["Compact now"].tap()
+            waitForReply()
+            let after = try openContext(recover: false)
+            XCTAssertLessThan(after, before)
+            XCTAssertTrue(app.descendants(matching: .any)["compaction-summary-count"].exists)
+            let compacted = XCTAttachment(screenshot: app.screenshot())
+            compacted.name =
+                "Physical model compaction reduced context from \(before) to \(after) tokens"
+            compacted.lifetime = .keepAlways
+            add(compacted)
+            app.buttons["Done"].tap()
+            app.terminate(); app.launch()
+            XCTAssertTrue(composer.waitForExistence(timeout: 30))
+            _ = try openContext(recover: false)
+            XCTAssertFalse(app.buttons["Retry count"].exists)
+            XCTAssertTrue(app.descendants(matching: .any)["compaction-summary-count"].exists)
+            app.buttons["Done"].tap()
+            waitForReply()
+            composer.tap()
+            composer.typeText("What is the project codename? Reply only with the codename.")
             app.buttons["Send"].tap()
             waitForReply()
-        }
-        let before = try openContext(recover: false)
-        XCTAssertTrue(app.buttons["Compact now"].isEnabled)
-        app.buttons["Compact now"].tap()
-        waitForReply()
-        let after = try openContext(recover: false)
-        XCTAssertLessThan(after, before)
-        XCTAssertTrue(app.descendants(matching: .any)["compaction-summary-count"].exists)
-        let compacted = XCTAttachment(screenshot: app.screenshot())
-        compacted.name =
-            "Physical model compaction reduced context from \(before) to \(after) tokens"
-        compacted.lifetime = .keepAlways
-        add(compacted)
-        app.buttons["Done"].tap()
-        app.terminate(); app.launch()
-        XCTAssertTrue(composer.waitForExistence(timeout: 30))
-        _ = try openContext(recover: false)
-        XCTAssertFalse(app.buttons["Retry count"].exists)
-        XCTAssertTrue(app.descendants(matching: .any)["compaction-summary-count"].exists)
-        app.buttons["Done"].tap()
-        waitForReply()
-        composer.tap()
-        composer.typeText("What is the project codename? Reply only with the codename.")
-        app.buttons["Send"].tap()
-        waitForReply()
-        let recalled = app.descendants(matching: .any).matching(identifier: "answer").matching(
-            NSPredicate(format: "label CONTAINS[c] %@", "BLUE PENGUIN")).firstMatch
-        XCTAssertTrue(recalled.waitForExistence(timeout: 10))
-        let reply = XCTAttachment(screenshot: app.screenshot())
-        reply.name = "Physical model recalled the saved summary after process restart"
-        reply.lifetime = .keepAlways
-        add(reply)
+            let recalled = app.descendants(matching: .any).matching(identifier: "answer").matching(
+                NSPredicate(format: "label CONTAINS[c] %@", "BLUE PENGUIN")
+            ).firstMatch
+            XCTAssertTrue(recalled.waitForExistence(timeout: 10))
+            let reply = XCTAttachment(screenshot: app.screenshot())
+            reply.name = "Physical model recalled the saved summary after process restart"
+            reply.lifetime = .keepAlways
+            add(reply)
         #endif
     }
 }

@@ -13,10 +13,13 @@ public struct ToolInvocation: Sendable {
 }
 
 extension ToolWorkspace {
-    func specifications(using cloud: ConversationCloudSync) throws -> [ModelToolSpecification] {
-        try validateSelectedPreference()
-        var specifications = try remoteTools()
-        if selectedSkill != nil {
+    func specifications(using cloud: ConversationCloudSync, forRequest: Bool = true) throws
+        -> [ModelToolSpecification]
+    {
+        let paused = cloudFeaturesPaused(using: cloud, forRequest: forRequest)
+        if !paused { try validateSelectedPreference() }
+        var specifications = try remoteTools(forRequest: forRequest)
+        if selectedSkill != nil && !paused {
             guard skillSourceKey == QuickActionsModel.sourceKey(for: cloud) else {
                 throw SkillFailure.changed
             }
@@ -34,19 +37,24 @@ extension ToolWorkspace {
         return specifications
     }
 
-    func instructions(using cloud: ConversationCloudSync) throws -> String {
-        let specifications = try specifications(using: cloud)
-        var text = ""
+    func instructions(using cloud: ConversationCloudSync, forRequest: Bool = true) throws -> String
+    {
+        let specifications = try specifications(using: cloud, forRequest: forRequest)
+        var text = availabilityInstructions(using: cloud, forRequest: forRequest)
         if !specifications.isEmpty {
             text += "\n" + (try ModelToolResponse.instructions(tools: specifications))
         }
-        if let selectedSkill { text += "\n\n" + selectedSkill.context }
+        if let selectedSkill, !cloudFeaturesPaused(using: cloud, forRequest: forRequest) {
+            text += "\n\n" + selectedSkill.context
+        }
         return text
     }
 
     /// Ephemeral app state beside the current request; it never changes the saved transcript.
-    func requestContext(using cloud: ConversationCloudSync) throws -> String {
-        let specifications = try specifications(using: cloud)
+    func requestContext(using cloud: ConversationCloudSync, forRequest: Bool = true) throws
+        -> String
+    {
+        let specifications = try specifications(using: cloud, forRequest: forRequest)
         guard !specifications.isEmpty else { return "" }
         let data = try ToolJSON.object([
             "enabled_functions": .array(
@@ -79,6 +87,8 @@ extension ToolWorkspace {
                 server: server, name: name, destination: "Selected skill folder",
                 arguments: arguments, local: true)
         }
+        try network.check()
+        guard permitsNetwork(forRequest: true) else { throw NetworkAccessFailure.requestPaused }
         guard let configured = servers.first(where: { $0.modelID == server }),
             configured.enabledTools.contains(name),
             discovered[configured.id]?.contains(where: { $0.name == name }) == true
@@ -92,6 +102,10 @@ extension ToolWorkspace {
         -> ToolJSON
     {
         if request.local {
+            if cloudFeaturesPaused(using: cloud, forRequest: true) {
+                try network.check()
+                throw NetworkAccessFailure.requestPaused
+            }
             guard let selectedSkill, let path = request.arguments["path"]?.string else {
                 throw SkillFailure.changed
             }
@@ -104,5 +118,22 @@ extension ToolWorkspace {
         else { throw SkillFailure.changed }
         return try await remoteCall(
             serverID: server.id, name: request.name, arguments: request.arguments)
+    }
+
+    private func availabilityInstructions(using cloud: ConversationCloudSync, forRequest: Bool)
+        -> String
+    {
+        guard !permitsNetwork(forRequest: forRequest) else { return "" }
+        var text = """
+            Network tools are unavailable for this request. Do not invent tool results or live \
+            readings, or present model knowledge or historical tool output as current retrieved \
+            data. Explain the limitation when live data is needed and ask for an explicit retry \
+            after reconnection. Available local file tools may still be used.
+            """
+        if cloud.enabled {
+            text +=
+                " iCloud skills, actions and settings are paused. Do not claim to use an unavailable cloud skill."
+        }
+        return text
     }
 }

@@ -14,8 +14,10 @@ private final class RegistryWireFixture: URLProtocol, @unchecked Sendable {
     private static let book = Book()
 
     static func session(for request: URLRequest, status: Int = 200, data: Data) -> URLSession {
-        book.lock.withLock { book.replies[request.url!.absoluteString] = Reply(
-            status: status, data: data) }
+        book.lock.withLock {
+            book.replies[request.url!.absoluteString] = Reply(
+                status: status, data: data)
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [RegistryWireFixture.self]
         return URLSession(configuration: configuration)
@@ -57,9 +59,11 @@ private func registryRecord(
     if let remotes { server["remotes"] = remotes }
     return [
         "server": server,
-        "_meta": ["io.modelcontextprotocol.registry/official": [
-            "status": status, "isLatest": latest,
-        ]],
+        "_meta": [
+            "io.modelcontextprotocol.registry/official": [
+                "status": status, "isLatest": latest,
+            ]
+        ],
     ]
 }
 
@@ -70,29 +74,54 @@ private func registryPage(_ records: [[String: Any]], cursor: String? = nil) thr
 }
 
 @Test func registryFiltersLifecycleAndUnsupportedConnectionsWithoutMergingPublishers() throws {
-    let page = try MCPRegistryClient.decode(registryPage([
-        registryRecord("one/reader"),
-        registryRecord("two/reader", remotes: [[
-            "type": "streamable-http", "url": "https://example.invalid/mcp",
-            "headers": [["name": "Authorization", "value": "Bearer {token}", "isRequired": true]],
-        ]]),
-        registryRecord("older/version", latest: false),
-        registryRecord("inactive/server", status: "deprecated"),
-        registryRecord("local/only", remotes: nil),
-        registryRecord(
-            "legacy/sse", remotes: [["type": "sse", "url": "https://example.invalid/sse"]]),
-        registryRecord("custom/header", remotes: [[
-            "type": "streamable-http", "url": "https://example.invalid/mcp",
-            "headers": [["name": "X-API-Key", "isRequired": true]],
-        ]]),
-        registryRecord("variable/url", remotes: [[
-            "type": "streamable-http", "url": "https://example.invalid/{tenant}/mcp",
-            "variables": ["tenant": ["description": "Choose tenant"]],
-        ]]),
-        registryRecord("query/key", remotes: [[
-            "type": "streamable-http", "url": "https://example.invalid/mcp?key=fixture",
-        ]]),
-    ], cursor: "opaque:next/+&"))
+    let page = try MCPRegistryClient.decode(
+        registryPage(
+            [
+                registryRecord("one/reader"),
+                registryRecord(
+                    "two/reader",
+                    remotes: [
+                        [
+                            "type": "streamable-http", "url": "https://example.invalid/mcp",
+                            "headers": [
+                                [
+                                    "name": "Authorization", "value": "Bearer {token}",
+                                    "isRequired": true,
+                                ]
+                            ],
+                        ]
+                    ]),
+                registryRecord("older/version", latest: false),
+                registryRecord("inactive/server", status: "deprecated"),
+                registryRecord("local/only", remotes: nil),
+                registryRecord(
+                    "legacy/sse", remotes: [["type": "sse", "url": "https://example.invalid/sse"]]),
+                registryRecord(
+                    "custom/header",
+                    remotes: [
+                        [
+                            "type": "streamable-http", "url": "https://example.invalid/mcp",
+                            "headers": [["name": "X-API-Key", "isRequired": true]],
+                        ]
+                    ]),
+                registryRecord(
+                    "variable/url",
+                    remotes: [
+                        [
+                            "type": "streamable-http",
+                            "url": "https://example.invalid/{tenant}/mcp",
+                            "variables": ["tenant": ["description": "Choose tenant"]],
+                        ]
+                    ]),
+                registryRecord(
+                    "query/key",
+                    remotes: [
+                        [
+                            "type": "streamable-http",
+                            "url": "https://example.invalid/mcp?key=fixture",
+                        ]
+                    ]),
+            ], cursor: "opaque:next/+&"))
     #expect(page.servers.map(\.name) == ["one/reader", "two/reader"])
     #expect(page.servers[0].endpoints[0].url == page.servers[1].endpoints[0].url)
     #expect(!page.servers[0].endpoints[0].requiresBearerToken)
@@ -142,8 +171,10 @@ func registryHTTPFailuresNeverBecomeAnEmptySuccessfulCatalog(_ status: Int) asyn
 }
 
 @Test func invalidRegistryJSONAndDuplicateRecordIdentitiesFailClearly() throws {
-    for data in [Data("not JSON".utf8), Data(#"{"servers":[]}"#.utf8),
-                 try registryPage([registryRecord("same/id"), registryRecord("same/id")])] {
+    for data in [
+        Data("not JSON".utf8), Data(#"{"servers":[]}"#.utf8),
+        try registryPage([registryRecord("same/id"), registryRecord("same/id")]),
+    ] {
         #expect(throws: MCPRegistryFailure.invalidResponse) {
             try MCPRegistryClient.decode(data)
         }
@@ -161,4 +192,14 @@ func registryHTTPFailuresNeverBecomeAnEmptySuccessfulCatalog(_ status: Int) asyn
     await #expect(throws: MCPRegistryFailure.tooLarge) {
         try await client.page(search: query)
     }
+}
+
+@Test func offlineRegistryNeverDispatchesEvenWithAnAvailableTransportFixture() async throws {
+    let request = MCPRegistryClient.request(search: "offline unique fixture", cursor: nil)
+    let session = RegistryWireFixture.session(for: request, data: try registryPage([]))
+    let client = MCPRegistryClient(session: session, network: .init(initialState: .unsatisfied))
+    await #expect(throws: NetworkAccessFailure.offline) {
+        try await client.page(search: "offline unique fixture")
+    }
+    #expect(RegistryWireFixture.observed(request) == nil)
 }

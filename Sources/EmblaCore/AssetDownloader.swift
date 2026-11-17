@@ -20,17 +20,20 @@ public protocol AssetDownloading: Sendable {
 }
 
 public struct HTTPAssetDownloader: AssetDownloading {
-    public init() {}
+    private let network: NetworkAccess
+    public init(network: NetworkAccess = .shared) { self.network = network }
 
     public func download(
         from url: URL,
         progress: @escaping @Sendable (Int64) -> Void
     ) async throws -> DownloadedAsset {
+        try network.check()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 3_600
-        let delegate = DownloadProgress(report: progress)
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
+        let delegate = DownloadProgress(report: progress, network: network)
+        let session = URLSession(
+            configuration: configuration, delegate: delegate, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -48,12 +51,17 @@ private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, Send
         var task: URLSessionDownloadTask?
         var continuation: CheckedContinuation<DownloadedAsset, any Error>?
         var cancelled = false
+        var lease: NetworkRequestLease?
     }
 
     let report: @Sendable (Int64) -> Void
     private let state = Mutex(State())
+    private let network: NetworkAccess
 
-    init(report: @escaping @Sendable (Int64) -> Void) { self.report = report }
+    init(report: @escaping @Sendable (Int64) -> Void, network: NetworkAccess) {
+        self.report = report
+        self.network = network
+    }
 
     /// Starts a delegate-based task; async download convenience methods omit byte callbacks.
     func start(
@@ -69,7 +77,14 @@ private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, Send
         if cancelled {
             continuation.resume(throwing: CancellationError())
         } else {
-            task.resume()
+            do {
+                try network.start(task) { lease in
+                    try state.withLock {
+                        guard !$0.cancelled else { throw CancellationError() }
+                        $0.lease = lease
+                    }
+                }
+            } catch { finish(.failure(error)) }
         }
     }
 
@@ -83,13 +98,21 @@ private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, Send
     }
 
     private func finish(_ result: Result<DownloadedAsset, any Error>) {
-        let continuation = state.withLock { state in
+        let pending = state.withLock { state in
             let continuation = state.continuation
             state.continuation = nil
             state.task = nil
-            return continuation
+            return (continuation, state.lease, state.cancelled)
         }
-        continuation?.resume(with: result)
+        guard let continuation = pending.0 else { return }
+        var outcome =
+            pending.2 ? Result<DownloadedAsset, any Error>.failure(CancellationError()) : result
+        do { try pending.1?.check() } catch { outcome = .failure(error) }
+        if case .failure = outcome, case .success(let asset) = result {
+            try? FileManager.default.removeItem(at: asset.url)
+        }
+        if let lease = pending.1 { network.finish(lease) }
+        continuation.resume(with: outcome)
     }
 
     func urlSession(
@@ -109,9 +132,11 @@ private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, Send
             .appendingPathComponent(UUID().uuidString)
         do {
             try FileManager.default.moveItem(at: location, to: destination)
-            finish(.success(DownloadedAsset(
-                url: destination,
-                statusCode: (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0)))
+            finish(
+                .success(
+                    DownloadedAsset(
+                        url: destination,
+                        statusCode: (downloadTask.response as? HTTPURLResponse)?.statusCode ?? 0)))
         } catch {
             finish(.failure(error))
         }

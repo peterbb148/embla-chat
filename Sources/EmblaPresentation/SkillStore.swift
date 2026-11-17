@@ -1,11 +1,18 @@
 import Darwin
 import Foundation
 
+import EmblaCore
+
 /// Shares the global source contract with Actions; neither chat sync nor reset modifies skills.
 actor SkillStore {
     let localRoot: URL
 
-    init(localRoot: URL) { self.localRoot = localRoot }
+    private let network: NetworkAccess
+
+    init(localRoot: URL, network: NetworkAccess = .shared) {
+        self.localRoot = localRoot
+        self.network = network
+    }
 
     func entries(_ source: QuickActionSource) throws -> [SkillEntry] {
         try withRoot(source) { root, descriptor in
@@ -14,7 +21,9 @@ actor SkillStore {
                 try Task.checkCancellation()
                 do {
                     let document = try SkillDocument.decode(
-                        readFile("SKILL.md", folder: name, root: root, descriptor: descriptor),
+                        readFile(
+                            "SKILL.md", folder: name, root: root, descriptor: descriptor,
+                            source: source),
                         directoryName: name)
                     return SkillEntry(id: name, document: document, error: nil)
                 } catch is CancellationError { throw CancellationError() } catch {
@@ -28,13 +37,16 @@ actor SkillStore {
     {
         try withRoot(source) { root, descriptor in
             let current = try SkillDocument.decode(
-                readFile("SKILL.md", folder: skill.name, root: root, descriptor: descriptor),
+                readFile(
+                    "SKILL.md", folder: skill.name, root: root, descriptor: descriptor,
+                    source: source),
                 directoryName: skill.name)
             guard current == skill else { throw SkillFailure.changed }
             guard path.split(separator: "/").first != "scripts" else {
                 throw SkillFailure.unsupportedResource
             }
-            let data = try readFile(path, folder: skill.name, root: root, descriptor: descriptor)
+            let data = try readFile(
+                path, folder: skill.name, root: root, descriptor: descriptor, source: source)
             guard let text = String(data: data, encoding: .utf8) else {
                 throw SkillFailure.unsupportedResource
             }
@@ -42,7 +54,9 @@ actor SkillStore {
         }
     }
 
-    private func readFile(_ path: String, folder: String, root: URL, descriptor: Int32) throws
+    private func readFile(
+        _ path: String, folder: String, root: URL, descriptor: Int32, source: QuickActionSource
+    ) throws
         -> Data
     {
         try Task.checkCancellation()
@@ -50,13 +64,17 @@ actor SkillStore {
         guard parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") }) else {
             throw SkillFailure.unsupportedResource
         }
+        if case .cloud = source { try network.check() }
         let file = parts.reduce(root) { $0.appendingPathComponent($1) }
         var result: Result<Data, Error>?
         var failure: NSError?
         NSFileCoordinator().coordinate(readingItemAt: file, options: [], error: &failure) { _ in
             // Coordination materializes cloud files. The opened root remains authoritative:
             // never reopen an absolute URL after a path component may have been replaced.
-            result = Result { try Self.readRelativeFile(parts, descriptor: descriptor) }
+            result = Result {
+                if case .cloud = source { try network.check() }
+                return try Self.readRelativeFile(parts, descriptor: descriptor)
+            }
         }
         if let failure { throw failure }
         guard let result else { throw CloudConversationError.coordination }
@@ -150,6 +168,7 @@ actor SkillStore {
             try root.setResourceValues(values)
             return try action(root, descriptor)
         case .cloud(let bookmark):
+            try network.check()
             var stale = false
             #if os(macOS)
                 let options: URL.BookmarkResolutionOptions = [.withSecurityScope]
@@ -173,6 +192,7 @@ actor SkillStore {
                 descriptor, "Skills", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
             guard skills >= 0 else { throw SkillFailure.unsupportedResource }
             defer { close(skills) }
+            try network.check()
             return try action(root.appendingPathComponent("Skills", isDirectory: true), skills)
         }
     }

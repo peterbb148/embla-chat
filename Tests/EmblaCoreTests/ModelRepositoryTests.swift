@@ -89,8 +89,10 @@ private struct Fixture {
     let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     let manifest = ModelManifest(
         repository: "test/model", revision: "chunked-test",
-        files: [ModelManifest.Asset(
-            path: "model.safetensors", sizeBytes: Int64(data.count), sha256: digest)])
+        files: [
+            ModelManifest.Asset(
+                path: "model.safetensors", sizeBytes: Int64(data.count), sha256: digest)
+        ])
     let repository = ModelRepository(
         root: f.root, manifest: manifest, downloader: TestDownloader(data: data),
         capacity: { _ in Int64.max })
@@ -162,7 +164,7 @@ private struct Fixture {
 func cancelledHTTPDownload() async throws {
     let transfer = Task {
         withUnsafeCurrentTask { $0?.cancel() }
-        return try await HTTPAssetDownloader().download(
+        return try await HTTPAssetDownloader(network: .init(initialState: .satisfied)).download(
             from: URL(string: "https://unused.invalid/model")!, progress: { _ in })
     }
     await #expect(throws: CancellationError.self) { try await transfer.value }
@@ -174,7 +176,9 @@ func livePinnedConfigDownload() async throws {
     let bundled = try ModelManifest.bundled()
     let config = try #require(bundled.files.first { $0.path == "config.json" })
     let received = Mutex<Int64>(0)
-    let asset = try await HTTPAssetDownloader().download(from: bundled.url(for: config)) { bytes in
+    let asset = try await HTTPAssetDownloader(network: .init(initialState: .satisfied)).download(
+        from: bundled.url(for: config)
+    ) { bytes in
         received.withLock { $0 = max($0, bytes) }
     }
     defer { try? FileManager.default.removeItem(at: asset.url) }
@@ -184,7 +188,10 @@ func livePinnedConfigDownload() async throws {
         repository: bundled.repository, revision: bundled.revision, files: [config])
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
-    let repository = ModelRepository(root: root, manifest: manifest, capacity: { _ in Int64.max })
+    let repository = ModelRepository(
+        root: root, manifest: manifest,
+        downloader: HTTPAssetDownloader(network: .init(initialState: .satisfied)),
+        capacity: { _ in Int64.max })
     let directory = try await repository.install { _ in }
     let ready = try await repository.installedDirectory()
     #expect(ready == directory)

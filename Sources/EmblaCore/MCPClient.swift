@@ -101,14 +101,18 @@ public actor MCPClient {
     private let endpoint: URL
     private let token: String?
     private let session: URLSession
+    private let network: NetworkAccess
     private static let limit = 131_072
 
-    public init(server: MCPServer, bearerToken: String? = nil) throws {
+    public init(
+        server: MCPServer, bearerToken: String? = nil, network: NetworkAccess = .shared
+    ) throws {
         try server.validate()
         if let bearerToken, !bearerToken.utf8.allSatisfy({ (33...126).contains($0) }) {
             throw MCPFailure.credential
         }
         endpoint = server.endpoint
+        self.network = network
         token = bearerToken?.isEmpty == false ? bearerToken : nil
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
@@ -230,8 +234,12 @@ public actor MCPClient {
         }
         if let token { request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization") }
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
-        let (bytes, response) = try await session.bytes(for: request)
+        let operation = NetworkByteRequest(
+            access: network, limit: Self.limit, overflow: MCPFailure.limit)
+        let (bytes, response) = try await operation.response(
+            for: request, configuration: session.configuration)
         defer { bytes.task.cancel() }
+        try bytes.task.check()
         guard let response = response as? HTTPURLResponse else { throw MCPFailure.invalidResponse }
         let type = response.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
         if response.statusCode != 200 {
@@ -262,6 +270,7 @@ public actor MCPClient {
                 guard data.count < Self.limit else { throw MCPFailure.limit }
                 data.append(byte)
             }
+            try bytes.task.check()
             return try Self.result(data, id: id)
         }
         guard type.hasPrefix("text/event-stream") else { throw MCPFailure.invalidResponse }
@@ -293,7 +302,10 @@ public actor MCPClient {
                 if !event.isEmpty {
                     let data = Data(event.joined(separator: "\n").utf8)
                     let message = try Self.decode(data)
-                    if message["id"] != nil { return try Self.result(data, id: id) }
+                    if message["id"] != nil {
+                        try bytes.task.check()
+                        return try Self.result(data, id: id)
+                    }
                     guard message["jsonrpc"] == .string("2.0"),
                         message["method"]?.string?.hasPrefix("notifications/") == true
                     else { throw MCPFailure.invalidResponse }
