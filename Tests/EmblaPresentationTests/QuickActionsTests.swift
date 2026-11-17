@@ -546,3 +546,26 @@ private actor ActionFailingStore: ConversationStoring {
     #expect(fixture.backend.calls == 0 && !actions.applying)
     await fixture.finish()
 }
+
+@Test @MainActor func replacementConsentCannotSurviveAnInterveningTurnWithTheSameDraft()
+    async throws
+{
+    let fixture = try await ActionSubmissionFixture()
+    defer { fixture.clean() }
+    let action = QuickAction(
+        id: "instant", label: "Instant", order: 0, prompt: "Configured send", autoSend: true)
+    let actions = await loadedActionModel(action, cloud: fixture.model.cloud)
+    fixture.model.prompt = "Original draft"
+    guard case .needsConfirmation(let consent) = try await actions.apply(action, to: fixture.model)
+    else { Issue.record("Expected replacement confirmation"); return }
+    fixture.model.run(); await fixture.model.waitUntilIdle()
+    fixture.model.prompt = "Original draft"
+    await #expect(throws: QuickActionError.self) {
+        try await actions.apply(action, to: fixture.model, replacing: consent)
+    }
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.backend.calls == 1)
+    #expect(fixture.model.prompt == "Original draft")
+    #expect(fixture.model.messages.filter { $0.role == .user }.map(\.text) == ["Original draft"])
+    await fixture.finish()
+}

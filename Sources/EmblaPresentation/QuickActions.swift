@@ -45,10 +45,11 @@ public struct QuickAction: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
-/// Replacement consent belongs to one exact action, chat and unchanged draft.
+/// Replacement consent belongs to one exact action, chat, transcript and unchanged draft.
 public struct QuickActionReplacement: Sendable, Equatable {
     public let action: QuickAction
     public let conversationID: UUID
+    public let messageIDs: [UUID]
     public let draft: String
 }
 

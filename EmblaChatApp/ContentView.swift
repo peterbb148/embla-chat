@@ -545,13 +545,13 @@ struct ContentView: View {
                             .foregroundStyle(.white)
                             .frame(width: 32, height: 32)
                             .background(
-                                model.running || model.canRun
+                                model.running || (model.canRun && !quickActions.applying)
                                     ? Color(red: 0.20, green: 0.40, blue: 0.92)
                                     : Color(uiColor: .tertiaryLabel), in: Circle())
                     }
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
-                    .disabled(!model.running && !model.canRun)
+                    .disabled(!model.running && (!model.canRun || quickActions.applying))
                     .accessibilityLabel(model.running ? "Stop" : "Send")
                 }
                 .buttonStyle(.plain)

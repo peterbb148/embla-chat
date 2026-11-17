@@ -100,15 +100,17 @@ public final class QuickActionsModel {
         try QuickActionConfiguration(actions: [action]).validate()
         try requireActionReady(action, model: model)
         let chat = model.conversationID
+        let turns = model.messages.map(\.id)
         let draft = model.prompt
         let prompt = action.prompt ?? draft
         if let replacing {
             guard replacing.action == action, replacing.conversationID == chat,
-                replacing.draft == draft
+                replacing.messageIDs == turns, replacing.draft == draft
             else { throw QuickActionError.changed }
         } else if !draft.isEmpty && draft != prompt {
             return .needsConfirmation(
-                QuickActionReplacement(action: action, conversationID: chat, draft: draft))
+                QuickActionReplacement(
+                    action: action, conversationID: chat, messageIDs: turns, draft: draft))
         }
         let request = UUID()
         applicationID = request
@@ -120,7 +122,9 @@ public final class QuickActionsModel {
         }
         try Task.checkCancellation()
         _ = try validatedAction(action, using: model.cloud)
-        guard applicationID == request, model.conversationID == chat, model.prompt == draft else {
+        guard applicationID == request, model.conversationID == chat, model.prompt == draft,
+            model.messages.map(\.id) == turns
+        else {
             throw QuickActionError.changed
         }
         try requireActionReady(action, model: model)
