@@ -78,9 +78,12 @@ import Testing
     @Test(.timeLimit(.minutes(1)))
     func toolCallCanOutliveTheShortDiscoveryDeadlineWithoutReissuingIt() async throws {
         let fixture = try HTTPFixture(); defer { fixture.stop() }
+        // Discovery is setup, not the operation under this short-budget assertion.
+        // Give it the normal budget so concurrent package tests cannot consume 200 ms.
+        let discovery = try fixture.client("delayed-tool")
+        let tool = try #require(try await discovery.discover().tools.first)
         let client = try fixture.client(
             "delayed-tool", timeouts: .init(discovery: 0.2, toolCall: 2))
-        let tool = try #require(try await client.discover().tools.first)
         let result = try await client.call(tool, arguments: ["text": .string("Delayed real response")])
         #expect(result["content"] == .array([
             .object(["type": .string("text"), "text": .string("Delayed real response")])
