@@ -98,7 +98,8 @@ func realSelectedPortableSkillChangesTheModelsActualAnswer() async throws {
         """.utf8
     ).write(to: skill.appendingPathComponent("SKILL.md"))
     let workspace = ToolWorkspace(
-        store: SkillStore(localRoot: temporary.appendingPathComponent("Skills")))
+        store: SkillStore(localRoot: temporary.appendingPathComponent("Skills")),
+        configuration: temporary.appendingPathComponent("servers.json"))
     let manifest = try ModelManifest.bundled()
     let model = LocalInferenceModel(
         repository: ModelRepository(root: root, manifest: manifest),
