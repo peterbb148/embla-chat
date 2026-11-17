@@ -298,6 +298,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["selected-skill"].label, "None")
         app.buttons["Reload skills"].tap()
         app.navigationBars["Skills"].buttons["Settings"].tap()
+        reveal(app.buttons["MCP Servers"], in: app)
         app.buttons["MCP Servers"].tap()
         app.buttons["Browse registry"].tap()
         XCTAssertTrue(app.navigationBars["Server registry"].waitForExistence(timeout: 5))

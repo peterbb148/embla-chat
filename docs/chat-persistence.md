@@ -56,9 +56,10 @@ picker. The user selects/creates `iCloud Drive/EmblaChat`; the app validates tha
 folder is an iCloud folder named EmblaChat and retains its security-scoped bookmark locally.
 Within that root, `Chats/ActiveChat.json` contains the transcript, summary and reconstruction metadata;
 model weights, local folder permissions and unsent drafts are excluded.
-The separate `Skills` directory is reserved for portable skill folders in #27. Chat operations
-leave its contents untouched; skill discovery/execution is not implemented yet. See the
-[storage layout](storage-layout.md).
+The separate `Skills` directory contains portable skills; chat operations leave it untouched.
+Actions uses its own configuration file. The expanded global consent also covers
+[shared settings and readable MCP keys](settings-sync.md) under Settings/settings.json.
+See the [storage layout](storage-layout.md) and [skills/tools](skills-and-tools.md).
 
 `ICloudConversationStore` resolves the granted bookmark for each operation, coordinates file
 access with `NSFileCoordinator`, validates documents, and checks content fingerprints before

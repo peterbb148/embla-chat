@@ -42,12 +42,15 @@ records before relying on a particular device or configuration.
 ## Privacy and storage
 
 Conversations and drafts are saved locally. Enabling iCloud is an explicit choice and
-applies to saved chats and project memory; drafts and model files stay on the device.
+applies to saved chats, project memory, Skills, Actions and shared settings. MCP API keys
+in shared settings are readable by anyone with access to the selected folder. Drafts and
+model files stay on the device.
 Turning synchronization off keeps existing cloud files. Project memory is saved explicitly
 rather than extracted automatically from your chats.
 
 See [persistence](docs/chat-persistence.md) and [storage layout](docs/storage-layout.md) for
-consent, file formats, conflicts and configuration folders. Quick actions are documented
+consent, file formats, conflicts and configuration folders. [Shared settings](docs/settings-sync.md)
+explains configuration/key migration and the local profile used while iCloud is Off. Quick actions are documented
 [here](docs/quick-actions.md). [Skills and MCP](docs/skills-and-tools.md) explains tool
 authorization, supported protocols and network destinations; remote tools require connectivity.
 
@@ -79,5 +82,3 @@ and model licenses remain separate; notices are retained in [third-party](third-
 The pinned Yams YAML parser has its [MIT notice](Sources/EmblaCore/Resources/Yams-LICENSE)
 in the shared resource bundle.
 Model weights are downloaded separately and are not bundled in this repository.
-
-See [shared settings](docs/settings-sync.md) for optional iCloud configuration and readable MCP key storage.

@@ -281,3 +281,32 @@ private final class FailingSettingsFixture: SharedSettingsStoring {
         #expect(second.discovered.isEmpty)
     }
 #endif
+
+@Test @MainActor func selectedSkillPreferenceSurvivesRestartAndNoneIsDurable() async throws {
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let skills = root.appendingPathComponent("Skills")
+    let folder = skills.appendingPathComponent("test-skill")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try Data("---\nname: test-skill\ndescription: Synthetic settings test\n---\nBe concise.".utf8)
+        .write(to: folder.appendingPathComponent("SKILL.md"))
+    let file = root.appendingPathComponent("servers.json")
+    let cloud = ConversationCloudSync()
+    let first = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)
+    first.reloadSkills(using: cloud); await first.waitUntilIdle()
+    try first.selectSkill("test-skill", using: cloud)
+    let second = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)
+    second.reloadSkills(using: cloud); await second.waitUntilIdle()
+    #expect(second.selectedSkill?.name == "test-skill")
+    try second.selectSkill(nil, using: cloud)
+    let third = ToolWorkspace(store: SkillStore(localRoot: skills), configuration: file)
+    third.reloadSkills(using: cloud); await third.waitUntilIdle()
+    #expect(third.selectedSkill == nil)
+    try third.selectSkill("test-skill", using: cloud)
+    try FileManager.default.removeItem(at: folder)
+    third.reloadSkills(using: cloud); await third.waitUntilIdle()
+    #expect(throws: SkillFailure.self) { try third.instructions(using: cloud) }
+    // An unavailable selected file can be explicitly deselected, never silently omitted.
+    try third.selectSkill(nil, using: cloud)
+    #expect(try third.instructions(using: cloud).isEmpty)
+}
