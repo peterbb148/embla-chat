@@ -25,11 +25,19 @@ import Testing
                         in: .whitespacesAndNewlines)))
         }
 
-        func client(_ path: String) throws -> MCPClient {
+        func client(
+            _ path: String, network: NetworkAccess = NetworkAccess(initialState: .satisfied)
+        ) throws -> MCPClient {
             try MCPClient(
                 server: MCPServer(
                     name: "Synthetic HTTP fixture",
-                    endpoint: URL(string: "http://127.0.0.1:\(port)/\(path)")!))
+                    endpoint: URL(string: "http://127.0.0.1:\(port)/\(path)")!), network: network)
+        }
+
+        func counts() async throws -> [String: [String: Int]] {
+            let url = URL(string: "http://127.0.0.1:\(port)/request-counts")!
+            let (data, _) = try await URLSession.shared.data(from: url)
+            return try JSONDecoder().decode([String: [String: Int]].self, from: data)
         }
 
         func stop() { if process.isRunning { process.terminate(); process.waitUntilExit() } }
@@ -106,5 +114,65 @@ import Testing
             _ = try await task.value;
             Issue.record("Cancelled network work must not publish a result")
         } catch { #expect(error is CancellationError || (error as? URLError)?.code == .cancelled) }
+    }
+    @Test func offlineGateBlocksCachedCallsDiscoveryAndReplayUntilExplicitRetry() async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let access = NetworkAccess(initialState: .satisfied)
+        let client = try fixture.client("json", network: access)
+        let catalog = try await client.discover()
+        let tool = try #require(catalog.tools.first)
+        let before = try await fixture.counts()
+        access.updatePath(.unsatisfied)
+        await #expect(throws: NetworkAccessFailure.offline) { try await client.discover() }
+        await #expect(throws: NetworkAccessFailure.offline) {
+            try await client.call(tool, arguments: ["text": .string("Must not reach fixture")])
+        }
+        #expect(try await fixture.counts() == before)
+        access.updatePath(.satisfied)
+        await #expect(throws: NetworkAccessFailure.checking) { try await client.discover() }
+        access.activateRequests(after: access.snapshot.revision)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(try await fixture.counts() == before)
+        _ = try await client.call(tool, arguments: ["text": .string("Explicit retry")])
+        #expect(try await fixture.counts()["/json"]?["tools/call"] == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func pathLossCancelsAPendingRequestWithItsPrivacyReason()
+        async throws
+    {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let access = NetworkAccess(initialState: .satisfied)
+        let client = try fixture.client("slow", network: access)
+        let pending = Task { try await client.discover() }
+        let clock = ContinuousClock(); let started = clock.now
+        while try await fixture.counts()["/slow"]?["server/discover"] != 1,
+            clock.now - started < .seconds(10)
+        { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(try await fixture.counts()["/slow"]?["server/discover"] == 1)
+        access.updatePath(.unsatisfied)
+        await #expect(throws: NetworkAccessFailure.offline) { try await pending.value }
+        #expect(try await fixture.counts()["/slow"]?["tools/list"] == nil)
+    }
+    @Test func onDemandConnectivityUpgradePreservesAnInflightRequestLease() async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let access = NetworkAccess(initialState: .requiresConnection)
+        let client = try fixture.client("slow", network: access)
+        let pending = Task { try await client.discover() }
+        defer { pending.cancel() }
+        let clock = ContinuousClock(); let started = clock.now
+        while try await fixture.counts()["/slow"]?["server/discover"] != 1,
+            clock.now - started < .seconds(10)
+        { try await Task.sleep(for: .milliseconds(5)) }
+        try #require(try await fixture.counts()["/slow"]?["server/discover"] == 1)
+        access.updatePath(.satisfied)
+        #expect(access.snapshot.allowsRequests && !access.snapshot.localOnly)
+        try access.check()
+        pending.cancel()
+        do {
+            _ = try await pending.value
+            Issue.record("The slow fixture should finish only after explicit cancellation.")
+        } catch {
+            #expect(error is CancellationError || (error as? URLError)?.code == .cancelled)
+        }
     }
 #endif

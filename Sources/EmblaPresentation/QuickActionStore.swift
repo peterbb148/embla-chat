@@ -1,9 +1,12 @@
 import Foundation
 
+import EmblaCore
+
 /// Source selection follows the global cloud preference, never a failure-driven substitute.
 enum QuickActionSource: Sendable, Equatable {
     case device
     case cloud(Data)
+    case cachedCloud(Data)
 }
 
 protocol QuickActionsStoring: Sendable {
@@ -16,12 +19,26 @@ actor QuickActionStore: QuickActionsStoring {
     let localRoot: URL
     let stateRoot: URL
 
-    init(localRoot: URL, stateRoot: URL) {
+    private let network: NetworkAccess
+    private nonisolated var cache: SyncedResourceCache {
+        SyncedResourceCache(root: stateRoot.appendingPathComponent("CloudSnapshots"))
+    }
+
+    init(localRoot: URL, stateRoot: URL, network: NetworkAccess = .shared) {
+        self.network = network
         self.localRoot = localRoot
         self.stateRoot = stateRoot
     }
 
-    func read(_ source: QuickActionSource) throws -> QuickActionConfiguration {
+    nonisolated func read(_ source: QuickActionSource) async throws -> QuickActionConfiguration {
+        try Task.checkCancellation()
+        if case .cachedCloud(let bookmark) = source {
+            return try QuickActionConfiguration.decode(cache.read("actions", bookmark: bookmark))
+        }
+        return try await readProvider(source)
+    }
+
+    private func readProvider(_ source: QuickActionSource) throws -> QuickActionConfiguration {
         try Task.checkCancellation()
         switch source {
         case .device:
@@ -29,10 +46,15 @@ actor QuickActionStore: QuickActionsStoring {
             return try CoordinatedActionFile.read(
                 at: localRoot.appendingPathComponent("actions.json"))
         case .cloud(let bookmark):
-            return try withCloudAccess(bookmark) { root in
+            let value = try withCloudAccess(bookmark) { root in
                 try CoordinatedActionFile.read(
-                    at: root.appendingPathComponent("Actions/actions.json"))
+                    at: root.appendingPathComponent("Actions/actions.json"), network: network)
             }
+            try network.check()
+            try cache.write(value.encoded(), name: "actions", bookmark: bookmark)
+            return value
+        case .cachedCloud(let bookmark):
+            return try QuickActionConfiguration.decode(cache.read("actions", bookmark: bookmark))
         }
     }
 
@@ -45,10 +67,14 @@ actor QuickActionStore: QuickActionsStoring {
         case .cloud(let bookmark):
             try withCloudAccess(bookmark) { root in
                 let actions = root.appendingPathComponent("Actions", isDirectory: true)
+                try network.check()
                 try FileManager.default.createDirectory(
                     at: actions, withIntermediateDirectories: true)
-                try CoordinatedActionFile.create(at: actions.appendingPathComponent("actions.json"))
+                try CoordinatedActionFile.create(
+                    at: actions.appendingPathComponent("actions.json"), network: network)
             }
+        case .cachedCloud:
+            throw NetworkAccessFailure.offline
         }
     }
 
@@ -74,6 +100,7 @@ actor QuickActionStore: QuickActionsStoring {
 
     private func withCloudAccess<T>(_ bookmark: Data, _ action: (URL) throws -> T) throws -> T {
         try Task.checkCancellation()
+        try network.check()
         var stale = false
         #if os(macOS)
             let options: URL.BookmarkResolutionOptions = [.withSecurityScope]
@@ -92,18 +119,22 @@ actor QuickActionStore: QuickActionsStoring {
             values.isUbiquitousItem == true
         else { throw CloudConversationError.notICloudFolder }
         try Task.checkCancellation()
+        try network.check()
         return try action(root)
     }
 }
 
 /// Local coordinated-file tests exercise this code without claiming iCloud authentication/transfer.
 enum CoordinatedActionFile {
-    static func read(at file: URL) throws -> QuickActionConfiguration {
+    static func read(at file: URL, network: NetworkAccess? = nil) throws -> QuickActionConfiguration
+    {
+        try network?.check()
         var result: Result<QuickActionConfiguration, Error>?
         var failure: NSError?
         NSFileCoordinator().coordinate(readingItemAt: file, options: [], error: &failure) { url in
             result = Result {
                 try Task.checkCancellation()
+                try network?.check()
                 let data: Data
                 do { data = try Data(contentsOf: url) } catch {
                     let error = error as NSError
@@ -122,13 +153,15 @@ enum CoordinatedActionFile {
     }
 
     /// Never overwrite an existing user configuration, including a malformed one.
-    static func create(at file: URL) throws {
+    static func create(at file: URL, network: NetworkAccess? = nil) throws {
+        try network?.check()
         let data = try QuickActionConfiguration.starter.encoded()
         var result: Result<Void, Error>?
         var failure: NSError?
         NSFileCoordinator().coordinate(writingItemAt: file, options: [], error: &failure) { url in
             result = Result {
                 try Task.checkCancellation()
+                try network?.check()
                 do { try data.write(to: url, options: .withoutOverwriting) } catch {
                     let error = error as NSError
                     if error.domain == NSCocoaErrorDomain

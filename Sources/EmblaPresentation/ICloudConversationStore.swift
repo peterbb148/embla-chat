@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
 
+import EmblaCore
+
 /// A consistent read of the current document and any unresolved iCloud versions.
 public struct CloudConversationRead: Sendable, Equatable {
     public var current: ConversationLibrary?
@@ -63,8 +65,12 @@ extension ConversationSnapshot {
 /// Coordinates access on a serial actor; a successful write is not treated as upload confirmation.
 public actor ICloudConversationStore: CloudConversationStorage {
     private let bookmark: Data
+    private let network: NetworkAccess
 
-    public init(bookmark: Data) { self.bookmark = bookmark }
+    public init(bookmark: Data, network: NetworkAccess = .shared) {
+        self.bookmark = bookmark
+        self.network = network
+    }
 
     public nonisolated static func bookmark(for folder: URL) throws -> Data {
         guard folder.startAccessingSecurityScopedResource() else {
@@ -82,7 +88,7 @@ public actor ICloudConversationStore: CloudConversationStorage {
     }
 
     public func read() throws -> CloudConversationRead {
-        try withAccess { file in try CoordinatedConversationFile.read(at: file) }
+        try withAccess { file in try CoordinatedConversationFile.read(at: file, network: network) }
     }
 
     public func write(
@@ -91,7 +97,8 @@ public actor ICloudConversationStore: CloudConversationStorage {
     ) throws {
         try withAccess { file in
             try CoordinatedConversationFile.write(
-                snapshot, at: file, replacing: replacing, resolvingConflicts: resolvingConflicts)
+                snapshot, at: file, replacing: replacing, resolvingConflicts: resolvingConflicts,
+                network: network)
         }
     }
 
@@ -104,6 +111,7 @@ public actor ICloudConversationStore: CloudConversationStorage {
 
     private func withAccess<T>(_ action: (URL) throws -> T) throws -> T {
         try Task.checkCancellation()
+        try network.check()
         var stale = false
         #if os(macOS)
             let options: URL.BookmarkResolutionOptions = [.withSecurityScope]
@@ -118,16 +126,19 @@ public actor ICloudConversationStore: CloudConversationStorage {
         }
         defer { folder.stopAccessingSecurityScopedResource() }
         try Self.validateFolder(folder)
-        return try action(CloudStorageLayout.prepare(in: folder))
+        try network.check()
+        return try action(CloudStorageLayout.prepare(in: folder, network: network))
     }
 }
 
 /// The selected root separates chat documents from portable, user-managed skill folders.
 enum CloudStorageLayout {
-    static func prepare(in root: URL) throws -> URL {
+    static func prepare(in root: URL, network: NetworkAccess? = nil) throws -> URL {
         let chats = root.appendingPathComponent("Chats", isDirectory: true)
         let skills = root.appendingPathComponent("Skills", isDirectory: true)
+        try network?.check()
         try FileManager.default.createDirectory(at: chats, withIntermediateDirectories: true)
+        try network?.check()
         try FileManager.default.createDirectory(at: skills, withIntermediateDirectories: true)
         return chats.appendingPathComponent("ActiveChat.json")
     }
@@ -135,13 +146,17 @@ enum CloudStorageLayout {
 
 /// Shared file mechanics are tested on temporary files; those tests do not claim iCloud access.
 enum CoordinatedConversationFile {
-    static func read(at file: URL) throws -> CloudConversationRead {
+    static func read(at file: URL, network: NetworkAccess? = nil) throws -> CloudConversationRead {
+        try network?.check()
         var result: Result<CloudConversationRead, Error>?
         var coordinationError: NSError?
         NSFileCoordinator().coordinate(
             readingItemAt: file, options: [], error: &coordinationError
         ) { coordinated in
-            result = Result { try contents(at: coordinated) }
+            result = Result {
+                try network?.check()
+                return try contents(at: coordinated)
+            }
         }
         if let coordinationError { throw coordinationError }
         guard let result else { throw CloudConversationError.coordination }
@@ -150,8 +165,9 @@ enum CoordinatedConversationFile {
 
     static func write(
         _ snapshot: ConversationLibrary, at file: URL, replacing expected: CloudConversationRead,
-        resolvingConflicts: Bool = false
+        resolvingConflicts: Bool = false, network: NetworkAccess? = nil
     ) throws {
+        try network?.check()
         let bytes = try snapshot.encodedDocument()
         var result: Result<Void, Error>?
         var coordinationError: NSError?
@@ -160,6 +176,7 @@ enum CoordinatedConversationFile {
         ) { coordinated in
             result = Result {
                 try Task.checkCancellation()
+                try network?.check()
                 var versions: [NSFileVersion] = []
                 let current = try contents(at: coordinated, versions: &versions)
                 guard try current.fingerprints == expected.fingerprints else {
@@ -169,6 +186,7 @@ enum CoordinatedConversationFile {
                     throw CloudConversationError.conflict
                 }
                 try Task.checkCancellation()
+                try network?.check()
                 try bytes.write(to: coordinated, options: .atomic)
                 if resolvingConflicts {
                     for version in versions {
@@ -231,12 +249,16 @@ public enum CloudConversationError: Error, LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .configuration: return "Cloud synchronization is not connected to chat persistence."
-        case .permission: return "Folder access expired or was revoked. Choose the iCloud folder again."
+        case .permission:
+            return "Folder access expired or was revoked. Choose the iCloud folder again."
         case .notICloudFolder: return "Choose the EmblaChat folder in iCloud Drive."
         case .coordination: return "The document provider could not coordinate access to the chat."
-        case .changed: return "The iCloud chat changed during synchronization. Refresh to review it."
+        case .changed:
+            return "The iCloud chat changed during synchronization. Refresh to review it."
         case .conflict: return "There are conflicting iCloud versions. Choose which chat to keep."
-        case .removed: return "The previously synchronized iCloud chat is missing. Choose the folder again to create it."
+        case .removed:
+            return
+                "The previously synchronized iCloud chat is missing. Choose the folder again to create it."
         }
     }
 }

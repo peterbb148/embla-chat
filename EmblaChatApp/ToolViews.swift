@@ -359,7 +359,12 @@ private struct MCPServerEditor: View {
 /// Search and pagination share a structured view task; leaving the screen cancels its request.
 private struct MCPRegistryView: View {
     let model: LocalInferenceModel
-    @State private var client = MCPRegistryClient()
+    @State private var client: MCPRegistryClient
+
+    init(model: LocalInferenceModel) {
+        self.model = model
+        _client = State(initialValue: MCPRegistryClient(network: model.tools.network))
+    }
     @State private var request = Request()
     @State private var completedRequest: Request?
     @State private var servers: [MCPRegistryServer] = []

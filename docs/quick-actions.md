@@ -40,6 +40,13 @@ using the selected iCloud folder. Reload after edits; returning to the foregroun
 There is no live file watcher. A confirmation rechecks the currently loaded action so a
 configuration/source change cannot silently replace a draft with a different prompt.
 
+Successfully loaded iCloud actions are also saved in a private device cache tied to the
+authorized folder. In airplane mode, the last synced copy remains selectable after app
+restart, including normal draft replacement and auto-send behavior. The app does not open
+the cloud provider offline or replace those actions with the separate device profile.
+If no copy has been saved yet, reconnect and reload first. Shared-file creation/editing
+requires connectivity; reconnection refreshes the source.
+
 The app enables Apple's `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace` keys
 for its Documents folder, following [Apple's File Provider guidance](https://developer.apple.com/documentation/FileProvider?language=swift).
 It does not expose the private chat archive or model directory through file sharing.

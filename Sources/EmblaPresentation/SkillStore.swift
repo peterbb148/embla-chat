@@ -1,48 +1,266 @@
 import Darwin
 import Foundation
 
+import EmblaCore
+
 /// Shares the global source contract with Actions; neither chat sync nor reset modifies skills.
 actor SkillStore {
     let localRoot: URL
 
-    init(localRoot: URL) { self.localRoot = localRoot }
+    private let network: NetworkAccess
+    private let cache: SyncedResourceCache
 
-    func entries(_ source: QuickActionSource) throws -> [SkillEntry] {
-        try withRoot(source) { root, descriptor in
+    init(localRoot: URL, network: NetworkAccess = .shared, cacheRoot: URL? = nil) {
+        self.localRoot = localRoot
+        self.network = network
+        cache = SyncedResourceCache(
+            root: cacheRoot
+                ?? localRoot.deletingLastPathComponent()
+                .appendingPathComponent(".synced-skills"))
+    }
+
+    struct Listing: Codable {
+        var documents: [String: Data] = [:]
+        var errors: [String: String] = [:]
+
+        /// Keep a previous successful document only for an unreadable provider result.
+        /// Online callers still receive the error; malformed or deleted content is invalidated.
+        mutating func record(_ result: Result<Data, Error>, name: String, previous: Listing)
+            -> SkillEntry
+        {
+            let data: Data
+            do {
+                data = try result.get()
+            } catch {
+                let failure = error as NSError
+                let deleted =
+                    (failure.domain == NSCocoaErrorDomain
+                        && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(failure.code))
+                    || (failure.domain == NSPOSIXErrorDomain && failure.code == Int(ENOENT))
+                if !(error is SkillFailure) && !deleted, let retained = previous.documents[name] {
+                    documents[name] = retained
+                } else {
+                    errors[name] = error.localizedDescription
+                }
+                return SkillEntry(id: name, document: nil, error: error.localizedDescription)
+            }
+            do {
+                let document = try SkillDocument.decode(data, directoryName: name)
+                documents[name] = data
+                return SkillEntry(id: name, document: document, error: nil)
+            } catch {
+                // These bytes were read successfully: every decoding failure invalidates them.
+                errors[name] = error.localizedDescription
+                return SkillEntry(id: name, document: nil, error: error.localizedDescription)
+            }
+        }
+
+        func entries() throws -> [SkillEntry] {
+            guard documents.count + errors.count <= 256,
+                Set(documents.keys).isDisjoint(with: errors.keys)
+            else { throw SyncedResourceFailure.invalid }
+            let valid = try documents.map { name, data in
+                SkillEntry(
+                    id: name, document: try SkillDocument.decode(data, directoryName: name),
+                    error: nil)
+            }
+            return (valid + errors.map { SkillEntry(id: $0.key, document: nil, error: $0.value) })
+                .sorted { $0.id < $1.id }
+        }
+    }
+
+    nonisolated func entries(_ source: QuickActionSource) async throws -> [SkillEntry] {
+        try Task.checkCancellation()
+        if case .cachedCloud(let bookmark) = source {
+            return try cachedListing(bookmark).entries()
+        }
+        return try await providerEntries(source)
+    }
+
+    private nonisolated func cachedListing(_ bookmark: Data) throws -> Listing {
+        try JSONDecoder().decode(Listing.self, from: cache.read("listing", bookmark: bookmark))
+    }
+
+    /// A corrupt generated snapshot must not prevent reloading its authoritative cloud source.
+    nonisolated func previousListingForRefresh(_ bookmark: Data) throws -> Listing {
+        let data: Data
+        do {
+            data = try cache.read("listing", bookmark: bookmark)
+        } catch SyncedResourceFailure.notCached { return Listing() } catch SyncedResourceFailure
+            .invalid
+        { return Listing() }
+        do {
+            let listing = try JSONDecoder().decode(Listing.self, from: data)
+            _ = try listing.entries()
+            return listing
+        } catch {
+            // Only decoding/validation is discarded here; cache I/O errors still propagate.
+            return Listing()
+        }
+    }
+
+    private func providerEntries(_ source: QuickActionSource) throws -> [SkillEntry] {
+        let previous: Listing
+        if case .cloud(let bookmark) = source {
+            previous = try previousListingForRefresh(bookmark)
+        } else {
+            previous = Listing()
+        }
+        var listing = Listing()
+        let entries = try withRoot(source) { root, descriptor in
             let folders = try Self.names(in: descriptor).sorted()
             return try folders.map { name in
                 try Task.checkCancellation()
-                do {
-                    let document = try SkillDocument.decode(
-                        readFile("SKILL.md", folder: name, root: root, descriptor: descriptor),
-                        directoryName: name)
-                    return SkillEntry(id: name, document: document, error: nil)
-                } catch is CancellationError { throw CancellationError() } catch {
-                    return SkillEntry(id: name, document: nil, error: error.localizedDescription)
+                let read = Result {
+                    try readFile(
+                        "SKILL.md", folder: name, root: root, descriptor: descriptor,
+                        source: source)
                 }
+                if case .failure(let error) = read, error is CancellationError {
+                    throw CancellationError()
+                }
+                return listing.record(read, name: name, previous: previous)
             }
         }
+        if case .cloud(let bookmark) = source {
+            try network.check()
+            try publishListing(listing, replacing: previous, bookmark: bookmark)
+        }
+        return entries
     }
 
-    func resource(_ path: String, skill: SkillDocument, source: QuickActionSource) throws -> String
+    nonisolated func resource(_ path: String, skill: SkillDocument, source: QuickActionSource)
+        async throws -> String
     {
-        try withRoot(source) { root, descriptor in
-            let current = try SkillDocument.decode(
-                readFile("SKILL.md", folder: skill.name, root: root, descriptor: descriptor),
-                directoryName: skill.name)
-            guard current == skill else { throw SkillFailure.changed }
-            guard path.split(separator: "/").first != "scripts" else {
-                throw SkillFailure.unsupportedResource
+        try Task.checkCancellation()
+        if case .cachedCloud(let bookmark) = source {
+            let listing = try cachedListing(bookmark).entries()
+            guard listing.first(where: { $0.id == skill.name })?.document == skill else {
+                throw SkillFailure.changed
             }
-            let data = try readFile(path, folder: skill.name, root: root, descriptor: descriptor)
-            guard let text = String(data: data, encoding: .utf8) else {
-                throw SkillFailure.unsupportedResource
-            }
-            return text
+            return try cachedResource(path, skill: skill, bookmark: bookmark)
         }
+        return try await providerResource(path, skill: skill, source: source)
     }
 
-    private func readFile(_ path: String, folder: String, root: URL, descriptor: Int32) throws
+    /// A prepared turn pins validated instructions; later reloads cannot revoke that snapshot.
+    nonisolated func cachedResource(_ path: String, skill: SkillDocument, bookmark: Data) throws
+        -> String
+    {
+        try Task.checkCancellation()
+        guard path.split(separator: "/").first != "scripts",
+            path.components(separatedBy: "/").allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") })
+        else { throw SkillFailure.unsupportedResource }
+        let data = try resourceCache(skill.name, bookmark: bookmark).read(
+            skill.fingerprint + ":" + path, bookmark: bookmark)
+        guard data.count <= 65_536, let text = String(data: data, encoding: .utf8) else {
+            throw SkillFailure.unsupportedResource
+        }
+        return text
+    }
+
+    private func providerResource(_ path: String, skill: SkillDocument, source: QuickActionSource)
+        throws -> String
+    {
+        guard path.split(separator: "/").first != "scripts" else {
+            throw SkillFailure.unsupportedResource
+        }
+        let text: String
+        do {
+            text = try withRoot(source) { root, descriptor in
+                let read = Result {
+                    try readFile(
+                        "SKILL.md", folder: skill.name, root: root, descriptor: descriptor,
+                        source: source)
+                }
+                let current: SkillDocument
+                if case .cloud(let bookmark) = source {
+                    current = try observeSkill(read, name: skill.name, bookmark: bookmark)
+                } else {
+                    current = try SkillDocument.decode(read.get(), directoryName: skill.name)
+                }
+                guard current == skill else { throw SkillFailure.changed }
+                let data = try readFile(
+                    path, folder: skill.name, root: root, descriptor: descriptor, source: source)
+                guard let text = String(data: data, encoding: .utf8) else {
+                    throw SkillFailure.unsupportedResource
+                }
+                return text
+            }
+        } catch {
+            if case .cloud(let bookmark) = source {
+                try invalidateResource(path, skill: skill, bookmark: bookmark, after: error)
+            }
+            throw error
+        }
+        if case .cloud(let bookmark) = source {
+            try network.check()
+            try rememberResource(path, skill: skill, bookmark: bookmark, data: Data(text.utf8))
+        }
+        return text
+    }
+
+    nonisolated func invalidateResource(
+        _ path: String, skill: SkillDocument,
+        bookmark: Data, after error: Error
+    ) throws {
+        let failure = error as NSError
+        let deleted =
+            failure.domain == NSCocoaErrorDomain
+            && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(failure.code)
+        if !deleted {
+            guard case SkillFailure.unsupportedResource = error else { return }
+        }
+        try resourceCache(skill.name, bookmark: bookmark).remove(
+            skill.fingerprint + ":" + path, bookmark: bookmark)
+    }
+
+    private nonisolated func resourceCache(_ name: String, bookmark: Data) -> SyncedResourceCache {
+        cache.group("resources", bookmark: bookmark).group(name, bookmark: bookmark)
+    }
+
+    nonisolated func rememberResource(
+        _ path: String, skill: SkillDocument, bookmark: Data,
+        data: Data
+    ) throws {
+        try resourceCache(skill.name, bookmark: bookmark).write(
+            data, name: skill.fingerprint + ":" + path, bookmark: bookmark)
+    }
+
+    /// A new lifecycle cannot reuse supporting files from an earlier identical SKILL.md.
+    func publishListing(_ listing: Listing, replacing previous: Listing, bookmark: Data) throws {
+        for name in Set(previous.documents.keys).union(listing.documents.keys)
+        where previous.documents[name] != listing.documents[name] {
+            try cache.group("resources", bookmark: bookmark).remove(name, bookmark: bookmark)
+        }
+        try cache.write(JSONEncoder().encode(listing), name: "listing", bookmark: bookmark)
+    }
+
+    /// Every authoritative instruction read updates future offline state, including resource reads.
+    func observeSkill(_ read: Result<Data, Error>, name: String, bookmark: Data) throws
+        -> SkillDocument
+    {
+        let previous = try previousListingForRefresh(bookmark)
+        var updated = previous
+        updated.documents[name] = nil
+        updated.errors[name] = nil
+        let entry = updated.record(read, name: name, previous: previous)
+        try publishListing(updated, replacing: previous, bookmark: bookmark)
+        if let document = entry.document { return document }
+        // Re-throw the actual read/parse error, never the retained cache's successful document.
+        return try SkillDocument.decode(read.get(), directoryName: name)
+    }
+
+    /// Missing/replaced directory facts invalidate metadata; transient I/O remains recoverable.
+    nonisolated func observeSkillsDirectoryFailure(_ code: Int32, bookmark: Data) throws {
+        guard [ENOENT, ENOTDIR, ELOOP].contains(code) else { return }
+        try cache.remove("resources", bookmark: bookmark)
+        try cache.write(JSONEncoder().encode(Listing()), name: "listing", bookmark: bookmark)
+    }
+
+    private func readFile(
+        _ path: String, folder: String, root: URL, descriptor: Int32, source: QuickActionSource
+    ) throws
         -> Data
     {
         try Task.checkCancellation()
@@ -50,13 +268,17 @@ actor SkillStore {
         guard parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") }) else {
             throw SkillFailure.unsupportedResource
         }
+        if case .cloud = source { try network.check() }
         let file = parts.reduce(root) { $0.appendingPathComponent($1) }
         var result: Result<Data, Error>?
         var failure: NSError?
         NSFileCoordinator().coordinate(readingItemAt: file, options: [], error: &failure) { _ in
             // Coordination materializes cloud files. The opened root remains authoritative:
             // never reopen an absolute URL after a path component may have been replaced.
-            result = Result { try Self.readRelativeFile(parts, descriptor: descriptor) }
+            result = Result {
+                if case .cloud = source { try network.check() }
+                return try Self.readRelativeFile(parts, descriptor: descriptor)
+            }
         }
         if let failure { throw failure }
         guard let result else { throw CloudConversationError.coordination }
@@ -66,7 +288,7 @@ actor SkillStore {
     /// Directory descriptors pin the selected tree; O_NOFOLLOW makes each traversal atomic.
     static func openDirectory(_ path: String) throws -> Int32 {
         let descriptor = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard descriptor >= 0 else { throw SkillFailure.unsupportedResource }
+        guard descriptor >= 0 else { throw readFailure(errno) }
         return descriptor
     }
 
@@ -98,26 +320,33 @@ actor SkillStore {
         return names
     }
 
+    /// Distinguish confirmed path changes from transient provider I/O failures.
+    static func readFailure(_ code: Int32) -> Error {
+        if [ENOENT, ENOTDIR, ELOOP].contains(code) { return SkillFailure.unsupportedResource }
+        return NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+    }
+
     /// Read only regular files through the pinned directory, never following a symbolic link.
     static func readRelativeFile(_ parts: [String], descriptor: Int32) throws -> Data {
         guard !parts.isEmpty,
             parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") })
         else { throw SkillFailure.unsupportedResource }
         var directory = dup(descriptor)
-        guard directory >= 0 else { throw SkillFailure.unsupportedResource }
+        guard directory >= 0 else { throw readFailure(errno) }
         defer { close(directory) }
         for component in parts.dropLast() {
             try Task.checkCancellation()
             let next = openat(directory, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            guard next >= 0 else { throw SkillFailure.unsupportedResource }
+            guard next >= 0 else { throw readFailure(errno) }
             close(directory)
             directory = next
         }
         let file = openat(directory, parts.last!, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
-        guard file >= 0 else { throw SkillFailure.unsupportedResource }
+        guard file >= 0 else { throw readFailure(errno) }
         defer { close(file) }
         var info = stat()
-        guard fstat(file, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+        guard fstat(file, &info) == 0 else { throw readFailure(errno) }
+        guard info.st_mode & S_IFMT == S_IFREG,
             info.st_size >= 0, info.st_size <= 65_536
         else { throw SkillFailure.unsupportedResource }
         var data = Data()
@@ -126,7 +355,7 @@ actor SkillStore {
             try Task.checkCancellation()
             let count = buffer.withUnsafeMutableBytes { read(file, $0.baseAddress!, $0.count) }
             if count < 0 && errno == EINTR { continue }
-            guard count >= 0 else { throw SkillFailure.unsupportedResource }
+            guard count >= 0 else { throw readFailure(errno) }
             if count == 0 { break }
             guard data.count + count <= 65_536 else { throw SkillFailure.unsupportedResource }
             data.append(contentsOf: buffer.prefix(count))
@@ -150,6 +379,7 @@ actor SkillStore {
             try root.setResourceValues(values)
             return try action(root, descriptor)
         case .cloud(let bookmark):
+            try network.check()
             var stale = false
             #if os(macOS)
                 let options: URL.BookmarkResolutionOptions = [.withSecurityScope]
@@ -171,9 +401,16 @@ actor SkillStore {
             else { throw CloudConversationError.notICloudFolder }
             let skills = openat(
                 descriptor, "Skills", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            guard skills >= 0 else { throw SkillFailure.unsupportedResource }
+            guard skills >= 0 else {
+                let failure = errno
+                try observeSkillsDirectoryFailure(failure, bookmark: bookmark)
+                throw Self.readFailure(failure)
+            }
             defer { close(skills) }
+            try network.check()
             return try action(root.appendingPathComponent("Skills", isDirectory: true), skills)
+        case .cachedCloud:
+            throw SyncedResourceFailure.notCached
         }
     }
 }

@@ -6,10 +6,11 @@ import UniformTypeIdentifiers
 
 /// Single conversational screen backed by the real local Embla runtime.
 struct ContentView: View {
-    @State private var model = LocalInferenceModel()
+    @State private var model: LocalInferenceModel
+    @State private var connectivity: AppConnectivity
     @State private var sheet: Sheet?
     @State private var confirmation: ChatConfirmation?
-    @State private var quickActions = QuickActionsModel()
+    @State private var quickActions: QuickActionsModel
     @State private var actionError: String?
     @State private var showQuickActions = false
     @State private var transcriptHeight: CGFloat = 0
@@ -19,6 +20,12 @@ struct ContentView: View {
     @State private var transcriptScroll = TranscriptScrollState()
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
+
+    init(network: NetworkAccess = .shared) {
+        _model = State(initialValue: LocalInferenceModel(network: network))
+        _quickActions = State(initialValue: QuickActionsModel(network: network))
+        _connectivity = State(initialValue: AppConnectivity(access: network))
+    }
 
     private enum Sheet: Identifiable {
         case settings, context, newProject
@@ -78,6 +85,18 @@ struct ContentView: View {
         NavigationStack {
             ScrollViewReader { reader in
                 VStack(spacing: 0) {
+                    #if DEBUG
+                        if ProcessInfo.processInfo.arguments.contains("--network-policy-fixture") {
+                            Button("Test connectivity: " + connectivity.snapshot.path.rawValue) {
+                                model.tools.network.updatePath(
+                                    connectivity.snapshot.localOnly ? .satisfied : .unsatisfied)
+                            }.accessibilityIdentifier("test-connectivity")
+                        }
+                    #endif
+                    if let label = connectivity.label {
+                        Text(label).font(.caption).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("connectivity-status")
+                    }
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 24) {
                             ForEach(model.messages) { message in
@@ -279,6 +298,23 @@ struct ContentView: View {
                 }
                 updateIdleTimer()
             }
+        }
+        .background(PrivacyBorder(connectivity: connectivity, snapshot: connectivity.snapshot))
+        .environment(connectivity)
+        .environment(
+            \.openURL,
+            OpenURLAction { url in
+                if ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                    do { try model.tools.network.check() } catch {
+                        actionError = error.localizedDescription
+                        return .discarded
+                    }
+                }
+                return .systemAction
+            }
+        )
+        .onChange(of: connectivity.snapshot, initial: true) { _, _ in
+            model.connectivityChanged()
         }
         .allowsHitTesting(!showHistory)
         .accessibilityHidden(showHistory)
@@ -669,6 +705,7 @@ private struct ModelSettingsView: View {
     let actions: QuickActionsModel
     @State private var activeAlert: SettingsAlert?
     @State private var chooseCloudFolder = false
+    @Environment(AppConnectivity.self) private var connectivity
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -684,6 +721,17 @@ private struct ModelSettingsView: View {
                         Button("Retry chat storage") { model.retryChatStorage() }
                             .disabled(model.busy || model.cloud.resolving)
                     }
+                }
+                Section("Connectivity") {
+                    Text(connectivity.label ?? "Network connection available")
+                        .accessibilityIdentifier("connectivity-settings-status")
+                    Text(
+                        "In privacy mode, chat and previously synced actions and skills stay available "
+                            + "on this device while internet tools "
+                            + "and new iCloud access pause. Your iCloud setting stays unchanged. "
+                            + "Previously queued iCloud transfers may resume later."
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
                 }
                 cloudSection
                 Section("Actions") {
@@ -771,7 +819,10 @@ private struct ModelSettingsView: View {
             ) { selection in
                 switch selection {
                 case .cloudConsent:
-                    Button("Choose folder") { chooseCloudFolder = true }
+                    Button("Choose folder") {
+                        if connectivity.snapshot.allowsRequests { chooseCloudFolder = true }
+                    }
+                    .disabled(!connectivity.snapshot.allowsRequests)
                 case .deleteModel:
                     Button("Delete model", role: .destructive) { model.delete() }
                 case let .cloudChoice(choice):
@@ -830,7 +881,11 @@ private struct ModelSettingsView: View {
                 isOn: Binding(
                     get: { model.cloud.enabled },
                     set: { enabled in
-                        if enabled { activeAlert = .cloudConsent } else { model.cloud.disable() }
+                        if enabled {
+                            if connectivity.snapshot.allowsRequests { activeAlert = .cloudConsent }
+                        } else {
+                            model.cloud.disable()
+                        }
                     })
             )
             .disabled(!model.chatRestored || model.busy || model.cloud.resolving)
@@ -840,6 +895,10 @@ private struct ModelSettingsView: View {
             )
             .font(.caption).foregroundStyle(.secondary)
             Text(model.cloud.status).accessibilityIdentifier("icloud-status")
+            if model.cloud.requiresScopeConsent {
+                Button("Review iCloud sync") { activeAlert = .cloudConsent }
+                    .disabled(!connectivity.snapshot.allowsRequests || model.busy)
+            }
             if let error = model.cloud.error {
                 Text(error).foregroundStyle(.red).textSelection(.enabled)
                     .accessibilityIdentifier("icloud-error")
@@ -851,7 +910,8 @@ private struct ModelSettingsView: View {
                 }
                 .disabled(model.cloud.syncing || model.busy || model.cloud.requiresScopeConsent)
                 Button("Choose iCloud folder…") { activeAlert = .cloudConsent }
-                    .disabled(model.cloud.syncing || model.busy)
+                    .disabled(
+                        model.cloud.syncing || model.busy || !connectivity.snapshot.allowsRequests)
                 Text(
                     "Turning this off stops new app writes and keeps existing cloud files. "
                         + "iCloud Drive may finish transfers already queued."

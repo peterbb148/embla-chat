@@ -1,6 +1,8 @@
 import Foundation
 import Observation
 
+import EmblaCore
+
 /// Loads the configured source; failed/missing cloud config never selects local substitutes.
 @MainActor @Observable
 public final class QuickActionsModel {
@@ -18,7 +20,7 @@ public final class QuickActionsModel {
     @ObservationIgnored private var requestID = UUID()
     @ObservationIgnored private var foreground = true
 
-    public init() {
+    public init(network: NetworkAccess = .shared) {
         do {
             let files = FileManager.default
             let documents = try files.url(
@@ -29,7 +31,8 @@ public final class QuickActionsModel {
                 appropriateFor: nil, create: true)
             storage = QuickActionStore(
                 localRoot: documents.appendingPathComponent("Actions"),
-                stateRoot: support.appendingPathComponent("EmblaChat/ActionSettings"))
+                stateRoot: support.appendingPathComponent("EmblaChat/ActionSettings"),
+                network: network)
         } catch {
             setupError = error.localizedDescription
             self.error = error.localizedDescription
@@ -41,6 +44,9 @@ public final class QuickActionsModel {
 
     public static func sourceKey(for cloud: ConversationCloudSync) -> String {
         guard cloud.enabled else { return "device" }
+        guard cloud.network.snapshot.allowsRequests else {
+            return "cloud-offline:" + cloud.configurationRevision.uuidString
+        }
         guard !cloud.requiresScopeConsent, cloud.folderAccessReady else {
             return "unavailable:" + cloud.configurationRevision.uuidString + ":" + cloud.status
         }
@@ -180,11 +186,20 @@ public final class QuickActionsModel {
         }
         let source: QuickActionSource
         if cloud.enabled {
-            guard !cloud.requiresScopeConsent, let bookmark = cloud.authorizedFolderBookmark else {
+            guard !cloud.requiresScopeConsent, let bookmark = cloud.cachedFolderBookmark else {
                 error = QuickActionError.sourceUnavailable.localizedDescription
                 return
             }
-            source = .cloud(bookmark)
+            if cloud.network.snapshot.allowsRequests {
+                guard cloud.authorizedFolderBookmark != nil else {
+                    error = QuickActionError.sourceUnavailable.localizedDescription
+                    return
+                }
+                source = .cloud(bookmark)
+            } else {
+                source = .cachedCloud(bookmark)
+                sourceDescription = "Last synced iCloud Actions copy on this device"
+            }
         } else {
             source = .device
         }

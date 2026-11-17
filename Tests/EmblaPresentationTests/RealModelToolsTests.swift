@@ -263,11 +263,13 @@ private func assertReturnedClockTimeAppears(in answer: String, call: ChatMessage
 
 /// Match full clock tokens; 12-hour values require the correct explicit AM/PM marker.
 private func containsReturnedClock(in answer: String, hour: Int, minute: Int) throws -> Bool {
-    let pattern = #"(?<![0-9:.])([0-9]{1,2})[:.]([0-9]{2})(?:[:.][0-9]{2})?"#
+    let pattern =
+        #"(?<![0-9:.])([0-9]{1,2})[:.]([0-9]{2})(?:[:.][0-9]{2})?"#
         + #"(?:\s*([aApP])\.?[mM]\.?)?(?![0-9]|[.:][0-9])"#
     let expression = try NSRegularExpression(pattern: pattern)
     let text = answer as NSString
-    return expression.matches(in: answer, range: NSRange(location: 0, length: text.length)).contains {
+    return expression.matches(in: answer, range: NSRange(location: 0, length: text.length)).contains
+    {
         guard let displayedHour = Int(text.substring(with: $0.range(at: 1))),
             let displayedMinute = Int(text.substring(with: $0.range(at: 2))),
             displayedMinute == minute
@@ -305,9 +307,11 @@ func clockAssertionsMatchWholeTimesAndCorrectMeridiem(
     .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_REGISTRY_TOOLS"] == "1"),
     .timeLimit(.minutes(5))) @MainActor
 func realRegistrySelectionRoutesOrdinaryQuestionsAcrossAllEnabledServers() async throws {
-    let root = URL(fileURLWithPath: try #require(
-        ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"]))
-    let page = try await MCPRegistryClient().page(search: "io.github.upstash/context7")
+    let root = URL(
+        fileURLWithPath: try #require(
+            ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"]))
+    let page = try await MCPRegistryClient(network: .init(initialState: .satisfied)).page(
+        search: "io.github.upstash/context7")
     let listing = try #require(page.servers.first { $0.name == "io.github.upstash/context7" })
     let endpoint = try #require(listing.endpoints.first)
     try #require(!endpoint.requiresBearerToken)
@@ -323,7 +327,8 @@ func realRegistrySelectionRoutesOrdinaryQuestionsAcrossAllEnabledServers() async
         await workspace.waitUntilIdle()
         try #require(workspace.error == nil)
         let discovered = try #require(workspace.discovered[server.id])
-        #expect(workspace.servers.first { $0.id == server.id }?.enabledTools
+        #expect(
+            workspace.servers.first { $0.id == server.id }?.enabledTools
                 == Set(discovered.map(\.name)))
     }
     let specifications = try workspace.remoteTools()
@@ -377,7 +382,8 @@ func realRegistrySelectionRoutesOrdinaryQuestionsAcrossAllEnabledServers() async
             print("ACTUAL DOCUMENTATION IDS: \(ids)")
             try #require(!ids.isEmpty)
             let matches = try ids.map { id in
-                let pattern: String = #"(?<![\w/.-])"# + NSRegularExpression.escapedPattern(for: id)
+                let pattern: String =
+                    #"(?<![\w/.-])"# + NSRegularExpression.escapedPattern(for: id)
                     + #"(?=$|[\s)\]\x60>,;:]|\.(?:\s|$))"#
                 return try NSRegularExpression(pattern: pattern).firstMatch(
                     in: model.answer, range: NSRange(model.answer.startIndex..., in: model.answer))
@@ -388,4 +394,54 @@ func realRegistrySelectionRoutesOrdinaryQuestionsAcrossAllEnabledServers() async
         let saved = try #require(try await store.load())
         #expect(saved.snapshot.messages.last?.text == model.answer)
     }
+}
+
+/// Actual pinned Metal model, offline policy, enabled remote registration, and private temp history.
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_OFFLINE_PRIVACY"] == "1"),
+    .timeLimit(.minutes(5))) @MainActor
+func realOfflinePrivacyCompactsAndRecallsWithoutRemoteDiscovery() async throws {
+    let root = URL(
+        fileURLWithPath: try #require(
+            ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"]))
+    let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    let policy = NetworkAccess(initialState: .unsatisfied)
+    let configuration = temporary.appendingPathComponent("servers.json")
+    let server = MCPServer(
+        name: "Unavailable fixture", endpoint: URL(string: "https://example.invalid/mcp")!,
+        enabledTools: ["get_current_time"])
+    try JSONEncoder().encode([server]).write(to: configuration)
+    let tools = ToolWorkspace(configuration: configuration, network: policy)
+    let manifest = try ModelManifest.bundled()
+    let store = ConversationStore(root: temporary.appendingPathComponent("Chats"))
+    let messages = (0..<5).flatMap { _ in
+        [
+            ChatMessage(role: .user, text: "Remember: the project codename is BLUE PENGUIN."),
+            ChatMessage(role: .assistant, text: "The project codename is BLUE PENGUIN."),
+        ]
+    }
+    try await store.save(
+        ConversationArchive(
+            sequence: 1,
+            snapshot: ConversationSnapshot(
+                conversationID: UUID(), messages: messages, compaction: .init())))
+    let model = LocalInferenceModel(
+        repository: ModelRepository(root: root, manifest: manifest), manifest: manifest,
+        session: EmblaRuntime.makeSession(), chatStore: store, tools: tools)
+    model.check(); await model.waitUntilIdle()
+    model.compactNow(); await model.waitUntilIdle()
+    print(
+        "REAL OFFLINE PRIVACY summary: \(model.compaction.summary); error: \(model.error ?? "none")"
+    )
+    try #require(model.error == nil && !model.compaction.summary.isEmpty)
+    #expect(model.messages == messages)
+    model.prompt = "What is the project codename? Reply with only the codename."
+    model.run(); await model.waitUntilIdle()
+    print("REAL OFFLINE PRIVACY recall: \(model.answer); error: \(model.error ?? "none")")
+    try #require(model.error == nil)
+    #expect(model.answer.uppercased().contains("BLUE PENGUIN"))
+    #expect(tools.discovered.isEmpty && tools.servers == [server])
+    model.enteredBackground(); await model.waitUntilIdle()
 }

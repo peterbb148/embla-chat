@@ -116,7 +116,7 @@ private actor ActionsFixture: QuickActionsStoring {
         case .device:
             deviceReads += 1
             return local
-        case .cloud:
+        case .cloud, .cachedCloud:
             cloudReads += 1
             if holdCloud { await withCheckedContinuation { gate = $0 } }
             if failCloud { throw CocoaError(.fileReadNoPermission) }
@@ -229,7 +229,7 @@ func switchingCloudOffRejectsLateRemoteActions() async throws {
 func changedSelectionsAndSkillActionsNeverProduceAReplacementPrompt() async throws {
     let provider = ActionsFixture()
     let model = QuickActionsModel(storage: provider)
-    let cloud = ConversationCloudSync()
+    let cloud = ConversationCloudSync(network: .init(initialState: .satisfied))
     model.reload(using: cloud)
     await model.waitUntilIdle()
     let selected = try #require(model.actions.first)

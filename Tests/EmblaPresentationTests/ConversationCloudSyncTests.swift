@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import EmblaCore
 @testable import EmblaPresentation
@@ -1197,4 +1198,62 @@ func projectEditsRecomputePendingConflictChoicesWithoutManualRefresh(operation: 
     await cloud.waitUntilIdle()
     #expect(cloud.choices.isEmpty && cloud.error == nil)
     #expect(await provider.document.current == edited)
+}
+
+@Test(arguments: [false, true]) @MainActor
+func connectivityRecoveryCannotOpenPendingOrFailedFolderPermissions(_ previouslyOn: Bool) async throws {
+    let old = Data("durable synthetic folder".utf8)
+    let proposed = Data("unsaved synthetic replacement".utf8)
+    let opened = Mutex<[Data]>([])
+    let provider = SyncProviderFixture(.init())
+    let policy = NetworkAccess(initialState: .satisfied)
+    let cloud = ConversationCloudSync(factory: { bookmark in
+        opened.withLock { $0.append(bookmark) }
+        return provider
+    }, network: policy)
+    cloud.restore(enabled: previouslyOn, bookmark: previouslyOn ? old : nil, base: nil)
+    let before = opened.withLock { $0 }
+    let gate = SyncCheckpointGate()
+    cloud.persist = {
+        await gate.blockOnce()
+        throw CloudConversationError.coordination
+    }
+    let pending = Task { try await cloud.enable(bookmark: proposed) }
+    do { try await gate.waitForEntry() } catch {
+        await gate.release()
+        pending.cancel()
+        throw error
+    }
+    policy.updatePath(.unsatisfied)
+    cloud.connectivityChanged()
+    policy.updatePath(.satisfied)
+    policy.activateRequests(after: policy.snapshot.revision)
+    cloud.connectivityChanged()
+    #expect(opened.withLock { $0 } == before)
+    #expect(!cloud.folderAccessReady && cloud.authorizedFolderBookmark == nil)
+    #expect(cloud.cachedFolderBookmark == nil)
+    await gate.release()
+    await #expect(throws: CloudConversationError.coordination) { try await pending.value }
+    policy.updatePath(.unsatisfied)
+    cloud.connectivityChanged()
+    policy.updatePath(.satisfied)
+    policy.activateRequests(after: policy.snapshot.revision)
+    cloud.connectivityChanged()
+    #expect(opened.withLock { $0 } == before)
+    #expect(cloud.enabled == previouslyOn && !cloud.folderAccessReady)
+    #expect(cloud.cachedFolderBookmark == nil)
+    #expect(cloud.error != nil)
+    policy.updatePath(.unsatisfied)
+    cloud.connectivityChanged()
+    cloud.persist = {}
+    try await cloud.enable(bookmark: proposed)
+    #expect(opened.withLock { $0 } == before && !cloud.folderAccessReady)
+    #expect(cloud.cachedFolderBookmark == proposed)
+    policy.updatePath(.satisfied)
+    policy.activateRequests(after: policy.snapshot.revision)
+    cloud.connectivityChanged()
+    #expect(opened.withLock { $0.last } == proposed)
+    #expect(cloud.authorizedFolderBookmark == proposed)
+    cloud.pause()
+    await cloud.waitUntilIdle()
 }

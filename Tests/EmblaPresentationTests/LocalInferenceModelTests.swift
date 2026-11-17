@@ -251,9 +251,10 @@ func followUpIncludesPriorTurnsAndNewChatResetsContext() async throws {
     model.prompt = "A new conversation"
     model.run()
     await model.waitUntilIdle()
-    #expect(backend.encodedMessages.last == [
-        ConversationMessage(role: .user, content: "A new conversation")
-    ])
+    #expect(
+        backend.encodedMessages.last == [
+            ConversationMessage(role: .user, content: "A new conversation")
+        ])
     #expect(model.messages.count == 2)
 }
 
@@ -383,10 +384,10 @@ func repeatedCompactionRetainsTranscriptAndRecentTurns() async throws {
     #expect(model.messages.count == 10)
     #expect(model.compaction.summarizedMessageCount == 4)
     #expect(!model.compaction.summary.isEmpty)
-    #expect(backend.calls == 7) // Five replies and two real summary operations.
+    #expect(backend.calls == 7)  // Five replies and two real summary operations.
     let finalContext = try #require(backend.encodedMessages.last)
     #expect(finalContext.first?.role == .system)
-    #expect(finalContext.count == 6) // Summary, two exchanges, current user.
+    #expect(finalContext.count == 6)  // Summary, two exchanges, current user.
     #expect(finalContext[1].content.hasPrefix("Turn 2:"))
     #expect(model.messages.first?.text.hasPrefix("Turn 0:") == true)
     model.newChat()
@@ -411,7 +412,7 @@ func emptySummaryFailsWithoutDroppingContextOrTranscript() async throws {
     #expect(model.messages.count == 8)
     #expect(model.messages.last?.state == .failed)
     #expect(model.messages.first?.text.hasPrefix("Turn 0:") == true)
-    #expect(backend.calls == 4) // Three replies and one rejected empty summary.
+    #expect(backend.calls == 4)  // Three replies and one rejected empty summary.
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
@@ -437,9 +438,10 @@ func newChatDuringCompactionCancelsSummaryAndClearsAllContext() async throws {
     model.prompt = "Fresh conversation"
     model.run()
     await model.waitUntilIdle()
-    #expect(backend.encodedMessages.last == [
-        ConversationMessage(role: .user, content: "Fresh conversation")
-    ])
+    #expect(
+        backend.encodedMessages.last == [
+            ConversationMessage(role: .user, content: "Fresh conversation")
+        ])
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
@@ -526,9 +528,10 @@ func retryAfterFailedSummaryExcludesTheEmptyFailedAssistantTurn() async throws {
     #expect(model.error == nil && model.messages.last?.state == .complete)
     #expect(model.messages[7].id == failedID && model.messages[7].state == .failed)
     #expect(backend.calls == 6)
-    #expect(!backend.encodedMessages.contains { context in
-        context.contains { $0.role == .assistant && $0.content.isEmpty && $0.reasoning == nil }
-    })
+    #expect(
+        !backend.encodedMessages.contains { context in
+            context.contains { $0.role == .assistant && $0.content.isEmpty && $0.reasoning == nil }
+        })
 }
 
 @Test @MainActor
@@ -587,7 +590,8 @@ func controllerRecoversPersistedPartialReplyWithoutRestartingGeneration() async 
     let root = fixture.root.appendingPathComponent("Conversation")
     let store = ConversationStore(root: root)
     let snapshot = ConversationSnapshot(
-        conversationID: UUID(), messages: [
+        conversationID: UUID(),
+        messages: [
             ChatMessage(role: .user, text: "Original request"),
             ChatMessage(role: .assistant, text: "Partial output", state: .streaming),
         ], compaction: CompactionState())
@@ -709,15 +713,18 @@ func retryRecreatesChatStoreAfterItsInitialLocationBecomesAvailable() async thro
     #expect(model.conversationID == snapshot.conversationID && model.canRun)
 }
 
-
 /// Clearly labelled saved turns, used to test compaction policy rather than model quality.
 private func manualCompactionArchive() -> ConversationArchive {
     let messages = (0..<4).flatMap { index in
-        [ChatMessage(role: .user, text: "Fixture requirement \(index)"),
-         ChatMessage(role: .assistant, text: "Fixture answer \(index)")]
+        [
+            ChatMessage(role: .user, text: "Fixture requirement \(index)"),
+            ChatMessage(role: .assistant, text: "Fixture answer \(index)"),
+        ]
     }
-    return ConversationArchive(sequence: 1, snapshot: ConversationSnapshot(
-        conversationID: UUID(), messages: messages, compaction: CompactionState()),
+    return ConversationArchive(
+        sequence: 1,
+        snapshot: ConversationSnapshot(
+            conversationID: UUID(), messages: messages, compaction: CompactionState()),
         draft: "Current draft")
 }
 
@@ -748,9 +755,10 @@ func manualCompactionWorksBelowThresholdAndPersistsWithoutAddingVisibleTurns() a
     #expect(backend.calls == 1)
     model.run()
     await model.waitUntilIdle()
-    #expect(backend.encodedMessages.contains {
-        $0.first?.content.hasPrefix("Summary of earlier conversation") == true
-    })
+    #expect(
+        backend.encodedMessages.contains {
+            $0.first?.content.hasPrefix("Summary of earlier conversation") == true
+        })
     model.compactNow()
     await model.waitUntilIdle()
     #expect(model.compaction.summarizedMessageCount == 6)
@@ -803,7 +811,8 @@ func usageCountsTheRetainedContextAndDraftWithoutLoadingTheEngine() async throws
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let store = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
     var archive = manualCompactionArchive()
-    archive.snapshot.compaction = CompactionState(summary: "Retained fixture fact", summarizedMessageCount: 4)
+    archive.snapshot.compaction = CompactionState(
+        summary: "Retained fixture fact", summarizedMessageCount: 4)
     try await store.save(archive)
     let counter = CapturedContextCount()
     let backend = PresentationBackend()
@@ -823,7 +832,9 @@ func usageCountsTheRetainedContextAndDraftWithoutLoadingTheEngine() async throws
         #expect(usage.inputTokens == 42)
         #expect(usage.capacity == 8192)
         #expect(usage.replyReserve == 512)
-    } else { Issue.record("Expected exact fixture-counter result") }
+    } else {
+        Issue.record("Expected exact fixture-counter result")
+    }
     model.prompt = ""
     await model.waitForContextUsage()
     #expect(await counter.messages.last == ConversationMessage(role: .user, content: ""))
@@ -883,7 +894,8 @@ func failedManualSummarySaveLeavesThePreviouslyCommittedContextIntact() async th
     try await file.save(archive)
     let store = ManualSummaryStore(wrapped: file, failSummary: true)
     let backend = PresentationBackend(pauseFirst: false)
-    let model = LocalInferenceModel(repository: fixture.repository, manifest: fixture.manifest,
+    let model = LocalInferenceModel(
+        repository: fixture.repository, manifest: fixture.manifest,
         session: InferenceSession { _, _ in backend }, chatStore: store)
     model.check(); await model.waitUntilIdle()
     model.compactNow(); await model.waitUntilIdle()
@@ -900,7 +912,8 @@ func draftCheckpointsCannotQueueOldContextBehindManualSummaryCommit() async thro
     try await file.save(manualCompactionArchive())
     let store = ManualSummaryStore(wrapped: file, holdSummary: true)
     let backend = PresentationBackend(pauseFirst: false)
-    let model = LocalInferenceModel(repository: fixture.repository, manifest: fixture.manifest,
+    let model = LocalInferenceModel(
+        repository: fixture.repository, manifest: fixture.manifest,
         session: InferenceSession { _, _ in backend }, chatStore: store)
     model.check(); await model.waitUntilIdle()
     model.compactNow()
@@ -940,7 +953,8 @@ func staleCountCannotReplaceTheCurrentDraftMeasurement() async throws {
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let counter = DelayedContextCounter()
     let backend = PresentationBackend()
-    let model = await fixture.model(session: InferenceSession { _, _ in backend },
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend },
         countTokens: { _, _ in await counter.count() })
     try await counter.waitForEntry()
     let firstWait = Task { await model.waitForContextUsage() }
@@ -951,10 +965,15 @@ func staleCountCannotReplaceTheCurrentDraftMeasurement() async throws {
     await firstWait.value
     if case .ready(let usage) = model.contextUsage {
         #expect(usage.inputTokens == 22)
-    } else { Issue.record("Current measurement was lost") }
+    } else {
+        Issue.record("Current measurement was lost")
+    }
     model.enteredBackground()
     await model.waitUntilIdle()
-    if case .unavailable = model.contextUsage {} else { Issue.record("Background count stayed active") }
+    if case .unavailable = model.contextUsage {
+    } else {
+        Issue.record("Background count stayed active")
+    }
 }
 
 private actor FailingContextCount {
@@ -971,30 +990,38 @@ func countingFailureHasNoInventedUsageAndExplicitRetryCanRecover() async throws 
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let counter = FailingContextCount()
     let backend = PresentationBackend()
-    let model = await fixture.model(session: InferenceSession { _, _ in backend },
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend },
         countTokens: { _, _ in try await counter.count() })
     await model.waitForContextUsage()
     if case .failed(let message) = model.contextUsage {
         #expect(!message.isEmpty)
-    } else { Issue.record("Counting failure did not remain visible") }
+    } else {
+        Issue.record("Counting failure did not remain visible")
+    }
     model.refreshContextUsage()
     await model.waitForContextUsage()
     if case .ready(let usage) = model.contextUsage {
         #expect(usage.inputTokens == 17)
-    } else { Issue.record("Explicit count retry failed") }
+    } else {
+        Issue.record("Explicit count retry failed")
+    }
     #expect(backend.calls == 0)
     #expect(!model.loaded)
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
-func completedManualSummarySaveIsExplicitlyNonCancellableAndKeepsDiskAndMemoryConsistent() async throws {
+func completedManualSummarySaveIsExplicitlyNonCancellableAndKeepsDiskAndMemoryConsistent()
+    async throws
+{
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let file = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
     let archive = manualCompactionArchive()
     try await file.save(archive)
     let store = ManualSummaryStore(wrapped: file, holdSummary: true)
     let backend = PresentationBackend(pauseFirst: false)
-    let model = LocalInferenceModel(repository: fixture.repository, manifest: fixture.manifest,
+    let model = LocalInferenceModel(
+        repository: fixture.repository, manifest: fixture.manifest,
         session: InferenceSession { _, _ in backend }, chatStore: store)
     model.check(); await model.waitUntilIdle()
     model.compactNow()
@@ -1013,7 +1040,6 @@ func completedManualSummarySaveIsExplicitlyNonCancellableAndKeepsDiskAndMemoryCo
     #expect(try await file.load()?.snapshot.compaction == model.compaction)
 }
 
-
 @Test(.timeLimit(.minutes(1))) @MainActor
 func draftEditedDuringTheFinalManualSaveIsCheckpointedAfterTheBarrierClears() async throws {
     let fixture = try PresentationFixture(); defer { fixture.clean() }
@@ -1021,7 +1047,8 @@ func draftEditedDuringTheFinalManualSaveIsCheckpointedAfterTheBarrierClears() as
     try await file.save(manualCompactionArchive())
     let store = ManualSummaryStore(wrapped: file, holdSummary: true, holdSummarySave: 2)
     let backend = PresentationBackend(pauseFirst: false)
-    let model = LocalInferenceModel(repository: fixture.repository, manifest: fixture.manifest,
+    let model = LocalInferenceModel(
+        repository: fixture.repository, manifest: fixture.manifest,
         session: InferenceSession { _, _ in backend }, chatStore: store)
     model.check(); await model.waitUntilIdle()
     model.compactNow()
@@ -1041,12 +1068,14 @@ func twoChatsKeepExactSummariesAndDraftsAcrossNavigationAndRestart() async throw
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let root = fixture.root.appendingPathComponent("History")
     let first = ConversationSnapshot(
-        conversationID: UUID(), messages: [
+        conversationID: UUID(),
+        messages: [
             ChatMessage(role: .user, text: "First chat requirement"),
             ChatMessage(role: .assistant, text: "First reply"),
             ChatMessage(role: .user, text: "Follow up"),
             ChatMessage(role: .assistant, text: "Second reply"),
-        ], compaction: CompactionState(summary: "Retain first requirement", summarizedMessageCount: 2))
+        ],
+        compaction: CompactionState(summary: "Retain first requirement", summarizedMessageCount: 2))
     try await ConversationStore(root: root).save(
         ConversationArchive(sequence: 1, snapshot: first, draft: "First unsent draft"))
     let backend = PresentationBackend(pauseFirst: false)
@@ -1096,16 +1125,24 @@ func projectMemoryIsCountedAndSentOnlyToChatsInTheAssignedProject() async throws
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let source = ChatMessage(role: .user, text: "Synthetic source fact BLUE PENGUIN")
     let chatID = UUID()
-    let project = ChatProject(name: "A", memory: [ProjectMemoryEntry(text: "BLUE PENGUIN",
-        sourceConversationID: chatID, sourceMessageID: source.id)])
+    let project = ChatProject(
+        name: "A",
+        memory: [
+            ProjectMemoryEntry(
+                text: "BLUE PENGUIN",
+                sourceConversationID: chatID, sourceMessageID: source.id)
+        ])
     let other = ChatProject(name: "B")
-    var archive = ConversationArchive(sequence: 1, snapshot: ConversationSnapshot(
-        conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
+    var archive = ConversationArchive(
+        sequence: 1,
+        snapshot: ConversationSnapshot(
+            conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
     archive.projects = [project, other]
     let store = ConversationStore(root: fixture.root.appendingPathComponent("Projects"))
     try await store.save(archive)
     let backend = PresentationBackend(pauseFirst: false)
-    let model = await fixture.model(session: InferenceSession { _, _ in backend }, chatStore: store,
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: store,
         countTokens: { _, messages in messages.reduce(0) { $0 + $1.content.count + 4 } })
     model.newChat(in: project.id); await model.waitUntilIdle()
     await model.waitForContextUsage()
@@ -1135,11 +1172,17 @@ func oversizedProjectMemoryFailsClearlyWithoutTruncatingOrGenerating() async thr
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let source = ChatMessage(role: .user, text: "Synthetic source for an oversized note")
     let chatID = UUID()
-    let project = ChatProject(name: "Large notes", memory: [ProjectMemoryEntry(
-        text: String(repeating: "Synthetic saved note. ", count: 500),
-        sourceConversationID: chatID, sourceMessageID: source.id)])
-    var archive = ConversationArchive(sequence: 1, snapshot: ConversationSnapshot(
-        conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
+    let project = ChatProject(
+        name: "Large notes",
+        memory: [
+            ProjectMemoryEntry(
+                text: String(repeating: "Synthetic saved note. ", count: 500),
+                sourceConversationID: chatID, sourceMessageID: source.id)
+        ])
+    var archive = ConversationArchive(
+        sequence: 1,
+        snapshot: ConversationSnapshot(
+            conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
     archive.projects = [project]
     let store = ConversationStore(root: fixture.root.appendingPathComponent("Projects"))
     try await store.save(archive)
@@ -1159,12 +1202,16 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
     let fixture = try PresentationFixture(); defer { fixture.clean() }
     let file = fixture.root.appendingPathComponent("servers.json")
     let setup = ToolWorkspace(configuration: file)
-    let server = MCPServer(name: "Synthetic offline catalog",
+    let server = MCPServer(
+        name: "Synthetic offline catalog",
         endpoint: URL(string: "https://example.invalid/mcp")!)
     try await setup.saveServer(server)
-    try await setup.acceptDiscoveredTools([
-        MCPTool(name: "synthetic_clock", description: "Fixture only, never called.",
-            inputSchema: .object(["type": .string("object")]))], serverID: server.id)
+    try await setup.acceptDiscoveredTools(
+        [
+            MCPTool(
+                name: "synthetic_clock", description: "Fixture only, never called.",
+                inputSchema: .object(["type": .string("object")]))
+        ], serverID: server.id)
     setup.pause()
     let workspace = ToolWorkspace(configuration: file)
     let store = ConversationStore(root: fixture.root.appendingPathComponent("chat"))
@@ -1172,7 +1219,8 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
     try await store.save(archive)
     let model = await fixture.model(
         session: InferenceSession { _, _ in PresentationBackend(pauseFirst: false) },
-        chatStore: store, countTokens: { _, messages in
+        chatStore: store,
+        countTokens: { _, messages in
             messages.reduce(0) { $0 + $1.content.count }
         }, tools: workspace)
     await model.waitForContextUsage()
@@ -1188,70 +1236,180 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
 }
 
 #if os(macOS)
-/// Reuses the loopback MCP wire fixture; no production client or server is substituted.
-private final class PlanningWireFixture {
-    let process = Process()
-    let port: Int
+    /// Reuses the loopback MCP wire fixture; no production client or server is substituted.
+    private final class PlanningWireFixture {
+        let process = Process()
+        let port: Int
 
-    init() throws {
-        let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Fixtures/mcp_server.py")
-        let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", script.path]
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        port = try #require(Int(String(decoding: pipe.fileHandleForReading.availableData,
-            as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+        init() throws {
+            let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                .deletingLastPathComponent().appendingPathComponent("Fixtures/mcp_server.py")
+            let pipe = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["python3", script.path]
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            port = try #require(
+                Int(
+                    String(
+                        decoding: pipe.fileHandleForReading.availableData,
+                        as: UTF8.self
+                    ).trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+
+        func url(_ path: String) -> URL { URL(string: "http://127.0.0.1:\(port)/\(path)")! }
+        func stop() { if process.isRunning { process.terminate(); process.waitUntilExit() } }
     }
 
-    func url(_ path: String) -> URL { URL(string: "http://127.0.0.1:\(port)/\(path)")! }
-    func stop() { if process.isRunning { process.terminate(); process.waitUntilExit() } }
-}
+    @Test @MainActor func planningConnectsOnlyMissingSchemasAndRetainsAnOfflineServersCatalog()
+        async throws
+    {
+        let fixture = try PresentationFixture(); defer { fixture.clean() }
+        let wire = try PlanningWireFixture(); defer { wire.stop() }
+        let workspace = ToolWorkspace(
+            configuration: fixture.root.appendingPathComponent("servers.json"))
+        let offline = MCPServer(
+            name: "Known offline synthetic endpoint",
+            endpoint: URL(string: "https://example.invalid/mcp")!)
+        try await workspace.saveServer(offline)
+        try await workspace.acceptDiscoveredTools(
+            [
+                MCPTool(
+                    name: "cached", description: "Saved synthetic metadata",
+                    inputSchema: .object(["type": .string("object")]))
+            ], serverID: offline.id)
+        let missing = MCPServer(name: "Missing synthetic catalog", endpoint: wire.url("json"))
+        try await workspace.saveServer(missing)
+        workspace.pause()
+        try await workspace.preparePlanningMetadata(
+            using: ConversationCloudSync(network: .init(initialState: .satisfied)))
+        #expect(try workspace.remoteTools().map(\.name).sorted() == ["cached", "echo"])
+        #expect(workspace.discovered[offline.id] == nil)
+        #expect(workspace.discovered[missing.id]?.map(\.name) == ["echo"])
+    }
 
-@Test @MainActor func planningConnectsOnlyMissingSchemasAndRetainsAnOfflineServersCatalog()
-    async throws
-{
-    let fixture = try PresentationFixture(); defer { fixture.clean() }
-    let wire = try PlanningWireFixture(); defer { wire.stop() }
-    let workspace = ToolWorkspace(
-        configuration: fixture.root.appendingPathComponent("servers.json"))
-    let offline = MCPServer(name: "Known offline synthetic endpoint",
-        endpoint: URL(string: "https://example.invalid/mcp")!)
-    try await workspace.saveServer(offline)
-    try await workspace.acceptDiscoveredTools([
-        MCPTool(name: "cached", description: "Saved synthetic metadata",
-            inputSchema: .object(["type": .string("object")]))], serverID: offline.id)
-    let missing = MCPServer(name: "Missing synthetic catalog", endpoint: wire.url("json"))
-    try await workspace.saveServer(missing)
-    workspace.pause()
-    try await workspace.preparePlanningMetadata(using: ConversationCloudSync())
-    #expect(try workspace.remoteTools().map(\.name).sorted() == ["cached", "echo"])
-    #expect(workspace.discovered[offline.id] == nil)
-    #expect(workspace.discovered[missing.id]?.map(\.name) == ["echo"])
-}
+    @Test(arguments: [false, true]) @MainActor
+    func contextMetadataRetryCanBeStoppedAndCancelsOnInactivity(_ inactive: Bool) async throws {
+        let fixture = try PresentationFixture(); defer { fixture.clean() }
+        let wire = try PlanningWireFixture(); defer { wire.stop() }
+        let workspace = ToolWorkspace(
+            configuration: fixture.root.appendingPathComponent("servers.json"))
+        try await workspace.saveServer(
+            MCPServer(name: "Slow synthetic discovery", endpoint: wire.url("slow")))
+        let backend = PresentationBackend(pauseFirst: false)
+        let model = await fixture.model(
+            session: InferenceSession { _, _ in backend }, tools: workspace)
+        model.prompt = "Unsent synthetic draft"
+        model.retryContextUsage()
+        #expect(model.busy && model.running)
+        try await Task.sleep(for: .milliseconds(150))
+        if inactive { model.becameInactive() } else { model.stop() }
+        await model.waitUntilIdle()
+        #expect(!model.busy && !model.running)
+        #expect(model.status == "Stopped. You can retry.")
+        #expect(workspace.servers.first?.lastDiscoveredTools == nil)
+        #expect(model.messages.isEmpty && model.prompt == "Unsent synthetic draft")
+        #expect(backend.calls == 0)
+    }
+#endif
 
-@Test(arguments: [false, true]) @MainActor
-func contextMetadataRetryCanBeStoppedAndCancelsOnInactivity(_ inactive: Bool) async throws {
+@Test @MainActor func offlineLocalChatAndCompactionWorkWithEnabledRemoteServers() async throws {
     let fixture = try PresentationFixture(); defer { fixture.clean() }
-    let wire = try PlanningWireFixture(); defer { wire.stop() }
-    let workspace = ToolWorkspace(
-        configuration: fixture.root.appendingPathComponent("servers.json"))
-    try await workspace.saveServer(
-        MCPServer(name: "Slow synthetic discovery", endpoint: wire.url("slow")))
+    let policy = NetworkAccess(initialState: .unsatisfied)
+    let configuration = fixture.root.appendingPathComponent("offline-servers.json")
+    let server = MCPServer(
+        name: "Offline synthetic server", endpoint: URL(string: "https://example.invalid/mcp")!,
+        enabledTools: ["current_time"])
+    try JSONEncoder().encode([server]).write(to: configuration)
+    let tools = ToolWorkspace(configuration: configuration, network: policy)
+    let store = ConversationStore(root: fixture.root.appendingPathComponent("offline-chat"))
+    let saved = manualCompactionArchive()
+    try await store.save(saved)
     let backend = PresentationBackend(pauseFirst: false)
-    let model = await fixture.model(session: InferenceSession { _, _ in backend }, tools: workspace)
-    model.prompt = "Unsent synthetic draft"
-    model.retryContextUsage()
-    #expect(model.busy && model.running)
-    try await Task.sleep(for: .milliseconds(150))
-    if inactive { model.becameInactive() } else { model.stop() }
+    let model = await fixture.model(
+        session: InferenceSession { _, _ in backend }, chatStore: store, tools: tools)
+    model.compactNow()
     await model.waitUntilIdle()
-    #expect(!model.busy && !model.running)
-    #expect(model.status == "Stopped. You can retry.")
-    #expect(workspace.servers.first?.lastDiscoveredTools == nil)
-    #expect(model.messages.isEmpty && model.prompt == "Unsent synthetic draft")
-    #expect(backend.calls == 0)
+    #expect(model.error == nil && !model.compaction.summary.isEmpty)
+    #expect(model.messages == saved.snapshot.messages && model.prompt == saved.draft)
+    model.prompt = "Synthetic offline local question"
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.error == nil && model.messages.last?.state == .complete)
+    #expect(tools.servers == [server] && tools.discovered.isEmpty)
+    #expect(
+        backend.encodedMessages.contains { messages in
+            messages.contains { $0.content.contains("Network tools are unavailable") }
+        })
+    try await model.flushChatStorage()
+    #expect(model.storageError == nil)
 }
+
+#if os(macOS)
+    @Test @MainActor
+    func losingConnectivityDuringDiscoveryFailsTheSubmittedTurnWithoutFallbackOrReplay()
+        async throws
+    {
+        let fixture = try PresentationFixture(); defer { fixture.clean() }
+        let wire = try PlanningWireFixture(); defer { wire.stop() }
+        let policy = NetworkAccess(initialState: .satisfied)
+        let workspace = ToolWorkspace(
+            configuration: fixture.root.appendingPathComponent("servers.json"), network: policy)
+        try await workspace.saveServer(
+            MCPServer(name: "Slow discovery fixture", endpoint: wire.url("slow")))
+        let backend = PresentationBackend(pauseFirst: false)
+        let model = await fixture.model(
+            session: InferenceSession { _, _ in backend }, tools: workspace)
+        model.prompt = "Retrieve live synthetic data"
+        model.run()
+        let clock = ContinuousClock()
+        let start = clock.now
+        while clock.now - start < .seconds(10) {
+            let (bytes, _) = try await URLSession.shared.data(from: wire.url("request-counts"))
+            let counts = try JSONDecoder().decode([String: [String: Int]].self, from: bytes)
+            if counts["/slow"]?["server/discover"] == 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let (bytes, _) = try await URLSession.shared.data(from: wire.url("request-counts"))
+        let counts = try JSONDecoder().decode([String: [String: Int]].self, from: bytes)
+        try #require(counts["/slow"]?["server/discover"] == 1)
+        policy.updatePath(.unsatisfied)
+        model.connectivityChanged()
+        await model.waitUntilIdle()
+        #expect(model.error == NetworkAccessFailure.offline.localizedDescription)
+        #expect(model.messages.first?.text == "Retrieve live synthetic data")
+        #expect(model.messages.last?.state != .complete && backend.calls == 0)
+        policy.updatePath(.satisfied)
+        policy.activateRequests(after: policy.snapshot.revision)
+        model.connectivityChanged()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!model.busy && backend.calls == 0 && workspace.discovered.isEmpty)
+    }
+#endif
+
+#if os(macOS)
+    @Test @MainActor func anOnDemandPathUpgradeRetainsPreparedToolClientsAndGrants() async throws {
+        let fixture = try PresentationFixture(); defer { fixture.clean() }
+        let wire = try PlanningWireFixture(); defer { wire.stop() }
+        let policy = NetworkAccess(initialState: .requiresConnection)
+        let workspace = ToolWorkspace(
+            configuration: fixture.root.appendingPathComponent("servers.json"), network: policy)
+        let server = MCPServer(name: "Synthetic on-demand server", endpoint: wire.url("json"))
+        try await workspace.saveServer(server)
+        let backend = PresentationBackend(pauseFirst: false)
+        let model = await fixture.model(
+            session: InferenceSession { _, _ in backend }, tools: workspace)
+        model.connectivityChanged()
+        try await workspace.prepare(using: model.cloud)
+        let revision = workspace.revision
+        let names = workspace.servers.first?.enabledTools
+        policy.updatePath(.satisfied)
+        model.connectivityChanged()
+        #expect(workspace.revision == revision && workspace.servers.first?.enabledTools == names)
+        #expect(workspace.discovered[server.id]?.isEmpty == false)
+        let result = try await workspace.remoteCall(
+            serverID: server.id, name: "echo", arguments: ["text": .string("Kept connection")])
+        #expect(try result.text().contains("Kept connection"))
+    }
 #endif

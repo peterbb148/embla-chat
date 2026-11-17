@@ -99,6 +99,8 @@ public final class LocalInferenceModel {
     @ObservationIgnored private var activeRun: GenerationRun?
     @ObservationIgnored private var operationID: UUID?
     @ObservationIgnored private var pendingUnload = false
+    @ObservationIgnored private var networkInterruption: String?
+    @ObservationIgnored private var appliedNetworkAdmission: Bool?
     @ObservationIgnored private var pendingClear = false
     @ObservationIgnored private var pendingSelection: UUID?
     @ObservationIgnored private var pendingProjectID: UUID?
@@ -111,14 +113,14 @@ public final class LocalInferenceModel {
     }
 
     /// Production always uses the pinned Embla runtime and app-managed model storage.
-    public init() {
-        tools = ToolWorkspace()
+    public init(network: NetworkAccess = .shared) {
+        tools = ToolWorkspace(network: network)
         session = EmblaRuntime.makeSession()
         let tokenizer = EmblaPromptTokenizer()
         countTokens = { directory, messages in
             try await tokenizer.count(messages: messages, in: directory)
         }
-        cloud = ConversationCloudSync()
+        cloud = ConversationCloudSync(network: network)
         configureCloud()
         chatStoreFactory = { ConversationStore(root: try ConversationStore.defaultRoot()) }
         do { chatStore = try chatStoreFactory?() } catch {
@@ -129,7 +131,8 @@ public final class LocalInferenceModel {
             let manifest = try ModelManifest.bundled()
             self.manifest = manifest
             repository = ModelRepository(
-                root: try ModelRepository.defaultRoot(), manifest: manifest)
+                root: try ModelRepository.defaultRoot(), manifest: manifest,
+                downloader: HTTPAssetDownloader(network: network))
         } catch {
             self.error = error.localizedDescription
             status = "Model setup is unavailable."
@@ -149,7 +152,7 @@ public final class LocalInferenceModel {
         self.manifest = manifest
         self.session = session
         self.countTokens = countTokens
-        self.cloud = cloud ?? ConversationCloudSync()
+        self.cloud = cloud ?? ConversationCloudSync(network: self.tools.network)
         configureCloud()
         self.chatStore = chatStore
         self.chatStoreFactory = chatStoreFactory
@@ -218,8 +221,9 @@ public final class LocalInferenceModel {
                     transcript: self.conversationMessages(), state: self.compaction,
                     draft: self.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     projectMemory: try self.projectContext(),
-                    instructions: try self.tools.instructions(using: self.cloud),
-                    requestContext: try self.tools.requestContext(using: self.cloud))
+                    instructions: try self.tools.instructions(using: self.cloud, forRequest: false),
+                    requestContext: try self.tools.requestContext(
+                        using: self.cloud, forRequest: false))
                 let count = try await countTokens(directory, context)
                 try Task.checkCancellation()
                 guard self.usageRequest == request else { return }
@@ -305,8 +309,28 @@ public final class LocalInferenceModel {
 
     /// Cancels work and releases the loaded model once all engine activity has drained.
     public func becameActive() {
+        tools.network.refresh()
         cloud.setForeground(true)
         usageActive = true
+        refreshContextUsage()
+    }
+
+    /// Network-dependent work fails explicitly; local-only generation can continue unchanged.
+    public func connectivityChanged() {
+        let admitted = tools.network.snapshot.allowsRequests
+        if appliedNetworkAdmission == admitted {
+            refreshContextUsage()
+            return
+        }
+        appliedNetworkAdmission = admitted
+        do { try tools.network.check() } catch {
+            if running && tools.requestHasNetworkDependency {
+                networkInterruption = error.localizedDescription
+                stop()
+            }
+        }
+        cloud.connectivityChanged()
+        tools.connectivityChanged(using: cloud)
         refreshContextUsage()
     }
 
@@ -341,6 +365,10 @@ public final class LocalInferenceModel {
             (operation != .generate && operation != .compact) || chatRestored
         else { return }
         busy = true
+        networkInterruption = nil
+        if operation == .generate || operation == .compact || operation == .refreshTools {
+            tools.resetRequestPreparation()
+        }
         downloading = operation == .download
         running = operation == .generate || operation == .compact || operation == .refreshTools
         if operation != .unload && repository != nil { error = nil }
@@ -407,7 +435,10 @@ public final class LocalInferenceModel {
                 if operation == .check || operation == .download || operation == .delete {
                     readyDirectory = nil
                 }
-                if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                if let networkInterruption {
+                    self.error = networkInterruption
+                    status = "Network operation interrupted. Retry explicitly when connected."
+                } else if error is CancellationError || (error as? URLError)?.code == .cancelled {
                     status = "Stopped. You can retry."
                 } else {
                     self.error = error.localizedDescription
@@ -443,7 +474,9 @@ public final class LocalInferenceModel {
         metrics = nil
         try await saveChatNow()
         try await tools.prepare(using: cloud)
+        try tools.validateRequestNetwork()
         try await loadModelIfNeeded(repository: repository)
+        try tools.validateRequestNetwork()
         try Task.checkCancellation()
         let transcript = messages.dropLast().map {
             ConversationMessage(
@@ -499,7 +532,8 @@ public final class LocalInferenceModel {
         let configuration = tools.revision
         for step in 0...4 {
             try Task.checkCancellation()
-            guard configuration == tools.revision else { throw SkillFailure.changed }
+            try tools.validateRequestNetwork()
+            try tools.validateRequestConfiguration(configuration, using: cloud)
             let run = try await session.generate(
                 messages: context,
                 options: GenerationOptions(
@@ -531,6 +565,7 @@ public final class LocalInferenceModel {
             }
             if let streamError { throw streamError }
             try Task.checkCancellation()
+            try tools.validateRequestNetwork()
             let response: ModelToolResponse
             do {
                 response = try ModelToolResponse.parse(
@@ -560,7 +595,7 @@ public final class LocalInferenceModel {
                 messages[responseIndex].text = "Tool request:\n" + requestData
                 try await saveChatNow()
                 try Task.checkCancellation()
-                guard configuration == tools.revision else { throw SkillFailure.changed }
+                try tools.validateRequestConfiguration(configuration, using: cloud)
                 status =
                     request.local ? "Reading skill resource…" : "Calling \(request.destination)…"
                 let result: ToolJSON

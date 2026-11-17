@@ -7,10 +7,16 @@ import EmblaCore
 final class SettingsAccessLease: @unchecked Sendable {
     private let lock = NSLock()
     private var valid = true
+    private let network: NetworkAccess
+
+    init(network: NetworkAccess = NetworkAccess(initialState: .satisfied)) {
+        self.network = network
+    }
 
     func revoke() { lock.withLock { valid = false } }
     func check() throws {
         try Task.checkCancellation()
+        try network.check()
         guard lock.withLock({ valid }) else { throw CancellationError() }
     }
 }
@@ -122,10 +128,15 @@ protocol SharedSettingsStoring: Sendable {
 
 struct SharedSettingsFile: SharedSettingsStoring {
     let bookmark: Data
+    let network: NetworkAccess
+    init(bookmark: Data, network: NetworkAccess = .shared) {
+        self.bookmark = bookmark
+        self.network = network
+    }
     var identity: String { SHA256.hash(data: bookmark).map { String(format: "%02x", $0) }.joined() }
 
     func read() throws -> SharedSettingsRead {
-        try withAccess { try CoordinatedSettingsFile.read($0) }
+        try withAccess { try CoordinatedSettingsFile.read($0, network: network) }
     }
 
     func write(
@@ -141,6 +152,7 @@ struct SharedSettingsFile: SharedSettingsStoring {
     }
 
     private func withAccess<T>(_ action: (URL) throws -> T) throws -> T {
+        try network.check()
         var stale = false
         #if os(macOS)
             let options: URL.BookmarkResolutionOptions = [.withSecurityScope]
@@ -160,7 +172,9 @@ struct SharedSettingsFile: SharedSettingsStoring {
         else { throw CloudConversationError.notICloudFolder }
         let folder = root.appendingPathComponent("Settings", isDirectory: true)
         try CoordinatedSettingsFile.rejectLink(folder)
+        try network.check()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try network.check()
         return try action(folder.appendingPathComponent("settings.json"))
     }
 }
@@ -172,11 +186,16 @@ enum CoordinatedSettingsFile {
         }
     }
 
-    static func read(_ file: URL) throws -> SharedSettingsRead {
+    static func read(_ file: URL, network: NetworkAccess? = nil) throws -> SharedSettingsRead {
+        try network?.check()
         var result: Result<SharedSettingsRead, Error>?
         var failure: NSError?
         NSFileCoordinator().coordinate(readingItemAt: file, options: [], error: &failure) {
-            url in result = Result { try contents(url).0 }
+            url in
+            result = Result {
+                try network?.check()
+                return try contents(url).0
+            }
         }
         if let failure { throw failure }
         guard let result else { throw CloudConversationError.coordination }
