@@ -3,6 +3,7 @@
 import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Lock
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -13,9 +14,22 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         """Keep fixture input and credentials out of test logs."""
 
+    def do_GET(self):
+        """Expose method counts only, never credentials or request bodies."""
+        if self.path == "/request-counts":
+            with self.server.count_lock:
+                counts = {path: dict(values) for path, values in self.server.counts.items()}
+            self.respond(200, counts)
+        else:
+            self.respond(404, {"error": "unknown fixture route"})
+
     def do_POST(self):
         """Serve discovery, echo, SSE, cancellation and actual error responses."""
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        with self.server.count_lock:
+            counts = self.server.counts.setdefault(self.path, {})
+            method = request.get("method", "")
+            counts[method] = counts.get(method, 0) + 1
         params = request.get("params", {})
         metadata = params.get("_meta", {})
         if (
@@ -25,6 +39,9 @@ class Handler(BaseHTTPRequestHandler):
             or self.headers.get("Mcp-Method") != request["method"]
         ):
             self.respond(400, {"error": "fixture metadata validation failed"})
+            return
+        if self.path == "/bearer" and self.headers.get("Authorization") != "Bearer synthetic-key":
+            self.respond(401, {"error": "synthetic bearer key required"})
             return
         if self.path == "/auth":
             self.respond(401, {"error": "fixture authentication required"})
@@ -123,5 +140,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
+    server.count_lock = Lock()
+    server.counts = {}
     print(server.server_address[1], flush=True)
     server.serve_forever()

@@ -208,7 +208,7 @@ func failedCloudReplacementKeepsVisibleIdentityAndRetryDownloadsWithoutConflict(
     let remote = syncSnapshot("remote-only edit")
     var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -245,7 +245,7 @@ func storageRetryThenSyncSavesTheNewBaseBeforeReopeningAndAcceptingRemoteEdits()
     let base = try baseline.fingerprint()
     var archive = ConversationArchive(sequence: 1, snapshot: local.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = base
     try await ConversationStore(root: root).save(archive)
@@ -444,7 +444,7 @@ func cloudRestorationIsSavedLocallyBeforeBeingShownInTheController() async throw
     let remote = syncSnapshot("new shared message")
     var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -475,7 +475,7 @@ func controllerNewChatDuringCloudReadSynchronizesTheResetWithoutRestoringOldMess
     let baseline = syncSnapshot("old chat that must stay cleared")
     var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -610,7 +610,7 @@ func backgroundPauseDoesNotHideFailedOffSaveAndStorageRetryConfirmsOff() async t
     let snapshot = syncSnapshot("saved cloud chat")
     var archive = ConversationArchive(sequence: 1, snapshot: snapshot.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("saved permission".utf8)
     archive.cloudBaseFingerprint = try snapshot.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -789,7 +789,7 @@ func disablingDuringCloudReplacementPreservesTheDurableRestoredChat() async thro
     let remote = syncSnapshot("restored shared chat")
     var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -820,7 +820,7 @@ func unchangedCloudPollDoesNotRewriteTheLocalArchive() async throws {
     let snapshot = syncSnapshot("unchanged shared chat")
     var archive = ConversationArchive(sequence: 1, snapshot: snapshot.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try snapshot.fingerprint()
     let store = ConversationStore(root: root)
@@ -851,7 +851,7 @@ func disablingCloudDuringDurableResetCannotSaveTheOldTranscriptAgain() async thr
     let local = syncSnapshot("chat being cleared")
     var archive = ConversationArchive(sequence: 1, snapshot: local.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try local.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -888,7 +888,7 @@ func cloudUploadCannotQueueOldMetadataWhileResetArchiveCompletionIsPending() asy
     let local = syncSnapshot("current local conversation")
     var archive = ConversationArchive(sequence: 1, snapshot: local.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -972,7 +972,7 @@ func backgroundUnloadAndLocalSavesDoNotRestartCloudUntilForeground() async throw
     let baseline = syncSnapshot("shared")
     var archive = ConversationArchive(sequence: 1, snapshot: baseline.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -1025,7 +1025,7 @@ func newChatReevaluatesPendingConflictChoicesWithoutManualRefresh() async throws
     let remote = syncSnapshot("remote edit")
     var archive = ConversationArchive(sequence: 1, snapshot: local.chats[0])
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture permission".utf8)
     archive.cloudBaseFingerprint = try baseline.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -1095,7 +1095,7 @@ func inactiveDraftPreventsAutomaticWholeLibraryReplacement() async throws {
     var archive = ConversationArchive(sequence: 1, snapshot: active)
     archive.history = [SavedConversation(snapshot: previous, draft: "Keep this inactive draft")]
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture consent".utf8)
     archive.cloudBaseFingerprint = try archive.library.fingerprint()
     try await ConversationStore(root: root).save(archive)
@@ -1118,8 +1118,8 @@ func inactiveDraftPreventsAutomaticWholeLibraryReplacement() async throws {
     await cloud.waitUntilIdle()
 }
 
-@Test @MainActor
-func olderOnConsentPausesBeforeProviderAccessUntilMemoryScopeIsConfirmed() async throws {
+@Test(arguments: [0, 1]) @MainActor
+func olderOnConsentPausesBeforeProviderAccessUntilExpandedScopeIsConfirmed(version: Int) async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: root) }
     let source = ChatMessage(role: .user, text: "Synthetic project fact")
@@ -1127,6 +1127,7 @@ func olderOnConsentPausesBeforeProviderAccessUntilMemoryScopeIsConfirmed() async
         conversationID: UUID(), messages: [source], compaction: .init())
     var old = ConversationArchive(sequence: 1, snapshot: snapshot)
     old.cloudEnabled = true
+    old.cloudConsentVersion = version
     old.cloudFolderBookmark = Data("old chat-only consent".utf8)
     try await ConversationStore(root: root).save(old)
     let provider = SyncProviderFixture()
@@ -1144,13 +1145,13 @@ func olderOnConsentPausesBeforeProviderAccessUntilMemoryScopeIsConfirmed() async
     #expect(await provider.reads == 0)
     #expect(await provider.writes == 0)
     let local = try #require(try await ConversationStore(root: root).load())
-    #expect(local.cloudConsentVersion == 0 && local.projects?.first?.memory.count == 1)
+    #expect(local.cloudConsentVersion == version && local.projects?.first?.memory.count == 1)
     try await cloud.enable(bookmark: Data("explicit chats-and-memory consent".utf8))
     await cloud.waitUntilIdle()
     #expect(!cloud.requiresScopeConsent)
     #expect(await provider.document.current?.projects.first?.memory.first?.text
         == "Synthetic project fact")
-    #expect(try await ConversationStore(root: root).load()?.cloudConsentVersion == 1)
+    #expect(try await ConversationStore(root: root).load()?.cloudConsentVersion == 2)
     cloud.disable(); await cloud.waitUntilIdle()
 }
 
@@ -1167,7 +1168,7 @@ func projectEditsRecomputePendingConflictChoicesWithoutManualRefresh(operation: 
         conversationID: chatID, messages: [source], compaction: .init(), projectID: project.id))
     archive.projects = [project, other]
     archive.cloudEnabled = true
-    archive.cloudConsentVersion = 1
+    archive.cloudConsentVersion = 2
     archive.cloudFolderBookmark = Data("fixture consent".utf8)
     archive.cloudBaseFingerprint = try syncSnapshot("Previous base").fingerprint()
     try await ConversationStore(root: root).save(archive)

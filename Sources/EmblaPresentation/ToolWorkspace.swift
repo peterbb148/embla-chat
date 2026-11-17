@@ -3,7 +3,42 @@ import Observation
 
 import EmblaCore
 
-/// Device-only MCP configuration and explicit skill selection. No server is registered implicitly.
+/// Cancellation releases the caller while an uncancellable provider read drains off-thread.
+private final class SkillPreparationWait: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var finished = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            let ready = lock.withLock {
+                if finished { return true }
+                self.continuation = continuation
+                return false
+            }
+            if ready { continuation.resume() }
+        }
+    }
+
+    func finish() {
+        let pending = lock.withLock {
+            finished = true
+            let pending = continuation
+            continuation = nil
+            return pending
+        }
+        pending?.resume()
+    }
+}
+
+/// Opaque editor baseline: no raw credential is exposed to the view.
+public struct MCPServerEditBaseline: Equatable, Sendable {
+    fileprivate let serverID: UUID
+    fileprivate let source: String?
+    fileprivate let fingerprint: String?
+}
+
+/// MCP configuration follows the explicit global storage choice; discovery remains device-local.
 @MainActor @Observable
 public final class ToolWorkspace {
     public private(set) var skills: [SkillEntry] = []
@@ -16,6 +51,27 @@ public final class ToolWorkspace {
     public private(set) var connecting: UUID?
     public private(set) var revision = UUID()
     public private(set) var skillSourceKey: String?
+    public private(set) var settingsError: String?
+    public private(set) var settingsChoices: [String] = []
+    public private(set) var settingsStatus = "Settings are stored on this device."
+    public private(set) var settingsLoading = false
+    public var settingsWriting: Bool {
+        settingsWriteID != nil && settingsWriteSource == settingsSourceKey
+    }
+    private var settingsWriteID: UUID?
+    private var settingsWriteSource: String?
+    @ObservationIgnored private var settingsRequestID = UUID()
+    @ObservationIgnored private var sharedDocument: SharedSettings?
+    @ObservationIgnored private var settingsChoiceDocuments: [SharedSettings] = []
+    @ObservationIgnored private var shared: SharedSettingsSession?
+    @ObservationIgnored private var sharedAccess: SettingsAccessLease?
+    @ObservationIgnored private var settingsFactory: (Data) -> any SharedSettingsStoring = {
+        SharedSettingsFile(bookmark: $0)
+    }
+    @ObservationIgnored private var sharedRequested = false
+    @ObservationIgnored private var settingsSourceKey: String?
+    @ObservationIgnored private var currentSourceKey: (() -> String)?
+    @ObservationIgnored private var preferredSkill: String?
     @ObservationIgnored private var store: SkillStore?
     @ObservationIgnored private var configuration: URL?
     @ObservationIgnored private var setupError: String?
@@ -45,7 +101,6 @@ public final class ToolWorkspace {
             configuration = support.appendingPathComponent("servers.json")
             try readConfiguration()
         } catch {
-            configuration = nil
             setupError = error.localizedDescription
             self.error = error.localizedDescription
         }
@@ -54,13 +109,16 @@ public final class ToolWorkspace {
     /// Internal fixtures must opt into their own storage; they never read real device settings.
     init(
         store: SkillStore? = nil, configuration: URL? = nil,
-        credentials: any MCPCredentialStoring = MCPCredentials()
+        credentials: any MCPCredentialStoring = MCPCredentials(),
+        settingsFactory: @escaping (Data) -> any SharedSettingsStoring = {
+            SharedSettingsFile(bookmark: $0)
+        }
     ) {
         self.credentials = credentials
+        self.settingsFactory = settingsFactory
         self.store = store
         self.configuration = configuration
         do { try readConfiguration() } catch {
-            self.configuration = nil
             setupError = error.localizedDescription
             self.error = error.localizedDescription
         }
@@ -81,8 +139,6 @@ public final class ToolWorkspace {
 
     public func reloadSkills(using cloud: ConversationCloudSync) {
         skillTask?.cancel()
-        skillTask = nil
-        loadingSkills = false
         selectedSkill = nil
         skills = []
         skillSourceKey = nil
@@ -90,39 +146,67 @@ public final class ToolWorkspace {
         skillRequestID = UUID()
         let current = skillRequestID
         let key = QuickActionsModel.sourceKey(for: cloud)
-        guard let store else { return }
-        do {
-            let source = try source(cloud)
-            loadingSkills = true
-            skillTask = Task {
-                defer { if skillRequestID == current { loadingSkills = false; skillTask = nil } }
-                do {
-                    let entries = try await store.entries(source)
-                    try Task.checkCancellation()
-                    guard skillRequestID == current, QuickActionsModel.sourceKey(for: cloud) == key
-                    else { return }
-                    skills = entries
-                    skillSourceKey = key
-                } catch {
-                    guard skillRequestID == current, !Task.isCancelled else { return }
-                    self.error = error.localizedDescription
+        loadingSkills = true
+        skillTask = Task {
+            defer { if skillRequestID == current { loadingSkills = false; skillTask = nil } }
+            do {
+                await reloadSettings(using: cloud)
+                try Task.checkCancellation()
+                guard skillRequestID == current, QuickActionsModel.sourceKey(for: cloud) == key
+                else { return }
+                try requireSettingsReady()
+                guard let store else { return }
+                let entries = try await store.entries(source(cloud))
+                try Task.checkCancellation()
+                guard skillRequestID == current, QuickActionsModel.sourceKey(for: cloud) == key
+                else { return }
+                skills = entries
+                skillSourceKey = key
+                if let name = preferredSkill {
+                    guard let skill = entries.first(where: { $0.id == name })?.document else {
+                        throw SkillFailure.invalid(
+                            "The saved selected skill is unavailable or invalid.")
+                    }
+                    selectedSkill = skill
                 }
+                revision = UUID()
+            } catch {
+                guard skillRequestID == current, !Task.isCancelled else { return }
+                self.error = error.localizedDescription
             }
-        } catch { self.error = error.localizedDescription }
+        }
     }
 
-    public func selectSkill(_ name: String?, using cloud: ConversationCloudSync) throws {
-        guard !loadingSkills, skillSourceKey == QuickActionsModel.sourceKey(for: cloud) else {
+    /// Explicit editor reload awaits the shared document and its corresponding selected skill.
+    public func refreshSettingsAndSkills(using cloud: ConversationCloudSync) async {
+        reloadSkills(using: cloud)
+        await skillTask?.value
+    }
+
+    public func selectSkill(_ name: String?, using cloud: ConversationCloudSync) async throws {
+        guard
+            name == nil
+                || (!loadingSkills && skillSourceKey == QuickActionsModel.sourceKey(for: cloud))
+        else {
             throw SkillFailure.changed
         }
+        try requireSettingsReady()
+        let selectionRevision = revision
+        let sourceKey = QuickActionsModel.sourceKey(for: cloud)
+        let document: SkillDocument?
         if let name {
             guard let skill = skills.first(where: { $0.id == name })?.document else {
                 throw SkillFailure.invalid("The selected skill is unavailable or invalid.")
             }
-            selectedSkill = skill
+            document = skill
         } else {
-            selectedSkill = nil
+            document = nil
         }
+        try await savePreferredSkill(name)
+        guard QuickActionsModel.sourceKey(for: cloud) == sourceKey,
+            revision == selectionRevision
+        else { throw SharedSettingsError.changed }
+        selectedSkill = document
         revision = UUID()
     }
 
@@ -130,6 +214,7 @@ public final class ToolWorkspace {
 
     /// Re-reads the exact selected file before any generation can consume its instructions.
     func validateSkill(using cloud: ConversationCloudSync) async throws -> SkillDocument? {
+        try validateSelectedPreference()
         guard let selectedSkill else { return nil }
         guard let store, skillSourceKey == QuickActionsModel.sourceKey(for: cloud) else {
             throw SkillFailure.changed
@@ -146,6 +231,11 @@ public final class ToolWorkspace {
 
     /// User registration/enabling authorizes reconnecting for a submitted message, not at startup.
     func prepare(using cloud: ConversationCloudSync, serverIDs: Set<UUID>? = nil) async throws {
+        if settingsSourceKey != nil {
+            reloadSkills(using: cloud)
+            try await waitForSkillPreparation()
+        }
+        try requireSettingsReady()
         if let setupError {
             throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)
         }
@@ -159,18 +249,19 @@ public final class ToolWorkspace {
         var expected = revision
         _ = try await validateSkill(using: cloud)
         guard revision == expected else { throw SkillFailure.changed }
-        for server in servers where
+        for server in servers
+        where
             (!server.enabledTools.isEmpty || server.enableToolsOnFirstDiscovery)
-                && clients[server.id] == nil
+            && (clients[server.id] == nil || server.lastDiscoveredTools == nil)
         {
             if let serverIDs, !serverIDs.contains(server.id) { continue }
             try Task.checkCancellation()
             let client = try MCPClient(
-                server: server, bearerToken: credentials.read(MCPCredentialID(server: server)))
+                server: server, bearerToken: token(for: server))
             let result = try await client.discover()
             try Task.checkCancellation()
             guard revision == expected else { throw SkillFailure.changed }
-            if try acceptDiscoveredTools(result.tools, serverID: server.id) {
+            if try await acceptDiscoveredTools(result.tools, serverID: server.id) {
                 revision = UUID()
                 expected = revision
             }
@@ -196,13 +287,46 @@ public final class ToolWorkspace {
         return .cloud(bookmark)
     }
 
-    public func saveServer(_ server: MCPServer, newToken: String? = nil) throws {
+    public func saveServer(
+        _ input: MCPServer, newToken: String? = nil,
+        expected: MCPServerEditBaseline? = nil
+    ) async throws {
+        try requireSettingsReady()
+        var server = input
+        if let expected, try captureServerEdit(server.id) != expected {
+            throw SharedSettingsError.staleEditor
+        }
+        if expected != nil, let current = servers.first(where: { $0.id == server.id }) {
+            server.enabledTools = current.enabledTools
+        }
         try server.validate()
+        if sharedRequested {
+            var updated = servers
+            var value = server
+            if let previous = servers.first(where: { $0.id == server.id }) {
+                if previous.endpoint != server.endpoint {
+                    value.enabledTools = []
+                    value.enableToolsOnFirstDiscovery = false
+                } else {
+                    value.enableToolsOnFirstDiscovery = previous.enableToolsOnFirstDiscovery
+                    let unchangedKey = try newToken == nil || newToken == token(for: previous)
+                    value.lastDiscoveredTools = unchangedKey ? previous.lastDiscoveredTools : nil
+                }
+            } else {
+                value.lastDiscoveredTools = nil
+            }
+            if let index = updated.firstIndex(where: { $0.id == value.id }) {
+                updated[index] = value
+            } else {
+                updated.append(value)
+            }
+            try await commitShared(updated, tokenOverride: newToken.map { (value.id, $0) })
+            return
+        }
         guard let configuration else {
             throw SkillFailure.invalid("MCP settings storage is unavailable.")
         }
         var updated = servers
-        var server = server
         clients[server.id] = nil
         discovered[server.id] = nil
         revision = UUID()
@@ -234,12 +358,16 @@ public final class ToolWorkspace {
         if let previous, previous.endpoint != server.endpoint {
             try credentials.deleteEndpoint(MCPCredentialID(server: previous))
         }
-        clients[server.id] = nil
-        discovered[server.id] = nil
+        invalidateClient(server.id)
         revision = UUID()
     }
 
-    public func removeServer(_ id: UUID) throws {
+    public func removeServer(_ id: UUID) async throws {
+        try requireSettingsReady()
+        if sharedRequested {
+            try await commitShared(servers.filter { $0.id != id })
+            return
+        }
         guard let configuration else {
             throw SkillFailure.invalid("MCP settings storage is unavailable.")
         }
@@ -254,12 +382,16 @@ public final class ToolWorkspace {
         let updated = servers.filter { $0.id != id }
         try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
         servers = updated
-        clients[id] = nil
-        discovered[id] = nil
+        invalidateClient(id)
         revision = UUID()
     }
 
-    public func clearCredential(_ id: UUID) throws {
+    public func clearCredential(_ id: UUID) async throws {
+        try requireSettingsReady()
+        if sharedRequested {
+            try await commitShared(servers, removeToken: id)
+            return
+        }
         try invalidatePlanningMetadata(id)
         try credentials.deleteAll(id)
     }
@@ -273,12 +405,12 @@ public final class ToolWorkspace {
         updated[index].lastDiscoveredTools = nil
         try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
         servers = updated
-        clients[id] = nil
-        discovered[id] = nil
+        invalidateClient(id)
         revision = UUID()
     }
 
     public func discover(_ id: UUID) {
+        do { try requireSettingsReady() } catch { self.error = error.localizedDescription; return }
         connectTask?.cancel()
         guard let server = servers.first(where: { $0.id == id }) else { return }
         clients[id] = nil
@@ -293,11 +425,11 @@ public final class ToolWorkspace {
             defer { if connectRequestID == request { connecting = nil; connectTask = nil } }
             do {
                 let client = try MCPClient(
-                    server: server, bearerToken: credentials.read(MCPCredentialID(server: server)))
+                    server: server, bearerToken: token(for: server))
                 let result = try await client.discover()
                 try Task.checkCancellation()
                 guard revision == current else { throw SkillFailure.changed }
-                _ = try acceptDiscoveredTools(result.tools, serverID: id)
+                _ = try await acceptDiscoveredTools(result.tools, serverID: id)
                 clients[id] = client
                 warnings = result.warnings
                 revision = UUID()
@@ -307,7 +439,7 @@ public final class ToolWorkspace {
 
     /// Commit the initial grant before publishing schemas. Later discovery preserves user choices.
     @discardableResult
-    func acceptDiscoveredTools(_ tools: [MCPTool], serverID: UUID) throws -> Bool {
+    func acceptDiscoveredTools(_ tools: [MCPTool], serverID: UUID) async throws -> Bool {
         guard let index = servers.firstIndex(where: { $0.id == serverID }) else {
             throw SkillFailure.changed
         }
@@ -320,13 +452,21 @@ public final class ToolWorkspace {
             updated[index].enabledTools = Set(tools.map(\.name))
             updated[index].enableToolsOnFirstDiscovery = false
         }
-        try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
-        servers = updated
+        try requireSettingsReady()
+        if sharedRequested {
+            if initial { try await commitShared(updated) }
+            servers = updated
+            try saveCatalog()
+        } else {
+            try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
+            servers = updated
+        }
         discovered[serverID] = tools
         return initial
     }
 
-    public func setEnabled(_ enabled: Bool, tool: String, serverID: UUID) throws {
+    public func setEnabled(_ enabled: Bool, tool: String, serverID: UUID) async throws {
+        try requireSettingsReady()
         guard let configuration,
             let index = servers.firstIndex(where: { $0.id == serverID })
         else { throw SkillFailure.changed }
@@ -342,8 +482,12 @@ public final class ToolWorkspace {
         } else {
             updated[index].enabledTools.remove(tool)
         }
-        try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
-        servers = updated
+        if sharedRequested {
+            try await commitShared(updated)
+        } else {
+            try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
+            servers = updated
+        }
         revision = UUID()
     }
 
@@ -353,6 +497,11 @@ public final class ToolWorkspace {
     }
 
     public func pause() {
+        sharedAccess?.revoke()
+        shared = nil
+        sharedAccess = nil
+        settingsRequestID = UUID()
+        settingsLoading = false
         skillTask?.cancel(); connectTask?.cancel()
         skillRequestID = UUID(); connectRequestID = UUID()
         selectedSkill = nil
@@ -367,10 +516,16 @@ public final class ToolWorkspace {
 
     /// Older settings need an explicit connection once before local planning can use metadata.
     func preparePlanningMetadata(using cloud: ConversationCloudSync) async throws {
-        let missing = Set(servers.filter {
-            (!$0.enabledTools.isEmpty || $0.enableToolsOnFirstDiscovery)
-                && $0.lastDiscoveredTools == nil
-        }.map(\.id))
+        if settingsSourceKey != nil {
+            reloadSkills(using: cloud)
+            try await waitForSkillPreparation()
+        }
+        try requireSettingsReady()
+        let missing = Set(
+            servers.filter {
+                (!$0.enabledTools.isEmpty || $0.enableToolsOnFirstDiscovery)
+                    && $0.lastDiscoveredTools == nil
+            }.map(\.id))
         if !missing.isEmpty {
             try await prepare(using: cloud, serverIDs: missing)
         }
@@ -379,6 +534,7 @@ public final class ToolWorkspace {
 
     /// Local planning uses validated saved metadata; live calls still require successful prepare.
     func remoteTools() throws -> [ModelToolSpecification] {
+        try requireSettingsReady()
         if let setupError {
             throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)
         }
@@ -387,7 +543,8 @@ public final class ToolWorkspace {
             throw SkillFailure.invalid(
                 "MCP catalog identifiers collide. Remove and re-add one server.")
         }
-        for server in servers where
+        for server in servers
+        where
             !server.enabledTools.isEmpty || server.enableToolsOnFirstDiscovery
         {
             guard !server.enableToolsOnFirstDiscovery, let tools = server.lastDiscoveredTools,
@@ -410,6 +567,8 @@ public final class ToolWorkspace {
     func remoteCall(serverID: UUID, name: String, arguments: [String: ToolJSON]) async throws
         -> ToolJSON
     {
+        try Task.checkCancellation()
+        try requireSettingsReady()
         guard let server = servers.first(where: { $0.id == serverID }),
             server.enabledTools.contains(name), let client = clients[serverID],
             let tool = discovered[serverID]?.first(where: { $0.name == name })
@@ -419,8 +578,394 @@ public final class ToolWorkspace {
         return try await client.call(tool, arguments: arguments)
     }
 
+    private func waitForSkillPreparation() async throws {
+        guard let worker = skillTask else { try Task.checkCancellation(); return }
+        let gate = SkillPreparationWait()
+        Task {
+            await worker.value; gate.finish()
+        }
+        await withTaskCancellationHandler {
+            await gate.wait()
+        } onCancel: {
+            worker.cancel()
+            gate.finish()
+        }
+        try Task.checkCancellation()
+    }
+
     func waitUntilIdle() async {
         await skillTask?.value
         await connectTask?.value
+    }
+}
+
+extension ToolWorkspace {
+    /// Source changes invalidate clients before any new folder or credential can be used.
+    public func reloadSettings(using cloud: ConversationCloudSync) async {
+        cloud.settingsScopeWillChange = { [weak self] in self?.revokeSettingsAccess() }
+        currentSourceKey = { [weak cloud] in
+            cloud.map { QuickActionsModel.sourceKey(for: $0) } ?? "unavailable"
+        }
+        let key = QuickActionsModel.sourceKey(for: cloud)
+        let request = UUID()
+        settingsRequestID = request
+        settingsLoading = true
+        defer { if settingsRequestID == request { settingsLoading = false } }
+        let changed = settingsSourceKey != key
+        if changed {
+            invalidateConnections()
+            sharedAccess?.revoke()
+            shared = nil
+            sharedAccess = nil
+            sharedDocument = nil
+            servers = []
+            preferredSkill = nil
+            settingsChoices = []
+            settingsChoiceDocuments = []
+        }
+        sharedRequested = cloud.enabled
+        settingsSourceKey = key
+        do {
+            guard let configuration else { throw SharedSettingsError.unavailable }
+            if cloud.enabled {
+                guard let bookmark = cloud.authorizedFolderBookmark,
+                    !cloud.requiresScopeConsent
+                else { throw SharedSettingsError.unavailable }
+                if shared == nil {
+                    let access = SettingsAccessLease()
+                    sharedAccess = access
+                    shared = SharedSettingsSession(
+                        storage: settingsFactory(bookmark),
+                        receipt: configuration.deletingLastPathComponent()
+                            .appendingPathComponent("shared-migration.json"), access: access)
+                }
+                guard let shared else { throw SharedSettingsError.unavailable }
+                let document = try await shared.refresh(local: localSettings())
+                guard settingsRequestID == request,
+                    QuickActionsModel.sourceKey(for: cloud) == key, !Task.isCancelled
+                else { return }
+                sharedDocument = document
+                try applyShared(document)
+                settingsStatus =
+                    "Settings/settings.json is available. iCloud Drive handles transfer."
+            } else {
+                let previous = servers
+                try readConfiguration()
+                preferredSkill = try localPreferredSkill()
+                for server in previous {
+                    if servers.first(where: { $0.id == server.id })?.endpoint != server.endpoint {
+                        clients[server.id] = nil
+                        discovered[server.id] = nil
+                    }
+                }
+                setupError = nil
+                settingsStatus = "Settings are stored on this device."
+            }
+            settingsChoices = []
+            settingsChoiceDocuments = []
+            settingsError = nil
+        } catch {
+            let choices = await shared?.choices ?? []
+            guard settingsRequestID == request,
+                QuickActionsModel.sourceKey(for: cloud) == key, !Task.isCancelled
+            else { return }
+            settingsError = error.localizedDescription
+            settingsStatus = "Settings need attention."
+            settingsChoiceDocuments = choices
+            settingsChoices =
+                choices.enumerated().map { index, value in
+                    let source =
+                        index == 0
+                        ? "Retained settings"
+                        : index == 1 ? "Shared settings" : "iCloud version \(index - 1)"
+                    return "Use \(source) (\(value.servers.count) servers)"
+                }
+        }
+    }
+
+    public func resolveSettings(_ index: Int) async {
+        let key = settingsSourceKey
+        let request = settingsRequestID
+        do {
+            guard settingsSourceKey == currentSourceKey?(), let shared,
+                sharedRequested
+            else { throw SharedSettingsError.unavailable }
+            guard !settingsLoading, !settingsWriting else { throw SharedSettingsError.unavailable }
+            guard settingsChoiceDocuments.indices.contains(index) else {
+                throw SharedSettingsError.changed
+            }
+            let writeID = UUID()
+            settingsWriteID = writeID
+            settingsWriteSource = key
+            defer { if settingsWriteID == writeID { settingsWriteID = nil } }
+            let document = try await shared.resolve(index, expected: settingsChoiceDocuments[index])
+            guard settingsSourceKey == key, currentSourceKey?() == key,
+                settingsRequestID == request, !Task.isCancelled
+            else {
+                throw SharedSettingsError.changed
+            }
+            sharedDocument = document
+            try applyShared(document)
+            settingsChoices = []
+            settingsError = nil
+            settingsStatus = "Settings saved. iCloud Drive handles transfer."
+            settingsChoiceDocuments = []
+        } catch {
+            guard settingsSourceKey == key, currentSourceKey?() == key,
+                settingsRequestID == request, !Task.isCancelled
+            else { return }
+            settingsError = error.localizedDescription
+        }
+    }
+
+    func validateSelectedPreference() throws {
+        try requireSettingsReady()
+        if let preferredSkill, selectedSkill?.name != preferredSkill {
+            throw SkillFailure.invalid(
+                "The saved selected skill is unavailable. Reload skills or choose None.")
+        }
+    }
+
+    private func revokeSettingsAccess() {
+        invalidateConnections()
+        sharedAccess?.revoke()
+        sharedAccess = nil
+        shared = nil
+        settingsRequestID = UUID()
+        settingsLoading = false
+    }
+
+    private func invalidateClient(_ id: UUID) {
+        clients[id] = nil
+        discovered[id] = nil
+        if connecting == id {
+            connectTask?.cancel()
+            connectRequestID = UUID()
+            connecting = nil
+        }
+    }
+
+    private func invalidateConnections() {
+        connectTask?.cancel()
+        connectRequestID = UUID()
+        connectTask = nil
+        connecting = nil
+        clients = [:]
+        discovered = [:]
+        revision = UUID()
+    }
+
+    private func requireSettingsReady() throws {
+        if settingsLoading || settingsWriting { throw SharedSettingsError.unavailable }
+        if let setupError {
+            throw SkillFailure.invalid("MCP settings are unreadable: " + setupError)
+        }
+        if let currentSourceKey, currentSourceKey() != settingsSourceKey {
+            throw SharedSettingsError.unavailable
+        }
+        if let settingsError { throw SkillFailure.invalid(settingsError) }
+        if sharedRequested {
+            guard shared != nil, let sharedAccess, sharedDocument != nil,
+                settingsChoices.isEmpty
+            else { throw SharedSettingsError.unavailable }
+            try sharedAccess.check()
+        }
+    }
+
+    private func localPreferredSkill() throws -> String? {
+        guard let configuration else { throw SharedSettingsError.unavailable }
+        let file = configuration.deletingLastPathComponent().appendingPathComponent("skill.json")
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        return try JSONDecoder().decode(String?.self, from: Data(contentsOf: file))
+    }
+
+    private func localSettings() throws -> SharedSettings {
+        guard let configuration else { throw SharedSettingsError.unavailable }
+        let local: [MCPServer]
+        if FileManager.default.fileExists(atPath: configuration.path) {
+            local = try JSONDecoder().decode(
+                [MCPServer].self, from: Data(contentsOf: configuration))
+        } else {
+            local = []
+        }
+        let value = try SharedSettings(
+            servers: local.map {
+                SharedServer($0, token: try credentials.read(MCPCredentialID(server: $0)))
+            }, selectedSkill: localPreferredSkill())
+        try value.validate()
+        return value
+    }
+
+    /// Only form-edited fields and authentication participate; live permission toggles are preserved.
+    public func captureServerEdit(_ id: UUID) throws -> MCPServerEditBaseline {
+        try requireSettingsReady()
+        let fingerprint: String?
+        if let server = servers.first(where: { $0.id == id }) {
+            var snapshot = SharedServer(server, token: try token(for: server))
+            snapshot.enabledTools = []
+            snapshot.enableToolsOnFirstDiscovery = false
+            fingerprint = try SharedSettings(servers: [snapshot]).fingerprint
+        } else {
+            fingerprint = nil
+        }
+        return MCPServerEditBaseline(
+            serverID: id, source: settingsSourceKey,
+            fingerprint: fingerprint)
+    }
+
+    func token(for server: MCPServer) throws -> String? {
+        try requireSettingsReady()
+        if sharedRequested {
+            guard let value = sharedDocument?.servers.first(where: { $0.id == server.id }),
+                value.endpoint == server.endpoint
+            else { throw SharedSettingsError.changed }
+            return value.credential?.bearerToken
+        }
+        return try credentials.read(MCPCredentialID(server: server))
+    }
+
+    private func savePreferredSkill(_ name: String?) async throws {
+        if sharedRequested {
+            guard var value = sharedDocument else { throw SharedSettingsError.unavailable }
+            value.selectedSkill = name
+            guard let shared, let expected = sharedDocument else {
+                throw SharedSettingsError.unavailable
+            }
+            let key = settingsSourceKey
+            let request = settingsRequestID
+            let expectedRevision = revision
+            let writeID = UUID()
+            settingsWriteID = writeID
+            settingsWriteSource = settingsSourceKey
+            defer { if settingsWriteID == writeID { settingsWriteID = nil } }
+            try await shared.commit(value, replacing: expected)
+            guard settingsSourceKey == key, currentSourceKey?() == key,
+                settingsRequestID == request, revision == expectedRevision, !Task.isCancelled
+            else {
+                throw SharedSettingsError.changed
+            }
+            sharedDocument = value
+            try saveCatalog()
+        } else {
+            guard let configuration else { throw SharedSettingsError.unavailable }
+            try JSONEncoder().encode(name).write(
+                to: configuration.deletingLastPathComponent()
+                    .appendingPathComponent("skill.json"), options: .atomic)
+        }
+        preferredSkill = name
+    }
+
+    private func commitShared(
+        _ registrations: [MCPServer],
+        tokenOverride: (UUID, String)? = nil, removeToken: UUID? = nil
+    ) async throws {
+        guard let shared, let current = sharedDocument else {
+            throw SharedSettingsError.unavailable
+        }
+        var value = current
+        value.servers = registrations.map { server in
+            let old = current.servers.first { $0.id == server.id && $0.endpoint == server.endpoint }
+            let token =
+                removeToken == server.id
+                ? nil
+                : tokenOverride?.0 == server.id ? tokenOverride?.1 : old?.credential?.bearerToken
+            return SharedServer(server, token: token)
+        }
+        let key = settingsSourceKey
+        let expectedRevision = revision
+        let request = settingsRequestID
+        let writeID = UUID()
+        settingsWriteID = writeID
+        settingsWriteSource = settingsSourceKey
+        defer { if settingsWriteID == writeID { settingsWriteID = nil } }
+        // Retire old credentials before yielding to storage, even if persistence later fails.
+        for server in servers {
+            let changed = value.servers.first { $0.id == server.id }
+            let old = current.servers.first { $0.id == server.id }
+            if changed == nil || changed?.endpoint != old?.endpoint
+                || changed?.credential != old?.credential
+                || registrations.first(where: { $0.id == server.id })?.lastDiscoveredTools == nil
+            {
+                invalidateClient(server.id)
+            }
+        }
+        try await shared.commit(value, replacing: current)
+        guard settingsSourceKey == key, currentSourceKey?() == key,
+            revision == expectedRevision, settingsRequestID == request, !Task.isCancelled
+        else { throw SharedSettingsError.changed }
+        sharedDocument = value
+        servers = registrations.map { server in
+            var server = server
+            let before = current.servers.first { $0.id == server.id }
+            let after = value.servers.first { $0.id == server.id }
+            if before?.credential != after?.credential || before?.endpoint != after?.endpoint {
+                server.lastDiscoveredTools = nil
+            }
+            return server
+        }
+        revision = UUID()
+        try saveCatalog()
+    }
+
+    private struct CatalogCache: Codable {
+        var connections: [String: String]
+        var servers: [MCPServer]
+    }
+
+    private var catalogFile: URL? {
+        configuration?.deletingLastPathComponent().appendingPathComponent("shared-catalog.json")
+    }
+
+    private func applyShared(_ value: SharedSettings) throws {
+        let previous = servers
+        let cache: CatalogCache?
+        if let file = catalogFile, FileManager.default.fileExists(atPath: file.path) {
+            cache = try JSONDecoder().decode(CatalogCache.self, from: Data(contentsOf: file))
+        } else {
+            cache = nil
+        }
+        var next = value.servers.map(\.registration)
+        for index in next.indices {
+            let source = value.servers[index]
+            if try cache?.connections[source.id.uuidString] == source.connectionFingerprint {
+                next[index].lastDiscoveredTools =
+                    cache?.servers.first {
+                        $0.id == source.id && $0.endpoint == source.endpoint
+                    }?.lastDiscoveredTools
+            }
+        }
+        for server in previous {
+            let source = value.servers.first { $0.id == server.id }
+            let sameConnection =
+                try source.map {
+                    try cache?.connections[$0.id.uuidString] == $0.connectionFingerprint
+                } ?? false
+            if !sameConnection {
+                clients[server.id] = nil
+                discovered[server.id] = nil
+                if connecting == server.id {
+                    connectTask?.cancel()
+                    connectRequestID = UUID()
+                    connecting = nil
+                }
+            }
+        }
+        if previous != next || preferredSkill != value.selectedSkill {
+            servers = next
+            preferredSkill = value.selectedSkill
+            selectedSkill = nil
+            revision = UUID()
+        }
+        try saveCatalog()
+    }
+
+    private func saveCatalog() throws {
+        guard let file = catalogFile, let current = sharedDocument else { return }
+        let connections = try Dictionary(
+            uniqueKeysWithValues: current.servers.map {
+                ($0.id.uuidString, try $0.connectionFingerprint)
+            })
+        let cache = CatalogCache(connections: connections, servers: servers)
+        try JSONEncoder().encode(cache).write(to: file, options: .atomic)
     }
 }

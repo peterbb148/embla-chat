@@ -126,6 +126,9 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(toggle.value as? String, "0")
         toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertTrue(app.alerts["Enable iCloud Drive?"].waitForExistence(timeout: 5))
+        let disclosure = app.alerts.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS %@", "Keys are readable by anyone with folder access"))
+        XCTAssertTrue(disclosure.firstMatch.exists)
         app.alerts.buttons["Cancel"].tap()
         XCTAssertEqual(toggle.value as? String, "0")
         XCTAssertEqual(app.staticTexts["icloud-status"].label, "iCloud is off.")
@@ -295,6 +298,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["selected-skill"].label, "None")
         app.buttons["Reload skills"].tap()
         app.navigationBars["Skills"].buttons["Settings"].tap()
+        reveal(app.buttons["MCP Servers"], in: app)
         app.buttons["MCP Servers"].tap()
         app.buttons["Browse registry"].tap()
         XCTAssertTrue(app.navigationBars["Server registry"].waitForExistence(timeout: 5))
@@ -312,10 +316,21 @@ final class LaunchTests: XCTestCase {
         let name = app.textFields["mcp-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap()
-        name.typeText(" UI fixture " + UUID().uuidString.prefix(8))
+        let fixtureName = " UI fixture " + UUID().uuidString.prefix(8)
+        name.typeText(fixtureName)
         XCTAssertEqual(
             app.textFields["mcp-endpoint"].value as? String, "https://example.invalid/mcp")
         app.buttons["Save server"].tap()
+        let reload = app.buttons["Reload saved settings"]
+        XCTAssertTrue(reload.waitForExistence(timeout: 5))
+        reload.tap()
+        for _ in 0..<4 {
+            if name.exists && name.isHittable { break }
+            app.swipeDown()
+        }
+        let refreshed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@ AND enabled == true", fixtureName), object: name)
+        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 10), .completed)
         let connect = app.buttons["Connect and discover tools"]
         reveal(connect, in: app)
         XCTAssertTrue(connect.waitForExistence(timeout: 5))

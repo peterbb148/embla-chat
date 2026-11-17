@@ -18,7 +18,7 @@ func realProductionToolLoopUsesRegisteredPublicTimeAndPersistsTheReturnedFact() 
     defer { try? FileManager.default.removeItem(at: temporary) }
     let workspace = ToolWorkspace(configuration: temporary.appendingPathComponent("servers.json"))
     let server = MCPServer(name: "Time.Now", endpoint: URL(string: "https://time.now/mcp")!)
-    try workspace.saveServer(server)
+    try await workspace.saveServer(server)
     workspace.discover(server.id)
     let pendingCatalogRevision = workspace.revision
     await workspace.waitUntilIdle()
@@ -98,7 +98,8 @@ func realSelectedPortableSkillChangesTheModelsActualAnswer() async throws {
         """.utf8
     ).write(to: skill.appendingPathComponent("SKILL.md"))
     let workspace = ToolWorkspace(
-        store: SkillStore(localRoot: temporary.appendingPathComponent("Skills")))
+        store: SkillStore(localRoot: temporary.appendingPathComponent("Skills")),
+        configuration: temporary.appendingPathComponent("servers.json"))
     let manifest = try ModelManifest.bundled()
     let model = LocalInferenceModel(
         repository: ModelRepository(root: root, manifest: manifest),
@@ -110,7 +111,7 @@ func realSelectedPortableSkillChangesTheModelsActualAnswer() async throws {
     print("REAL SKILL baseline: \(model.answer)")
     model.newChat(); await model.waitUntilIdle()
     workspace.reloadSkills(using: model.cloud); await workspace.waitUntilIdle()
-    try workspace.selectSkill("greeting-style", using: model.cloud)
+    try await workspace.selectSkill("greeting-style", using: model.cloud)
     model.prompt = "Say hello briefly."
     model.run()
     await model.waitUntilIdle()
@@ -131,7 +132,7 @@ func realNaturalQuestionsSelectRelevantToolsWithoutNamingThem() async throws {
     defer { try? FileManager.default.removeItem(at: temporary) }
     let workspace = ToolWorkspace(configuration: temporary.appendingPathComponent("servers.json"))
     let server = MCPServer(name: "Time.Now", endpoint: URL(string: "https://time.now/mcp")!)
-    try workspace.saveServer(server)
+    try await workspace.saveServer(server)
     workspace.discover(server.id)
     await workspace.waitUntilIdle()
     try #require(workspace.error == nil)
@@ -197,7 +198,7 @@ func realNaturalQuestionsSelectRelevantToolsWithoutNamingThem() async throws {
     // Reproduce enabling tools after an existing chat learned an obsolete capability claim.
     model.newChat(); await model.waitUntilIdle()
     for name in ["get_current_time", "list_timezones", "lookup_ip_time"] {
-        try workspace.setEnabled(false, tool: name, serverID: server.id)
+        try await workspace.setEnabled(false, tool: name, serverID: server.id)
     }
     model.toolConfigurationChanged()
     for question in ["Can you get the current time in Copenhagen?", "Try again."] {
@@ -208,7 +209,7 @@ func realNaturalQuestionsSelectRelevantToolsWithoutNamingThem() async throws {
         try #require(model.error == nil && model.messages.allSatisfy { $0.toolName == nil })
     }
     for name in ["get_current_time", "list_timezones", "lookup_ip_time"] {
-        try workspace.setEnabled(true, tool: name, serverID: server.id)
+        try await workspace.setEnabled(true, tool: name, serverID: server.id)
     }
     model.toolConfigurationChanged()
     workspace.pause()
@@ -317,7 +318,7 @@ func realRegistrySelectionRoutesOrdinaryQuestionsAcrossAllEnabledServers() async
     let time = MCPServer(name: "Time.Now", endpoint: URL(string: "https://time.now/mcp")!)
     let docs = MCPServer(name: listing.displayName, endpoint: endpoint.url)
     for server in [time, docs] {
-        try workspace.saveServer(server)
+        try await workspace.saveServer(server)
         workspace.discover(server.id)
         await workspace.waitUntilIdle()
         try #require(workspace.error == nil)

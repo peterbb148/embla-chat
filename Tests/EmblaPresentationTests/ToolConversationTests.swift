@@ -84,7 +84,8 @@ private let readSkillRequest = """
         .write(to: skill.appendingPathComponent("SKILL.md"))
         try Data("BLUE PENGUIN".utf8).write(to: skill.appendingPathComponent("references/fact.txt"))
         workspace = ToolWorkspace(
-            store: SkillStore(localRoot: root.appendingPathComponent("Skills")))
+            store: SkillStore(localRoot: root.appendingPathComponent("Skills")),
+            configuration: root.appendingPathComponent("servers.json"))
         backend = ToolBackendFixture(replies: replies, holdFirst: holdFirst)
         let backend = backend
         store = ConversationStore(root: root.appendingPathComponent("Chats"))
@@ -95,7 +96,7 @@ private let readSkillRequest = """
             tools: workspace)
         model.check(); await model.waitUntilIdle()
         workspace.reloadSkills(using: model.cloud); await workspace.waitUntilIdle()
-        try workspace.selectSkill("example-skill", using: model.cloud)
+        try await workspace.selectSkill("example-skill", using: model.cloud)
     }
 
     func clean() { try? FileManager.default.removeItem(at: root) }

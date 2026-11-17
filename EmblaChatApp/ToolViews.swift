@@ -31,9 +31,13 @@ struct SkillsView: View {
                 Text(model.tools.selectedSkill?.name ?? "None")
                     .accessibilityIdentifier("selected-skill")
                 Button("Use no skill") {
-                    model.tools.clearSkill()
-                    model.toolConfigurationChanged()
-                }.disabled(model.busy)
+                    Task {
+                        do {
+                            try await model.tools.selectSkill(nil, using: model.cloud)
+                            model.toolConfigurationChanged()
+                        } catch { self.error = error.localizedDescription }
+                    }
+                }.disabled(model.busy || model.tools.settingsLoading || model.tools.settingsWriting)
             }
             Section("Available skills") {
                 if model.tools.skills.isEmpty {
@@ -68,13 +72,17 @@ struct SkillsView: View {
                                     Text(skill.instructions).textSelection(.enabled)
                                 }
                                 Button("Use this skill") {
-                                    do {
-                                        try model.tools.selectSkill(
-                                            skill.name, using: model.cloud)
-                                        model.toolConfigurationChanged()
-                                        dismiss()
-                                    } catch { self.error = error.localizedDescription }
-                                }.disabled(model.busy)
+                                    Task {
+                                        do {
+                                            try await model.tools.selectSkill(
+                                                skill.name, using: model.cloud)
+                                            model.toolConfigurationChanged()
+                                            dismiss()
+                                        } catch { self.error = error.localizedDescription }
+                                    }
+                                }.disabled(
+                                    model.busy || model.tools.settingsLoading
+                                        || model.tools.settingsWriting)
                             }.navigationTitle(skill.name)
                         }
                     } else {
@@ -107,7 +115,7 @@ struct MCPSettingsView: View {
                 )
                 .font(.callout)
                 Text(
-                    "Supports MCP 2026-07-28 Streamable HTTP, JSON and SSE responses. No subprocesses, legacy transports or browser OAuth sign-in. A server can use no authentication or a manually supplied bearer token, kept in this device’s Keychain."
+                    "Supports MCP 2026-07-28 Streamable HTTP, JSON and SSE responses. No subprocesses, legacy transports or browser OAuth sign-in. A server can use no authentication or a manually supplied bearer token. With iCloud on, keys are readable in Settings/settings.json by anyone with folder access; otherwise they stay in this device’s Keychain."
                 )
                 .font(.caption).foregroundStyle(.secondary)
                 Text(
@@ -143,9 +151,9 @@ struct MCPSettingsView: View {
             }
         }
         .navigationTitle("MCP Servers")
-        .disabled(model.busy)
+        .disabled(model.busy || model.tools.settingsLoading || model.tools.settingsWriting)
         .sheet(item: $newServer) { server in
-            NavigationStack { MCPServerEditor(model: model, initial: server) }
+            NavigationStack { MCPServerEditor(model: model, initial: server, creating: true) }
         }
     }
 }
@@ -154,6 +162,11 @@ private struct MCPServerEditor: View {
     let model: LocalInferenceModel
     let initial: MCPServer
     var requiresBearerToken = false
+    var creating = false
+    @State private var baseline: MCPServerEditBaseline?
+    @State private var editorLoaded = false
+    @State private var reloading = false
+    @State private var hasSaved = false
     @State private var name = ""
     @State private var endpoint = ""
     @State private var token = ""
@@ -170,35 +183,47 @@ private struct MCPServerEditor: View {
                     .keyboardType(.URL).accessibilityIdentifier("mcp-endpoint")
                 SecureField(
                     requiresBearerToken ? "Bearer token" : "New bearer token (optional)",
-                    text: $token)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    text: $token
+                )
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
                 Text(
-                    "Leave the token blank to keep the saved credential. Settings and tokens stay on this device. Changing the endpoint clears existing tool permissions and the old token."
+                    "Leave the token blank to keep the saved credential. With iCloud on, settings and keys are stored in readable Settings/settings.json. With it off, keys stay in this device’s Keychain. Changing the endpoint clears existing tool permissions and the old token."
                 )
                 .font(.caption).foregroundStyle(.secondary)
                 Button("Save server") {
-                    do {
-                        guard let url = URL(string: endpoint) else { throw MCPFailure.endpoint }
-                        let isNew = !model.tools.servers.contains(where: { $0.id == initial.id })
-                        if isNew && requiresBearerToken && token.isEmpty {
-                            error = "This server requires a bearer token from its provider."
-                            return
-                        }
-                        let current =
-                            model.tools.servers.first(where: { $0.id == initial.id }) ?? initial
-                        try model.tools.saveServer(
-                            MCPServer(
-                                id: initial.id, name: name,
-                                endpoint: url, enabledTools: current.enabledTools),
-                            newToken: token.isEmpty ? nil : token)
-                        token = ""
-                        error = nil
-                        model.toolConfigurationChanged()
-                        if isNew { model.tools.discover(initial.id) }
-                    } catch { self.error = error.localizedDescription }
+                    Task {
+                        do {
+                            guard let url = URL(string: endpoint) else { throw MCPFailure.endpoint }
+                            let isNew = !model.tools.servers.contains(where: { $0.id == initial.id }
+                            )
+                            if isNew && requiresBearerToken && token.isEmpty {
+                                error = "This server requires a bearer token from its provider."
+                                return
+                            }
+                            guard let baseline else {
+                                throw SkillFailure.invalid("Reload saved settings before saving.")
+                            }
+                            let current =
+                                model.tools.servers.first(where: { $0.id == initial.id }) ?? initial
+                            try await model.tools.saveServer(
+                                MCPServer(
+                                    id: initial.id, name: name,
+                                    endpoint: url, enabledTools: current.enabledTools),
+                                newToken: token.isEmpty ? nil : token, expected: baseline)
+                            self.baseline = try model.tools.captureServerEdit(initial.id)
+                            hasSaved = true
+                            token = ""
+                            error = nil
+                            model.toolConfigurationChanged()
+                            if isNew { model.tools.discover(initial.id) }
+                        } catch { self.error = error.localizedDescription }
+                    }
                 }
-                Text("New servers connect after saving and enable all discovered tools.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Button("Reload saved settings") { Task { await reloadEditor(initialLoad: false) } }
+                Text(
+                    "Reload discards unsaved form edits. New servers connect after saving and enable all discovered tools."
+                )
+                .font(.caption).foregroundStyle(.secondary)
             }
             if let saved = model.tools.servers.first(where: { $0.id == initial.id }) {
                 Section("Connection and tools") {
@@ -214,11 +239,13 @@ private struct MCPServerEditor: View {
                                         .enabledTools.contains(toolName) == true
                                 },
                                 set: { enabled in
-                                    do {
-                                        try model.tools.setEnabled(
-                                            enabled, tool: toolName, serverID: initial.id)
-                                        model.toolConfigurationChanged()
-                                    } catch { self.error = error.localizedDescription }
+                                    Task {
+                                        do {
+                                            try await model.tools.setEnabled(
+                                                enabled, tool: toolName, serverID: initial.id)
+                                            model.toolConfigurationChanged()
+                                        } catch { self.error = error.localizedDescription }
+                                    }
                                 }
                             )
                         ) {
@@ -247,8 +274,12 @@ private struct MCPServerEditor: View {
                 }
                 Section {
                     Button("Remove saved token", role: .destructive) {
-                        do { try model.tools.clearCredential(initial.id) } catch {
-                            self.error = error.localizedDescription
+                        Task {
+                            do {
+                                try await model.tools.clearCredential(initial.id)
+                            } catch {
+                                self.error = error.localizedDescription
+                            }
                         }
                     }
                     Button("Delete server…", role: .destructive) { confirmDelete = true }
@@ -259,22 +290,69 @@ private struct MCPServerEditor: View {
             }
         }
         .navigationTitle(name.isEmpty ? "MCP server" : name)
-        .disabled(model.busy)
+        .disabled(
+            model.busy || model.tools.settingsLoading || model.tools.settingsWriting || reloading
+        )
         .onAppear {
-            name = initial.name; endpoint = initial.endpoint.absoluteString
+            if !editorLoaded {
+                editorLoaded = true
+                name = initial.name
+                endpoint = initial.endpoint.absoluteString
+                Task { await reloadEditor(initialLoad: true) }
+            }
         }
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         .alert("Delete this MCP server?", isPresented: $confirmDelete) {
             Button("Delete", role: .destructive) {
-                do {
-                    try model.tools.removeServer(initial.id); model.toolConfigurationChanged();
-                    dismiss()
-                } catch { self.error = error.localizedDescription }
+                Task {
+                    do {
+                        try await model.tools.removeServer(initial.id);
+                        model.toolConfigurationChanged();
+                        dismiss()
+                    } catch { self.error = error.localizedDescription }
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Removes its local settings and Keychain token. Existing chat records remain.")
+            Text(
+                "Removes its registration and key from the active settings profile. Existing chat records remain."
+            )
         }
+    }
+
+    private func reloadEditor(initialLoad: Bool) async {
+        guard !reloading else { return }
+        reloading = true
+        defer { reloading = false }
+        if !initialLoad { await model.tools.refreshSettingsAndSkills(using: model.cloud) }
+        do {
+            let saved = model.tools.servers.first { $0.id == initial.id }
+            let registration: MCPServer
+            if initialLoad {
+                var shown = initial
+                shown.lastDiscoveredTools = nil
+                var current = saved
+                current?.lastDiscoveredTools = nil
+                guard creating ? current == nil : current == shown else {
+                    throw SkillFailure.invalid("This server changed. Reload saved settings.")
+                }
+                registration = initial
+            } else if let saved {
+                registration = saved
+            } else {
+                guard creating && !hasSaved else {
+                    throw SkillFailure.invalid(
+                        "This server was removed. Close the editor to add a new registration.")
+                }
+                registration = initial
+            }
+            let captured = try model.tools.captureServerEdit(initial.id)
+            baseline = captured
+            name = registration.name
+            endpoint = registration.endpoint.absoluteString
+            token = ""
+            error = nil
+        } catch { self.error = error.localizedDescription }
     }
 }
 
@@ -303,13 +381,17 @@ private struct MCPRegistryView: View {
     var body: some View {
         List {
             Section {
-                Link("Official MCP Registry", destination: URL(
-                    string: "https://registry.modelcontextprotocol.io")!)
-                    .accessibilityIdentifier("registry-source")
+                Link(
+                    "Official MCP Registry",
+                    destination: URL(
+                        string: "https://registry.modelcontextprotocol.io")!
+                )
+                .accessibilityIdentifier("registry-source")
                 Text(
                     "Only supported remote connections are shown. Listings describe servers; "
-                        + "availability and authentication are checked when you add one.")
-                    .font(.caption).foregroundStyle(.secondary)
+                        + "availability and authentication are checked when you add one."
+                )
+                .font(.caption).foregroundStyle(.secondary)
                 Text("Local packages, URL variables and custom headers are not supported.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -331,14 +413,17 @@ private struct MCPRegistryView: View {
                 if shortSearch {
                     Text("Type at least 3 characters to search server names.")
                         .accessibilityIdentifier("registry-search-hint")
-                } else if loading { ProgressView("Loading servers…") }
+                } else if loading {
+                    ProgressView("Loading servers…")
+                }
                 if !shortSearch, let error {
                     Text(error).foregroundStyle(.red).accessibilityIdentifier("registry-error")
                     Button("Retry") { request.attempt += 1 }
                 } else if !shortSearch && !loading && servers.isEmpty {
-                    Text(nextCursor == nil
-                         ? "No supported remote servers found."
-                         : "No supported connections on this page. Load more or search by name.")
+                    Text(
+                        nextCursor == nil
+                            ? "No supported remote servers found."
+                            : "No supported connections on this page. Load more or search by name.")
                 }
                 if !shortSearch && nextCursor != nil && error == nil {
                     Button("Load more") { request.cursor = nextCursor }
@@ -352,7 +437,8 @@ private struct MCPRegistryView: View {
                 get: { request.search },
                 set: { request = Request(search: $0) }),
             placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "Search server names")
+            prompt: "Search server names"
+        )
         .textInputAutocapitalization(.never)
         .autocorrectionDisabled()
         .task(id: request) { [request] in await load(request) }
@@ -440,7 +526,7 @@ private struct RegistryServerView: View {
             NavigationStack {
                 MCPServerEditor(
                     model: model, initial: selection.server,
-                    requiresBearerToken: selection.requiresBearerToken)
+                    requiresBearerToken: selection.requiresBearerToken, creating: true)
             }
         }
     }

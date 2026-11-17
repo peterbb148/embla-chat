@@ -42,9 +42,10 @@ Invalid assignments and broken note-source references fail clearly. The existing
 `EmblaChat/Chats/ActiveChat.json` path is retained, and Skills/Actions stay separate.
 Older app builds cannot read format 3. Use the updated build on devices sharing a library.
 
-The user chose **one global iCloud switch for chats and project memory**. Off remains the
+The user chose **one global iCloud switch**, now covering chats, project memory and
+[shared settings/readable MCP keys](settings-sync.md). Off remains the
 default; all project edits stay local while Off. Consent explicitly names all saved chats,
-summaries and project memory. Drafts, device selection, folder permissions and model weights
+summaries, project memory, settings and readable MCP keys. Drafts, device selection, folder permissions and model weights
 stay local. Existing On archives without the current consent version are paused before
 opening a provider. Settings asks the user to confirm the expanded scope and select the
 folder again; only a successful preference save permits synchronization. Ordinary local

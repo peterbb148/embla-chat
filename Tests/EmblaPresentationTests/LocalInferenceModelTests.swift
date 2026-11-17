@@ -1161,8 +1161,8 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
     let setup = ToolWorkspace(configuration: file)
     let server = MCPServer(name: "Synthetic offline catalog",
         endpoint: URL(string: "https://example.invalid/mcp")!)
-    try setup.saveServer(server)
-    try setup.acceptDiscoveredTools([
+    try await setup.saveServer(server)
+    try await setup.acceptDiscoveredTools([
         MCPTool(name: "synthetic_clock", description: "Fixture only, never called.",
             inputSchema: .object(["type": .string("object")]))], serverID: server.id)
     setup.pause()
@@ -1219,12 +1219,12 @@ private final class PlanningWireFixture {
         configuration: fixture.root.appendingPathComponent("servers.json"))
     let offline = MCPServer(name: "Known offline synthetic endpoint",
         endpoint: URL(string: "https://example.invalid/mcp")!)
-    try workspace.saveServer(offline)
-    try workspace.acceptDiscoveredTools([
+    try await workspace.saveServer(offline)
+    try await workspace.acceptDiscoveredTools([
         MCPTool(name: "cached", description: "Saved synthetic metadata",
             inputSchema: .object(["type": .string("object")]))], serverID: offline.id)
     let missing = MCPServer(name: "Missing synthetic catalog", endpoint: wire.url("json"))
-    try workspace.saveServer(missing)
+    try await workspace.saveServer(missing)
     workspace.pause()
     try await workspace.preparePlanningMetadata(using: ConversationCloudSync())
     #expect(try workspace.remoteTools().map(\.name).sorted() == ["cached", "echo"])
@@ -1238,7 +1238,7 @@ func contextMetadataRetryCanBeStoppedAndCancelsOnInactivity(_ inactive: Bool) as
     let wire = try PlanningWireFixture(); defer { wire.stop() }
     let workspace = ToolWorkspace(
         configuration: fixture.root.appendingPathComponent("servers.json"))
-    try workspace.saveServer(
+    try await workspace.saveServer(
         MCPServer(name: "Slow synthetic discovery", endpoint: wire.url("slow")))
     let backend = PresentationBackend(pauseFirst: false)
     let model = await fixture.model(session: InferenceSession { _, _ in backend }, tools: workspace)

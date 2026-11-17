@@ -37,7 +37,7 @@ enum CloudSyncPolicy {
 public final class ConversationCloudSync {
     public private(set) var enabled = false
     public private(set) var requiresScopeConsent = false
-    public private(set) var consentVersion = 1
+    public private(set) var consentVersion = 2
     public private(set) var folderAccessReady = false
     public private(set) var configurationRevision = UUID()
     public private(set) var status = "iCloud is off."
@@ -45,6 +45,7 @@ public final class ConversationCloudSync {
     public private(set) var syncing = false
     public private(set) var resolving = false
     public private(set) var choices: [CloudChatChoice] = []
+    @ObservationIgnored var settingsScopeWillChange: (() -> Void)?
     @ObservationIgnored var bookmark: Data?
     @ObservationIgnored var baseFingerprint: String?
     @ObservationIgnored var current: (() -> CloudLocalConversation?)?
@@ -77,12 +78,13 @@ public final class ConversationCloudSync {
         self.factory = factory
     }
 
-    func restore(enabled: Bool, bookmark: Data?, base: String?, consentVersion: Int = 1) {
+    func restore(enabled: Bool, bookmark: Data?, base: String?, consentVersion: Int = 2) {
+        settingsScopeWillChange?()
         pause()
         configurationRevision = UUID()
         self.enabled = enabled
         self.consentVersion = consentVersion
-        requiresScopeConsent = enabled && consentVersion != 1
+        requiresScopeConsent = enabled && consentVersion != 2
         storedEnabled = enabled
         offPreferencePending = false
         self.bookmark = bookmark
@@ -94,7 +96,8 @@ public final class ConversationCloudSync {
         status = enabled ? "Waiting to synchronize…" : "iCloud is off."
         if error != nil { status = "iCloud folder access is unavailable." }
         if requiresScopeConsent {
-            status = "iCloud paused. Confirm syncing chats and project memory in Settings."
+            status = "iCloud paused. Confirm syncing chats, project memory, settings "
+                + "and readable MCP keys in Settings."
         }
     }
 
@@ -117,13 +120,14 @@ public final class ConversationCloudSync {
     }
 
     func enable(bookmark: Data) async throws {
+        settingsScopeWillChange?()
         pause()
         let configuration = UUID()
         configurationRevision = configuration
         offPreferencePending = false
         enabled = true
         requiresScopeConsent = false
-        consentVersion = 1
+        consentVersion = 2
         self.bookmark = bookmark
         baseFingerprint = nil
         baseNeedsSave = false
@@ -155,6 +159,7 @@ public final class ConversationCloudSync {
 
     /// Stops new app operations. Data already handed to iCloud Drive may still finish uploading.
     public func disable() {
+        settingsScopeWillChange?()
         pause()
         configurationRevision = UUID()
         let configuration = configurationRevision

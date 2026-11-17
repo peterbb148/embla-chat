@@ -22,8 +22,9 @@ compatibility requirements are shown for the user to assess. Invalid entries sho
 actual error. Metadata/tool declarations do not grant permissions.
 
 Open **Settings → Manage skills** to reload, inspect and explicitly select a skill.
-Skill management is separate from MCP Servers; the composer does not open the manager. Its name remains visible in the composer. Selection is cleared when changing chats,
-reloading the skill source or leaving the active app. Skill actions in `Actions/actions.json`
+Skill management is separate from MCP Servers; the composer does not open the manager. Its name remains visible in the composer. Selection is a persisted global preference;
+changing chats retains it, and foreground/source reload validates the saved selection again.
+A missing selected skill fails visibly. See [shared settings](settings-sync.md). Skill actions in `Actions/actions.json`
 select a named skill and optionally fill a draft, with the same replacement confirmation
 as prompt actions. Nothing submits automatically.
 
@@ -84,10 +85,12 @@ uses last-discovered definitions locally. No server is registered implicitly.
 Sending while Settings is still discovering takes ownership of connection setup under the
 Send task, so setup cannot race the submitted message and cancellation remains effective. The endpoint must use HTTPS; loopback HTTP is allowed for local developer tests.
 Redirects are rejected, and the client has no cookie jar or shared credential store.
-Credentials/query strings in endpoints are not supported. Name, endpoint, selected
-tool names and validated last-discovered definitions are stored in excluded-from-backup device settings, separately from chat and
-skill files. Tokens use non-synchronizing, When-Unlocked-This-Device-Only Keychain items;
-the app does not add credentials to model prompts or portable documents. Credentials are
+Credentials/query strings in endpoints are not supported. With iCloud Off, name, endpoint, selected tool names and validated last-discovered
+definitions use excluded-from-backup device settings. Tokens use non-synchronizing,
+When-Unlocked-This-Device-Only Keychain items. With iCloud On, registrations, grants and
+readable bearer tokens use Settings/settings.json; schemas stay cached locally. Anyone
+with folder access can read those keys. The app never adds keys to model prompts or chats.
+See [shared settings](settings-sync.md) for migration, conflicts and configuration examples. Credentials are
 bound to the exact endpoint as well as the registration ID, preventing a failed settings
 save from supplying a replacement endpoint’s token to the previous destination. Removing
 a registration clears its endpoint-specific Keychain entries.
@@ -264,8 +267,10 @@ that answer-quality defect. Requested-field validation is not proof of every gen
 
 Local context planning reuses the validated saved catalog after pause/restart (#71), not a
 live connection. Send still prepares actual clients and refreshes missing connections before
-generation, and dispatch requires a live client plus the enabled/schema checks. Metadata
-persists atomically with the registration; changing its endpoint or credential invalidates
-it, durably before changing the credential; a failed invalidation leaves the old credential
-and schemas intact. Planning only reconnects servers missing metadata. Count retry supports
-Stop and cancels on inactivity. This does not send chats or credentials to the registry or iCloud.
+generation, and dispatch requires a live client plus the enabled/schema checks. With local settings, metadata persists atomically with the registration and is invalidated
+durably before changing a credential. With shared settings, endpoint-bound keys/registrations
+are committed together; connection-fingerprinted schemas stay cached on the device.
+Name/permission-only edits preserve the catalog. Failed writes leave the previous
+configuration available. Planning only reconnects servers missing metadata. Count retry supports
+Stop and cancels on inactivity. This does not send chats or credentials to the registry. Optional shared credential storage
+is governed by the separate expanded iCloud consent.
