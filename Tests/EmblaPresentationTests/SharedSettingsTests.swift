@@ -543,3 +543,42 @@ func stalledSettingsProviderLeavesOffResponsiveAndRejectsItsLateResult(missing: 
     }
     #expect(!FileManager.default.fileExists(atPath: file.path))
 }
+
+@Test @MainActor func editorRefreshRecoversFromAnExternalEditWithoutLeavingTheForeground()
+    async throws
+{
+    let root = try settingsRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = SettingsFileFixture(file: root.appendingPathComponent("settings.json"))
+    let original = settingsDocument()
+    try original.encoded().write(to: file.file)
+    let workspace = ToolWorkspace(
+        configuration: root.appendingPathComponent("servers.json"),
+        credentials: SettingsCredentialFixture(), settingsFactory: { _ in file })
+    let cloud = ConversationCloudSync()
+    cloud.restore(enabled: true, bookmark: Data("synthetic grant".utf8), base: nil)
+    await workspace.refreshSettingsAndSkills(using: cloud)
+    let baseline = try workspace.captureServerEdit(original.servers[0].id)
+    var form = original.servers[0].registration
+    form.name = "Edited locally"
+    var external = original
+    external.servers[0].endpoint = URL(string: "https://externally-changed.invalid/mcp")!
+    external.servers[0].credential = SharedCredential(
+        endpoint: external.servers[0].endpoint,
+        bearerToken: "synthetic-newer-key")
+    try external.encoded().write(to: file.file, options: .atomic)
+    // The in-memory baseline still matches, but file coordination rejects the stale save.
+    await #expect(throws: SharedSettingsError.self) {
+        try await workspace.saveServer(form, expected: baseline)
+    }
+    await workspace.refreshSettingsAndSkills(using: cloud)
+    #expect(!workspace.loadingSkills && workspace.settingsError == nil)
+    let fresh = try workspace.captureServerEdit(form.id)
+    var refreshed = try #require(workspace.servers.first)
+    #expect(refreshed.endpoint == external.servers[0].endpoint)
+    refreshed.name = "New edit after explicit refresh"
+    try await workspace.saveServer(refreshed, expected: fresh)
+    let saved = try #require(try file.read().current?.servers.first)
+    #expect(saved.name == refreshed.name && saved.endpoint == external.servers[0].endpoint)
+    #expect(saved.credential?.bearerToken == "synthetic-newer-key")
+}

@@ -53,7 +53,7 @@ to remove that registration. No device-local key is substituted for a missing cl
 Enable iCloud and select the same folder on another installation. Once iCloud Drive has
 materialized the file, registrations, grants and credentials can be used without re-entry.
 An open editor retains a source/name/endpoint/key baseline. If another device changes
-those values, saving fails until you explicitly reload saved settings. Reload discards
+those values, saving fails until you explicitly reload saved settings. Reload awaits a fresh shared document and selected-skill loading, then discards
 unsaved form fields; current permission toggles are preserved by name-only form saves.
 
 The app reports file availability/write completion, not a guarantee that another device

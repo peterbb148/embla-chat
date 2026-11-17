@@ -149,6 +149,12 @@ public final class ToolWorkspace {
         }
     }
 
+    /// Explicit editor reload awaits the shared document and its corresponding selected skill.
+    public func refreshSettingsAndSkills(using cloud: ConversationCloudSync) async {
+        reloadSkills(using: cloud)
+        await skillTask?.value
+    }
+
     public func selectSkill(_ name: String?, using cloud: ConversationCloudSync) async throws {
         guard
             name == nil

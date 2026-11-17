@@ -316,10 +316,21 @@ final class LaunchTests: XCTestCase {
         let name = app.textFields["mcp-name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap()
-        name.typeText(" UI fixture " + UUID().uuidString.prefix(8))
+        let fixtureName = " UI fixture " + UUID().uuidString.prefix(8)
+        name.typeText(fixtureName)
         XCTAssertEqual(
             app.textFields["mcp-endpoint"].value as? String, "https://example.invalid/mcp")
         app.buttons["Save server"].tap()
+        let reload = app.buttons["Reload saved settings"]
+        XCTAssertTrue(reload.waitForExistence(timeout: 5))
+        reload.tap()
+        for _ in 0..<4 {
+            if name.exists && name.isHittable { break }
+            app.swipeDown()
+        }
+        let refreshed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@ AND enabled == true", fixtureName), object: name)
+        XCTAssertEqual(XCTWaiter.wait(for: [refreshed], timeout: 10), .completed)
         let connect = app.buttons["Connect and discover tools"]
         reveal(connect, in: app)
         XCTAssertTrue(connect.waitForExistence(timeout: 5))

@@ -165,6 +165,7 @@ private struct MCPServerEditor: View {
     var creating = false
     @State private var baseline: MCPServerEditBaseline?
     @State private var editorLoaded = false
+    @State private var reloading = false
     @State private var hasSaved = false
     @State private var name = ""
     @State private var endpoint = ""
@@ -218,7 +219,7 @@ private struct MCPServerEditor: View {
                         } catch { self.error = error.localizedDescription }
                     }
                 }
-                Button("Reload saved settings") { reloadEditor(initialLoad: false) }
+                Button("Reload saved settings") { Task { await reloadEditor(initialLoad: false) } }
                 Text(
                     "Reload discards unsaved form edits. New servers connect after saving and enable all discovered tools."
                 )
@@ -289,13 +290,15 @@ private struct MCPServerEditor: View {
             }
         }
         .navigationTitle(name.isEmpty ? "MCP server" : name)
-        .disabled(model.busy || model.tools.settingsLoading || model.tools.settingsWriting)
+        .disabled(
+            model.busy || model.tools.settingsLoading || model.tools.settingsWriting || reloading
+        )
         .onAppear {
             if !editorLoaded {
                 editorLoaded = true
                 name = initial.name
                 endpoint = initial.endpoint.absoluteString
-                reloadEditor(initialLoad: true)
+                Task { await reloadEditor(initialLoad: true) }
             }
         }
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -317,7 +320,11 @@ private struct MCPServerEditor: View {
         }
     }
 
-    private func reloadEditor(initialLoad: Bool) {
+    private func reloadEditor(initialLoad: Bool) async {
+        guard !reloading else { return }
+        reloading = true
+        defer { reloading = false }
+        if !initialLoad { await model.tools.refreshSettingsAndSkills(using: model.cloud) }
         do {
             let saved = model.tools.servers.first { $0.id == initial.id }
             let registration: MCPServer
