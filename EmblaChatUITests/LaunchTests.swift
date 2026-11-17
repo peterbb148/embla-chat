@@ -336,6 +336,7 @@ extension LaunchTests {
     /// Explicit physical-device selection only: real app, model and a separate synthetic chat.
     @MainActor
     func testPhysicalPhoneCompactionWithRegisteredToolsAfterRestart() throws {
+        continueAfterFailure = false
         #if targetEnvironment(simulator)
         throw XCTSkip("Actual-model compaction is exercised only on a connected physical phone.")
         #else
