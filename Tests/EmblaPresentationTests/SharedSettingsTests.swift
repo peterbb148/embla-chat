@@ -271,6 +271,27 @@ private final class FailingSettingsFixture: SharedSettingsStoring, @unchecked Se
         #expect(first.visibleToolNames(for: server.id) == ["echo"])
         try await first.setEnabled(true, tool: "echo", serverID: server.id)
         #expect(first.discovered[server.id]?.count == 1)
+        let slow = MCPServer(
+            name: "Synthetic pending discovery",
+            endpoint: URL(string: "http://127.0.0.1:\(port)/slow")!)
+        try await first.saveServer(slow, newToken: "synthetic-key")
+        first.discover(slow.id)
+        let statsURL = URL(string: "http://127.0.0.1:\(port)/request-counts")!
+        var started = false
+        for _ in 0..<100 {
+            let (data, _) = try await URLSession.shared.data(from: statsURL)
+            let counts = try JSONDecoder().decode([String: [String: Int]].self, from: data)
+            if counts["/slow"]?["server/discover"] == 1 { started = true; break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(started)
+        try await first.clearCredential(slow.id)
+        await first.waitUntilIdle()
+        #expect(first.connecting == nil)
+        let (countsData, _) = try await URLSession.shared.data(from: statsURL)
+        let counts = try JSONDecoder().decode([String: [String: Int]].self, from: countsData)
+        #expect(counts["/slow"]?["tools/list"] == nil)
+        try await first.removeServer(slow.id)
         let secondVault = SettingsCredentialFixture()
         secondVault.token = "wrong-local-key-must-not-be-used"
         let second = ToolWorkspace(

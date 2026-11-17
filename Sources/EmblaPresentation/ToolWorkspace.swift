@@ -358,8 +358,7 @@ public final class ToolWorkspace {
         if let previous, previous.endpoint != server.endpoint {
             try credentials.deleteEndpoint(MCPCredentialID(server: previous))
         }
-        clients[server.id] = nil
-        discovered[server.id] = nil
+        invalidateClient(server.id)
         revision = UUID()
     }
 
@@ -383,8 +382,7 @@ public final class ToolWorkspace {
         let updated = servers.filter { $0.id != id }
         try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
         servers = updated
-        clients[id] = nil
-        discovered[id] = nil
+        invalidateClient(id)
         revision = UUID()
     }
 
@@ -407,8 +405,7 @@ public final class ToolWorkspace {
         updated[index].lastDiscoveredTools = nil
         try JSONEncoder().encode(updated).write(to: configuration, options: .atomic)
         servers = updated
-        clients[id] = nil
-        discovered[id] = nil
+        invalidateClient(id)
         revision = UUID()
     }
 
@@ -738,6 +735,16 @@ extension ToolWorkspace {
         settingsLoading = false
     }
 
+    private func invalidateClient(_ id: UUID) {
+        clients[id] = nil
+        discovered[id] = nil
+        if connecting == id {
+            connectTask?.cancel()
+            connectRequestID = UUID()
+            connecting = nil
+        }
+    }
+
     private func invalidateConnections() {
         connectTask?.cancel()
         connectRequestID = UUID()
@@ -871,11 +878,7 @@ extension ToolWorkspace {
         settingsWriteID = writeID
         settingsWriteSource = settingsSourceKey
         defer { if settingsWriteID == writeID { settingsWriteID = nil } }
-        try await shared.commit(value, replacing: current)
-        guard settingsSourceKey == key, currentSourceKey?() == key,
-            revision == expectedRevision, settingsRequestID == request, !Task.isCancelled
-        else { throw SharedSettingsError.changed }
-        sharedDocument = value
+        // Retire old credentials before yielding to storage, even if persistence later fails.
         for server in servers {
             let changed = value.servers.first { $0.id == server.id }
             let old = current.servers.first { $0.id == server.id }
@@ -883,10 +886,14 @@ extension ToolWorkspace {
                 || changed?.credential != old?.credential
                 || registrations.first(where: { $0.id == server.id })?.lastDiscoveredTools == nil
             {
-                clients[server.id] = nil
-                discovered[server.id] = nil
+                invalidateClient(server.id)
             }
         }
+        try await shared.commit(value, replacing: current)
+        guard settingsSourceKey == key, currentSourceKey?() == key,
+            revision == expectedRevision, settingsRequestID == request, !Task.isCancelled
+        else { throw SharedSettingsError.changed }
+        sharedDocument = value
         servers = registrations.map { server in
             var server = server
             let before = current.servers.first { $0.id == server.id }
