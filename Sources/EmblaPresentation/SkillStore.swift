@@ -226,26 +226,33 @@ actor SkillStore {
         return names
     }
 
+    /// Distinguish confirmed path changes from transient provider I/O failures.
+    static func readFailure(_ code: Int32) -> Error {
+        if [ENOENT, ENOTDIR, ELOOP].contains(code) { return SkillFailure.unsupportedResource }
+        return NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+    }
+
     /// Read only regular files through the pinned directory, never following a symbolic link.
     static func readRelativeFile(_ parts: [String], descriptor: Int32) throws -> Data {
         guard !parts.isEmpty,
             parts.allSatisfy({ !$0.isEmpty && !$0.hasPrefix(".") && !$0.contains("/") })
         else { throw SkillFailure.unsupportedResource }
         var directory = dup(descriptor)
-        guard directory >= 0 else { throw SkillFailure.unsupportedResource }
+        guard directory >= 0 else { throw readFailure(errno) }
         defer { close(directory) }
         for component in parts.dropLast() {
             try Task.checkCancellation()
             let next = openat(directory, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-            guard next >= 0 else { throw SkillFailure.unsupportedResource }
+            guard next >= 0 else { throw readFailure(errno) }
             close(directory)
             directory = next
         }
         let file = openat(directory, parts.last!, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
-        guard file >= 0 else { throw SkillFailure.unsupportedResource }
+        guard file >= 0 else { throw readFailure(errno) }
         defer { close(file) }
         var info = stat()
-        guard fstat(file, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
+        guard fstat(file, &info) == 0 else { throw readFailure(errno) }
+        guard info.st_mode & S_IFMT == S_IFREG,
             info.st_size >= 0, info.st_size <= 65_536
         else { throw SkillFailure.unsupportedResource }
         var data = Data()
@@ -254,7 +261,7 @@ actor SkillStore {
             try Task.checkCancellation()
             let count = buffer.withUnsafeMutableBytes { read(file, $0.baseAddress!, $0.count) }
             if count < 0 && errno == EINTR { continue }
-            guard count >= 0 else { throw SkillFailure.unsupportedResource }
+            guard count >= 0 else { throw readFailure(errno) }
             if count == 0 { break }
             guard data.count + count <= 65_536 else { throw SkillFailure.unsupportedResource }
             data.append(contentsOf: buffer.prefix(count))

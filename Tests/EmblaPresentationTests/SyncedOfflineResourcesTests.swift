@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Synchronization
 import Testing
@@ -301,6 +302,16 @@ extension QuickActionStore {
         .failure(CocoaError(.fileReadUnknown)), name: "saved-skill", previous: previous)
     #expect(online.document == nil && online.error != nil)
     #expect(try transient.entries().first?.document == original)
+    var ioFailure = SkillStore.Listing()
+    _ = ioFailure.record(
+        .failure(SkillStore.readFailure(EIO)), name: "saved-skill", previous: previous)
+    #expect(try ioFailure.entries().first?.document == original)
+    for code in [ENOENT, ENOTDIR, ELOOP] {
+        var invalidated = SkillStore.Listing()
+        _ = invalidated.record(
+            .failure(SkillStore.readFailure(code)), name: "saved-skill", previous: previous)
+        #expect(try invalidated.entries().first?.document == nil)
+    }
     for failure in [CocoaError(.fileReadNoSuchFile), CocoaError(.fileNoSuchFile)] {
         var deleted = SkillStore.Listing()
         _ = deleted.record(.failure(failure), name: "saved-skill", previous: previous)
