@@ -1463,13 +1463,21 @@ func legacyMessagesWithoutMetricsDecodeAndInvalidMeasurementsAreRejected() throw
     let legacy = try JSONEncoder().encode(ChatMessage(role: .assistant, text: "Legacy"))
     let decoded = try JSONDecoder().decode(ChatMessage.self, from: legacy)
     #expect(decoded.generationMetrics == nil)
+    var validMessage = decoded
+    validMessage.generationMetrics = GenerationMetrics(
+        finishReason: "stop", promptTokens: 10, completionTokens: 5,
+        promptMilliseconds: 1, decodeMilliseconds: 2)
+    let user = ChatMessage(role: .user, text: "Synthetic validation question")
+    try ConversationSnapshot(
+        conversationID: UUID(), messages: [user, validMessage], compaction: CompactionState()
+    ).validate()
     for bad in [-1.0, Double.infinity, Double.nan] {
         var message = decoded
         message.generationMetrics = GenerationMetrics(
             finishReason: "stop", promptTokens: 10, completionTokens: 5,
             promptMilliseconds: 1, decodeMilliseconds: bad)
         let snapshot = ConversationSnapshot(
-            conversationID: UUID(), messages: [message], compaction: CompactionState())
+            conversationID: UUID(), messages: [user, message], compaction: CompactionState())
         #expect(throws: ConversationStorageError.invalidDocument) { try snapshot.validate() }
     }
 }
