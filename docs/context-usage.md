@@ -143,3 +143,7 @@ After review fixes, the actual-model regression passed again in 79.035 seconds w
 verify cancellation on Stop/inactivity and recovery of only missing metadata while
 retaining an offline server's saved catalog. Credential write-failure tests verify that
 unwritable settings leave both the old credential and its corresponding schemas intact.
+
+A subsequent live phone reading showed 2003 tokens. A fresh reconstruction of the same
+saved diagnostic chat also counted exactly 2003, confirming the display refreshed after
+further conversation. The saved summary still covered six older messages.

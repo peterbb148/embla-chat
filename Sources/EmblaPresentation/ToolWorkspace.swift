@@ -243,6 +243,7 @@ public final class ToolWorkspace {
         guard let configuration else {
             throw SkillFailure.invalid("MCP settings storage is unavailable.")
         }
+        try invalidatePlanningMetadata(id)
         try credentials.deleteAll(id)
         if connecting == id {
             connectTask?.cancel()

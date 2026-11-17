@@ -270,8 +270,12 @@ private func discoveredFixtureTools(_ names: [String]) throws -> [MCPTool] {
     #expect(try Data(contentsOf: file) == corrupt)
 }
 
-@Test(arguments: [false, true]) @MainActor
-func failedMetadataInvalidationLeavesTheCredentialAndItsSchemasUnchanged(_ remove: Bool) throws {
+enum CredentialMutationFixture: String, CaseIterable, Sendable { case replace, clear, removeServer }
+
+@Test(arguments: CredentialMutationFixture.allCases) @MainActor
+func failedMetadataInvalidationLeavesTheCredentialAndItsSchemasUnchanged(
+    _ mutation: CredentialMutationFixture
+) throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     defer {
@@ -289,8 +293,11 @@ func failedMetadataInvalidationLeavesTheCredentialAndItsSchemasUnchanged(_ remov
     let originalServer = workspace.servers[0]
     try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
     #expect(throws: (any Error).self) {
-        if remove { try workspace.clearCredential(server.id) }
-        else { try workspace.saveServer(originalServer, newToken: "synthetic-replacement") }
+        switch mutation {
+        case .clear: try workspace.clearCredential(server.id)
+        case .removeServer: try workspace.removeServer(server.id)
+        case .replace: try workspace.saveServer(originalServer, newToken: "synthetic-replacement")
+        }
     }
     #expect(vault.read(MCPCredentialID(server: server)) == "synthetic-original")
     #expect(workspace.servers[0] == originalServer)
