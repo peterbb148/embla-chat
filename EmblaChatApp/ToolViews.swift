@@ -259,7 +259,7 @@ private struct MCPServerEditor: View {
                         ) {
                             VStack(alignment: .leading) {
                                 Text(toolName)
-                                if let tool = model.tools.discovered[initial.id]?.first(where: {
+                                if let tool = model.tools.catalogTools(for: initial.id).first(where: {
                                     $0.name == toolName
                                 }) {
                                     Text(tool.description).font(.caption).foregroundStyle(
@@ -272,6 +272,7 @@ private struct MCPServerEditor: View {
                                 }
                             }
                         }
+                        .accessibilityIdentifier("mcp-tool-\(toolName)")
                     }
                     Text(
                         "All tools are enabled after a new server connects. Turn off any "

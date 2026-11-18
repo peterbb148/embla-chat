@@ -524,7 +524,7 @@ public final class ToolWorkspace {
             let index = servers.firstIndex(where: { $0.id == serverID })
         else { throw SkillFailure.changed }
         if enabled {
-            guard discovered[serverID]?.contains(where: { $0.name == tool }) == true else {
+            guard catalogTools(for: serverID).contains(where: { $0.name == tool }) else {
                 throw SkillFailure.changed
             }
         }
@@ -544,9 +544,15 @@ public final class ToolWorkspace {
         revision = UUID()
     }
 
+    /// Settings use the validated saved catalog after restart; this never creates a live client.
+    public func catalogTools(for serverID: UUID) -> [MCPTool] {
+        guard let server = servers.first(where: { $0.id == serverID }) else { return [] }
+        return discovered[serverID] ?? server.lastDiscoveredTools ?? []
+    }
+
     public func visibleToolNames(for serverID: UUID) -> [String] {
         let saved = servers.first(where: { $0.id == serverID })?.enabledTools ?? []
-        return saved.union(Set((discovered[serverID] ?? []).map(\.name))).sorted()
+        return saved.union(Set(catalogTools(for: serverID).map(\.name))).sorted()
     }
 
     func permitsNetwork(forRequest: Bool) -> Bool {

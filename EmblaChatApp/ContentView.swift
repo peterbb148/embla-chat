@@ -29,7 +29,10 @@ struct ContentView: View {
                     fatalError("The isolated tool-summary UI fixture requires its test UUID.")
                 }
                 do {
-                    let fixture = try LocalInferenceModel.toolSummaryUIFixture(id: id, network: network)
+                    let fixture = try LocalInferenceModel.toolSummaryUIFixture(
+                        id: id, network: network,
+                        includeMCPSettings: ProcessInfo.processInfo.arguments.contains(
+                            "--mcp-tool-settings-fixture"))
                     _model = State(initialValue: fixture.model)
                     _quickActions = State(initialValue: fixture.actions)
                     _connectivity = State(initialValue: AppConnectivity(access: network))

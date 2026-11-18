@@ -281,6 +281,12 @@ notice/raw-result rendering and restart only; control-flow correctness comes fro
 tests, and real summary quality from the opt-in Mac test. Reuse the existing iPhone 17 Pro
 simulator with parallel testing disabled; do not create another simulator for this check.
 
+`testDisabledMCPToolRemainsVisibleAndCanBeReenabledAfterRestart` adds the Debug-only
+`--mcp-tool-settings-fixture` argument to that isolated fixture. It seeds a synthetic,
+credential-free saved catalogue on an invalid endpoint without live discovery, then verifies
+Off, restart, the retained description and On in the production server editor. Existing test
+storage is preserved on relaunch. Release does not compile the fixture.
+
 A separate authenticated Tavily `pro` research smoke request through the updated native
 MCP client completed in 96.915 seconds and returned 16,743 bytes on 2026-11-17. It performed
 one public research request, with no automatic retry or substitute tool, and used the
