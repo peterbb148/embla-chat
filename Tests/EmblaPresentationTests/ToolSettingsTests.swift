@@ -327,3 +327,38 @@ func failedMetadataInvalidationLeavesTheCredentialAndItsSchemasUnchanged(
     #expect(try Data(contentsOf: file) == original)
     #expect(try workspace.remoteTools().map(\.name) == ["clock"])
 }
+
+@Test @MainActor
+func disabledToolsStayVisibleAndCanBeReenabledFromTheSavedCatalogAfterRestart() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let file = root.appendingPathComponent("servers.json")
+    let workspace = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    let server = MCPServer(
+        name: "Synthetic search server", endpoint: URL(string: "https://example.invalid/mcp")!)
+    try await workspace.saveServer(server)
+    try await workspace.acceptDiscoveredTools(
+        discoveredFixtureTools(["search", "research"]), serverID: server.id)
+    let reopened = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    #expect(reopened.discovered.isEmpty)
+    try await reopened.setEnabled(false, tool: "research", serverID: server.id)
+    #expect(reopened.visibleToolNames(for: server.id) == ["research", "search"])
+    #expect(try reopened.remoteTools().map(\.name) == ["search"])
+    try await reopened.setEnabled(false, tool: "search", serverID: server.id)
+    let disabled = ToolWorkspace(configuration: file, credentials: MemoryCredentialFixture())
+    #expect(disabled.visibleToolNames(for: server.id) == ["research", "search"])
+    #expect(try disabled.remoteTools().isEmpty)
+    try await disabled.setEnabled(true, tool: "research", serverID: server.id)
+    #expect(try disabled.remoteTools().map(\.name) == ["research"])
+    #expect(disabled.discovered.isEmpty && disabled.connecting == nil)
+    await #expect(throws: SkillFailure.self) {
+        try await disabled.setEnabled(true, tool: "unknown", serverID: server.id)
+    }
+    try await disabled.setEnabled(false, tool: "research", serverID: server.id)
+    try await disabled.saveServer(disabled.servers[0], newToken: "synthetic-new-key")
+    #expect(disabled.visibleToolNames(for: server.id).isEmpty)
+    await #expect(throws: SkillFailure.self) {
+        try await disabled.setEnabled(true, tool: "research", serverID: server.id)
+    }
+}

@@ -6,7 +6,9 @@ import EmblaRuntime
 
 extension LocalInferenceModel {
     /// Explicit, isolated saved-history fixture; never substitutes a generation backend.
-    public static func toolSummaryUIFixture(id: UUID, network: NetworkAccess) throws
+    public static func toolSummaryUIFixture(
+        id: UUID, network: NetworkAccess, includeMCPSettings: Bool = false
+    ) throws
         -> (model: LocalInferenceModel, actions: QuickActionsModel)
     {
         let root = FileManager.default.temporaryDirectory
@@ -32,7 +34,19 @@ extension LocalInferenceModel {
             try JSONEncoder().encode(archive).write(to: file, options: .atomic)
         }
         let manifest = try ModelManifest.bundled()
-        let tools = ToolWorkspace(configuration: root.appendingPathComponent("servers.json"), network: network)
+        let configuration = root.appendingPathComponent("servers.json")
+        if includeMCPSettings && !FileManager.default.fileExists(atPath: configuration.path) {
+            var server = MCPServer(
+                name: "Synthetic search server", endpoint: URL(string: "https://example.invalid/mcp")!,
+                enabledTools: ["search", "research"], enableToolsOnFirstDiscovery: false)
+            server.lastDiscoveredTools = try ["search", "research"].map {
+                try MCPTool(
+                    name: $0, description: "Synthetic \($0) catalogue description.",
+                    inputSchema: .object(["type": .string("object"), "properties": .object([:])]))
+            }
+            try JSONEncoder().encode([server]).write(to: configuration, options: .atomic)
+        }
+        let tools = ToolWorkspace(configuration: configuration, network: network)
         let model = LocalInferenceModel(
             repository: ModelRepository(root: root.appendingPathComponent("Model"), manifest: manifest),
             manifest: manifest, session: EmblaRuntime.makeSession(),

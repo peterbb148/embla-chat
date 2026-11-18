@@ -324,7 +324,12 @@ live connection. Send still prepares actual clients and refreshes missing connec
 generation, and dispatch requires a live client plus the enabled/schema checks. With local settings, metadata persists atomically with the registration and is invalidated
 durably before changing a credential. With shared settings, endpoint-bound keys/registrations
 are committed together; connection-fingerprinted schemas stay cached on the device.
-Name/permission-only edits preserve the catalog. Failed writes leave the previous
+Name/permission-only edits preserve the catalog. MCP Server settings display every tool in
+that catalog, including disabled tools and their descriptions, after restart or shared-settings
+reload (#89). Turning a tool off retains its row; turning it back on uses the validated saved
+schema without a discovery request. That does not create a live connection or authorize
+disabled tools for model context/execution. Connection changes still invalidate saved schemas.
+Failed writes leave the previous
 configuration available. Planning only reconnects servers missing metadata. Count retry supports
 Stop and cancels on inactivity. This does not send chats or credentials to the registry. Optional shared credential storage
 is governed by the separate expanded iCloud consent.

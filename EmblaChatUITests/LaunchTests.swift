@@ -269,6 +269,49 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
+    func testDisabledMCPToolRemainsVisibleAndCanBeReenabledAfterRestart() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--tool-result-summary-fixture", "--mcp-tool-settings-fixture"]
+        app.launchEnvironment["EMBLA_TOOL_SUMMARY_FIXTURE_ID"] = UUID().uuidString
+        func openServer() {
+            app.launch()
+            XCTAssertTrue(app.buttons["Chat history"].waitForExistence(timeout: 10))
+            app.buttons["Chat history"].tap()
+            XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+            app.buttons["Settings"].tap()
+            reveal(app.buttons["MCP Servers"], in: app)
+            app.buttons["MCP Servers"].tap()
+            let server = app.buttons.matching(
+                NSPredicate(format: "identifier BEGINSWITH %@", "mcp-server-")).firstMatch
+            XCTAssertTrue(server.waitForExistence(timeout: 10))
+            server.tap()
+        }
+        openServer()
+        let research = app.switches["mcp-tool-research"]
+        reveal(research, in: app)
+        XCTAssertTrue(research.waitForExistence(timeout: 10))
+        XCTAssertEqual(research.value as? String, "1")
+        research.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let off = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == '0'"), object: research)
+        XCTAssertEqual(XCTWaiter.wait(for: [off], timeout: 10), .completed)
+        XCTAssertTrue(research.exists)
+        app.terminate()
+        openServer()
+        reveal(research, in: app)
+        XCTAssertEqual(research.value as? String, "0")
+        XCTAssertTrue(research.label.contains("Synthetic research catalogue description."))
+        research.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let on = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == '1'"), object: research)
+        XCTAssertEqual(XCTWaiter.wait(for: [on], timeout: 10), .completed)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Cached MCP research toggle retained and re-enabled after restart"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testToolResultSummaryNoticeAndFullOriginalSurviveRestart() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--tool-result-summary-fixture"]
