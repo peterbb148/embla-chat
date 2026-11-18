@@ -277,7 +277,8 @@ The simulator UI test `testToolResultSummaryNoticeAndFullOriginalSurviveRestart`
 explicit Debug-only saved-history fixture and a per-test UUID. Chat, tool settings and quick
 actions use isolated temporary storage. It never substitutes a model backend or reads the
 normal profile. Release does not compile the fixture/launch switch. That check verifies
-notice/raw-result rendering and restart only; control-flow correctness comes from the package
+notice rendering, collapsed-by-default tool details, inspection/copy availability, collapse
+and restart only; control-flow correctness comes from the package
 tests, and real summary quality from the opt-in Mac test. Reuse the existing iPhone 17 Pro
 simulator with parallel testing disabled; do not create another simulator for this check.
 

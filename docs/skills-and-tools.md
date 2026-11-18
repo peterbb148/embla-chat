@@ -235,7 +235,7 @@ characters of previous-fragment overlap are included in each exact budget for un
 splits. JSON escapes reserved delimiter characters without changing decoded source data. Notes are
 carried forward across chunks, preserving relevant facts, exact identifiers, URLs and
 uncertainty. Summaries can omit details. A visible transcript notice identifies the reduction;
-the complete original result remains visible, copyable and saved.
+the complete original result remains saved and available to inspect and copy.
 
 A new tool continuation accepts only a nonempty, normally stopped summary that fits its
 exact budget. The budget includes earlier results in the same tool turn and retained saved
@@ -333,3 +333,12 @@ Failed writes leave the previous
 configuration available. Planning only reconnects servers missing metadata. Count retry supports
 Stop and cancels on inactivity. This does not send chats or credentials to the registry. Optional shared credential storage
 is governed by the separate expanded iCloud consent.
+
+### Inspecting tool responses (#91)
+
+Tool records are collapsed by default in the chat. The tool name, progress/failure state and
+any local-summary notice remain visible; the assistant's conversational answer is unchanged.
+Open **Inspect response** to view the complete original request/result as selectable plain text
+and use **Copy tool details**. Collapse it again to return to the compact transcript.
+This applies to saved tool records too. Expansion is view state only and starts collapsed after
+relaunch; it does not change saved output, model context, compaction, permissions or tool calls.
