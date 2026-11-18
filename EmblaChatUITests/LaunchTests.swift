@@ -312,6 +312,33 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
+    func testInspectingTallToolResponseKeepsItsHeaderInPlace() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--tool-result-summary-fixture", "--tall-tool-result-fixture"]
+        app.launchEnvironment["EMBLA_TOOL_SUMMARY_FIXTURE_ID"] = UUID().uuidString
+        app.launch()
+        let inspector = app.buttons["Inspect response"]
+        XCTAssertTrue(inspector.waitForExistence(timeout: 10))
+        if app.buttons["Hide keyboard"].exists { app.buttons["Hide keyboard"].tap() }
+        let initialY = inspector.frame.minY
+        inspector.tap()
+        let original = app.staticTexts["tool-response-original"]
+        XCTAssertTrue(original.waitForExistence(timeout: 10))
+        XCTAssertGreaterThan(original.frame.height, app.frame.height)
+        XCTAssertTrue(app.buttons["Jump to latest"].waitForExistence(timeout: 5))
+        XCTAssertTrue(inspector.isHittable)
+        XCTAssertEqual(inspector.frame.minY, initialY, accuracy: 4)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Tall tool inspection preserves its beginning and collapse control"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        inspector.tap()
+        XCTAssertFalse(original.exists)
+        app.buttons["Jump to latest"].tap()
+        XCTAssertFalse(app.buttons["Jump to latest"].exists)
+    }
+
+    @MainActor
     func testToolResultSummaryNoticeAndFullOriginalSurviveRestart() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--tool-result-summary-fixture"]
@@ -324,16 +351,29 @@ final class LaunchTests: XCTestCase {
             let original = app.staticTexts.containing(
                 NSPredicate(format: "label CONTAINS %@", "ORIGINAL_RESULT_RETAINED")
             ).firstMatch
-            XCTAssertTrue(original.exists)
+            XCTAssertFalse(original.exists)
+            let inspector = app.buttons["Inspect response"]
+            XCTAssertTrue(inspector.waitForExistence(timeout: 10))
+            inspector.tap()
+            XCTAssertTrue(original.waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["Copy tool details"].exists)
             XCTAssertTrue(app.staticTexts["Synthetic tool-summary UI fixture."].exists)
+            XCTAssertTrue(app.staticTexts.containing(NSPredicate(
+                format: "label == %@", "BLUE PENGUIN — https://example.com/fact")).firstMatch.exists)
             XCTAssertFalse(app.staticTexts["chat-error"].exists)
+            inspector.tap()
+            let collapsed = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == false"), object: original)
+            XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 5), .completed)
+            XCTAssertFalse(app.buttons["Copy tool details"].exists)
         }
         verifySavedResult()
+        app.buttons["Inspect response"].tap()
         app.terminate()
         app.launch()
         verifySavedResult()
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        screenshot.name = "Isolated saved tool-result summary and full original"
+        screenshot.name = "Tool result collapsed by default with full original available to inspect"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }

@@ -32,7 +32,9 @@ struct ContentView: View {
                     let fixture = try LocalInferenceModel.toolSummaryUIFixture(
                         id: id, network: network,
                         includeMCPSettings: ProcessInfo.processInfo.arguments.contains(
-                            "--mcp-tool-settings-fixture"))
+                            "--mcp-tool-settings-fixture"),
+                        tallToolResult: ProcessInfo.processInfo.arguments.contains(
+                            "--tall-tool-result-fixture"))
                     _model = State(initialValue: fixture.model)
                     _quickActions = State(initialValue: fixture.actions)
                     _connectivity = State(initialValue: AppConnectivity(access: network))
@@ -120,7 +122,8 @@ struct ContentView: View {
                             ForEach(model.messages) { message in
                                 ChatMessageRow(
                                     message: message,
-                                    canSaveMemory: model.activeProjectID != nil, model: model
+                                    canSaveMemory: model.activeProjectID != nil, model: model,
+                                    beginInspection: { transcriptScroll.pauseFollowing() }
                                 ) {
                                     guard let projectID = model.activeProjectID else { return }
                                     composerFocused = false
@@ -636,7 +639,9 @@ private struct ChatMessageRow: View, Equatable {
     let message: ChatMessage
     let canSaveMemory: Bool
     let model: LocalInferenceModel
+    let beginInspection: () -> Void
     let saveMemory: () -> Void
+    @State private var inspectingResponse = false
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.message == rhs.message && lhs.canSaveMemory == rhs.canSaveMemory
@@ -663,33 +668,33 @@ private struct ChatMessageRow: View, Equatable {
                     }
                 }
                 if message.toolResultSummary != nil {
-                    Text("Summarized locally for model context. Full tool result retained below.")
+                    Text("Summarized locally for context. Inspect response to see the full original.")
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("tool-result-summary-notice")
                 }
-                if !message.text.isEmpty {
-                    Group {
-                        if message.role == .user {
-                            Text(message.text)
-                        } else {
-                            MessageMarkdownView(source: message.text)
-                        }
+                if isToolMessage {
+                    Button {
+                        if !inspectingResponse { beginInspection() }
+                        inspectingResponse.toggle()
+                    } label: {
+                        Label("Inspect response", systemImage:
+                            inspectingResponse ? "chevron.down" : "chevron.right")
+                            .font(.caption)
                     }
-                    .textSelection(.enabled)
-                    .lineSpacing(3)
-                    .accessibilityIdentifier(message.role == .user ? "user-message" : "answer")
-                }
-                if !message.text.isEmpty && message.state != .streaming {
-                    HStack(spacing: 20) {
-                        CopyTextButton(text: message.text, label: "Copy message")
-                        if canSaveMemory {
-                            ProjectMemoryAction(model: model, save: saveMemory)
-                        }
-                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .accessibilityValue(inspectingResponse ? "Expanded" : "Collapsed")
+                    if inspectingResponse { messageContents }
+                } else {
+                    messageContents
                 }
                 switch message.state {
                 case .streaming:
-                    if message.text.isEmpty { ProgressView().controlSize(.small) }
+                    if isToolMessage {
+                        ProgressView("Running tool…").controlSize(.small)
+                    } else if message.text.isEmpty {
+                        ProgressView().controlSize(.small)
+                    }
                 case .interrupted: Text("Stopped").font(.caption).foregroundStyle(.secondary)
                 case .failed: Text("Response failed").font(.caption).foregroundStyle(.red)
                 case .limited:
@@ -707,6 +712,36 @@ private struct ChatMessageRow: View, Equatable {
             if message.role == .assistant { Spacer(minLength: 12) }
         }
         .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+    }
+
+    private var isToolMessage: Bool { message.role == .assistant && message.toolName != nil }
+
+    @ViewBuilder private var messageContents: some View {
+        if !message.text.isEmpty {
+            Group {
+                if isToolMessage {
+                    Text(message.text).font(.system(.callout, design: .monospaced))
+                } else if message.role == .user {
+                    Text(message.text)
+                } else {
+                    MessageMarkdownView(source: message.text)
+                }
+            }
+            .textSelection(.enabled)
+            .lineSpacing(3)
+            .accessibilityIdentifier(
+                isToolMessage ? "tool-response-original"
+                    : message.role == .user ? "user-message" : "answer")
+        }
+        if !message.text.isEmpty && message.state != .streaming {
+            HStack(spacing: 20) {
+                CopyTextButton(
+                    text: message.text, label: isToolMessage ? "Copy tool details" : "Copy message")
+                if canSaveMemory {
+                    ProjectMemoryAction(model: model, save: saveMemory)
+                }
+            }
+        }
     }
 }
 
