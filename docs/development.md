@@ -248,6 +248,9 @@ Debug UI tests may launch with `--network-policy-fixture` to exercise blocked di
 indicator transitions deterministically. Release ignores that argument and monitors the
 system path. See [offline privacy mode](offline-privacy.md) for the guarantee and its limits.
 
+See the [tool-worker routing experiment](tool-worker-experiment.md) for the opt-in
+real-model comparison for issue #93.
+
 ## Tool-result continuation validation
 
 Run `swift test --force-resolved-versions` for chunk budgets, complete source coverage,
