@@ -7,7 +7,8 @@ import EmblaRuntime
 extension LocalInferenceModel {
     /// Explicit, isolated saved-history fixture; never substitutes a generation backend.
     public static func toolSummaryUIFixture(
-        id: UUID, network: NetworkAccess, includeMCPSettings: Bool = false
+        id: UUID, network: NetworkAccess, includeMCPSettings: Bool = false,
+        tallToolResult: Bool = false
     ) throws
         -> (model: LocalInferenceModel, actions: QuickActionsModel)
     {
@@ -21,6 +22,9 @@ extension LocalInferenceModel {
             var result = ChatMessage(
                 role: .assistant,
                 text: "Synthetic complete original result: ORIGINAL_RESULT_RETAINED. The codename is BLUE PENGUIN. Source: https://example.com/fact")
+            if tallToolResult {
+                result.text += String(repeating: "\nSynthetic tool response evidence line.", count: 100)
+            }
             result.toolName = "synthetic_lookup"
             result.toolResultSummary = "The source reports BLUE PENGUIN (https://example.com/fact)."
             let archive = ConversationArchive(

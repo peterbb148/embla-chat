@@ -45,6 +45,12 @@ public struct TranscriptScrollState {
         lastRawOffset = offset
     }
 
+    /// Inspecting existing content pauses following before its layout can grow.
+    public mutating func pauseFollowing() {
+        followingOutput = false
+        lastRawOffset = nil
+    }
+
     /// Send and Jump to latest explicitly request following without interrupting a gesture.
     public mutating func resumeFollowing() {
         followingOutput = true

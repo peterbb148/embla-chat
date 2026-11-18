@@ -32,7 +32,9 @@ struct ContentView: View {
                     let fixture = try LocalInferenceModel.toolSummaryUIFixture(
                         id: id, network: network,
                         includeMCPSettings: ProcessInfo.processInfo.arguments.contains(
-                            "--mcp-tool-settings-fixture"))
+                            "--mcp-tool-settings-fixture"),
+                        tallToolResult: ProcessInfo.processInfo.arguments.contains(
+                            "--tall-tool-result-fixture"))
                     _model = State(initialValue: fixture.model)
                     _quickActions = State(initialValue: fixture.actions)
                     _connectivity = State(initialValue: AppConnectivity(access: network))
@@ -120,7 +122,8 @@ struct ContentView: View {
                             ForEach(model.messages) { message in
                                 ChatMessageRow(
                                     message: message,
-                                    canSaveMemory: model.activeProjectID != nil, model: model
+                                    canSaveMemory: model.activeProjectID != nil, model: model,
+                                    beginInspection: { transcriptScroll.pauseFollowing() }
                                 ) {
                                     guard let projectID = model.activeProjectID else { return }
                                     composerFocused = false
@@ -636,6 +639,7 @@ private struct ChatMessageRow: View, Equatable {
     let message: ChatMessage
     let canSaveMemory: Bool
     let model: LocalInferenceModel
+    let beginInspection: () -> Void
     let saveMemory: () -> Void
     @State private var inspectingResponse = false
 
@@ -670,6 +674,7 @@ private struct ChatMessageRow: View, Equatable {
                 }
                 if isToolMessage {
                     Button {
+                        if !inspectingResponse { beginInspection() }
                         inspectingResponse.toggle()
                     } label: {
                         Label("Inspect response", systemImage:

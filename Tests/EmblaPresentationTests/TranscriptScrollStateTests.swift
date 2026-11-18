@@ -69,3 +69,15 @@ import Testing
     state.geometryChanged(offset: 450, nearBottom: true, bounds: newBounds)
     #expect(!state.followingOutput)
 }
+
+@Test func inspectingExpandedContentPausesFollowingUntilExplicitResume() {
+    var state = TranscriptScrollState()
+    state.geometryChanged(offset: 0, nearBottom: true)
+    state.pauseFollowing()
+    // A tall result grows below the current position without a reader scroll gesture.
+    state.geometryChanged(offset: 0, nearBottom: false)
+    state.phaseChanged(scrolling: false, offset: 0, nearBottom: false)
+    #expect(!state.followingOutput && !state.shouldScrollAutomatically)
+    state.resumeFollowing()
+    #expect(state.shouldScrollAutomatically)
+}

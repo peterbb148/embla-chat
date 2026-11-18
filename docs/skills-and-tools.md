@@ -339,6 +339,8 @@ is governed by the separate expanded iCloud consent.
 Tool records are collapsed by default in the chat. The tool name, progress/failure state and
 any local-summary notice remain visible; the assistant's conversational answer is unchanged.
 Open **Inspect response** to view the complete original request/result as selectable plain text
-and use **Copy tool details**. Collapse it again to return to the compact transcript.
+and use **Copy tool details**. Opening inspection pauses automatic following so a tall
+response's beginning and collapse control stay in view. **Jump to latest** (or sending a
+message) resumes following. Collapse it again to return to the compact transcript.
 This applies to saved tool records too. Expansion is view state only and starts collapsed after
 relaunch; it does not change saved output, model context, compaction, permissions or tool calls.

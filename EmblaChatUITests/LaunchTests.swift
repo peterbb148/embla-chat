@@ -312,6 +312,33 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
+    func testInspectingTallToolResponseKeepsItsHeaderInPlace() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--tool-result-summary-fixture", "--tall-tool-result-fixture"]
+        app.launchEnvironment["EMBLA_TOOL_SUMMARY_FIXTURE_ID"] = UUID().uuidString
+        app.launch()
+        let inspector = app.buttons["Inspect response"]
+        XCTAssertTrue(inspector.waitForExistence(timeout: 10))
+        if app.buttons["Hide keyboard"].exists { app.buttons["Hide keyboard"].tap() }
+        let initialY = inspector.frame.minY
+        inspector.tap()
+        let original = app.staticTexts["tool-response-original"]
+        XCTAssertTrue(original.waitForExistence(timeout: 10))
+        XCTAssertGreaterThan(original.frame.height, app.frame.height)
+        XCTAssertTrue(app.buttons["Jump to latest"].waitForExistence(timeout: 5))
+        XCTAssertTrue(inspector.isHittable)
+        XCTAssertEqual(inspector.frame.minY, initialY, accuracy: 4)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Tall tool inspection preserves its beginning and collapse control"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        inspector.tap()
+        XCTAssertFalse(original.exists)
+        app.buttons["Jump to latest"].tap()
+        XCTAssertFalse(app.buttons["Jump to latest"].exists)
+    }
+
+    @MainActor
     func testToolResultSummaryNoticeAndFullOriginalSurviveRestart() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--tool-result-summary-fixture"]
