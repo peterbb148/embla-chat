@@ -12,6 +12,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     private var position = 0
     private var inputs: [[ConversationMessage]] = []
     private var holdFirst: Bool
+    private var holdFinal = false
     let replies: [String]
     private let countCharacters: Bool
     private var holdSummary: Bool
@@ -45,6 +46,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
         throw SkillFailure.invalid("Synthetic summary fixture did not start.")
     }
     func release() { lock.withLock { holdFirst = false } }
+    func pauseFinalAnswer() { lock.withLock { holdFinal = true } }
     func encode(_ messages: [ConversationMessage]) -> [Int] {
         lock.withLock { inputs.append(messages) }
         return countCharacters
@@ -87,6 +89,13 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.005)
         }
         _ = emit(.answer(text))
+        while lock.withLock({
+            holdFinal
+                && inputs.last?.first?.content.hasPrefix("Answer the latest user question") == true
+        }) {
+            guard emit(.reasoning("Synthetic final-answer pause")) else { break }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
         return metrics
     }
 }
@@ -209,6 +218,27 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
             && fixture.backend.contexts.contains { $0.first?.content.contains("<tools>") == true })
     #expect(stored.snapshot.messages.first?.text == "Read the selected skill's fact.")
     #expect(stored.snapshot.messages.allSatisfy { !$0.text.contains("enabled_functions") })
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+func finalWorkerAnswerKeepsLiteralDelegateTextAndSurvivesStop(_ stop: Bool) async throws {
+    let expected = "The retrieved text says DELEGATE."
+    let fixture = try await ToolLoopFixture(replies: [readSkillRequest, expected])
+    defer { fixture.clean() }
+    if stop { fixture.backend.pauseFinalAnswer() }
+    fixture.model.prompt = "Quote the retrieved fact."
+    fixture.model.run()
+    if stop {
+        for _ in 0..<1_000 {
+            if fixture.model.answer == expected { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        fixture.model.stop()
+    }
+    await fixture.model.waitUntilIdle()
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages.last?.text == expected)
+    #expect(saved.snapshot.messages.last?.state == (stop ? .interrupted : .complete))
 }
 
 @Test @MainActor func unknownOrUnregisteredCallsFailWithoutExecution() async throws {
@@ -645,7 +675,7 @@ func savedToolSummaryRetainsItsCanonicalRequestAndOlderToolIdentity() {
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
-func aGrowingWorkerExchangeReleasesOlderContextWithoutReplayingTheCall() async throws {
+func aGrowingWorkerExchangeCompactsOlderContextWithoutReplayingTheCall() async throws {
     let fixture = try await ToolLoopFixture(
         replies: ["unused"], countCharacters: true, resource: "BLUE PENGUIN")
     defer { fixture.clean() }
@@ -675,7 +705,8 @@ func aGrowingWorkerExchangeReleasesOlderContextWithoutReplayingTheCall() async t
     let call = readSkillRequest.replacingOccurrences(
         of: "<tool_call>\n", with: "<tool_call>\n" + String(repeating: " ", count: 2_000))
     let backend = ToolBackendFixture(
-        replies: ["DELEGATE", call, "BLUE PENGUIN"], countCharacters: true)
+        replies: ["DELEGATE", call, "Memory: earlier questions", "BLUE PENGUIN"],
+        countCharacters: true)
     let previous = try #require(try await fixture.store.load())
     try await fixture.store.save(
         ConversationArchive(
@@ -690,7 +721,7 @@ func aGrowingWorkerExchangeReleasesOlderContextWithoutReplayingTheCall() async t
     model.prompt = question
     model.run(); await model.waitUntilIdle()
     #expect(model.error == nil && model.answer == "BLUE PENGUIN")
-    #expect(backend.calls == 4 && model.compaction.summarizedMessageCount == 0)
+    #expect(backend.calls == 5 && model.compaction.summarizedMessageCount > 0)
     #expect(model.messages.filter { $0.toolName != nil }.count == 1)
     #expect(model.messages.contains { $0.toolName != nil && $0.text.contains("BLUE PENGUIN") })
     for generation in backend.generations {

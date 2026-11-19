@@ -20,6 +20,10 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     var workerReceipt: ToolWorkerReceipt?
     var workerToolRequest: Bool?
 
+    public var hasToolResultSummary: Bool {
+        toolResultSummary != nil || workerReceipt?.summary != nil
+    }
+
     /// Raw text remains visible/copyable; only inference uses the explicitly marked local notes.
     public var inferenceContent: String {
         guard let toolResultSummary else { return text }
@@ -296,7 +300,9 @@ public final class LocalInferenceModel {
             var message = stored
             if let summary = summaries[index] { message.toolResultSummary = summary }
             if let receipt = message.workerReceipt {
-                return ConversationMessage(role: .assistant, content: receipt.promptData)
+                return ConversationMessage(
+                    role: .assistant,
+                    content: receipt.promptData(replacingSummary: summaries[index]))
             }
             if covered.contains(message.id) {
                 return ConversationMessage(role: .assistant, content: "")
@@ -616,22 +622,19 @@ public final class LocalInferenceModel {
             break
         }
 
-        var workerHistory = Array(
-            projectedTranscript(count: baseCount)
-                .dropFirst(compaction.summarizedMessageCount))
         func workerPrompt() -> [ConversationMessage] {
             compactionPolicy.context(
-                transcript: workerHistory,
-                state: CompactionState(summary: compaction.summary),
-                projectMemory: memory, instructions: instructions, requestContext: requestContext)
+                transcript: projectedTranscript(count: baseCount),
+                state: compaction, projectMemory: memory, instructions: instructions,
+                requestContext: requestContext)
         }
         var context = workerPrompt()
-        while try await session.tokenCount(messages: context) > toolInputLimit {
-            try Task.checkCancellation()
-            guard let nextTurn = workerHistory.dropFirst().firstIndex(where: { $0.role == .user })
-            else { throw ToolSummaryError.noRoom }
-            workerHistory.removeFirst(nextTurn)
+        if try await session.tokenCount(messages: context) > toolInputLimit {
+            try await compactForWorker(before: baseCount)
             context = workerPrompt()
+            guard try await session.tokenCount(messages: context) <= toolInputLimit else {
+                throw ToolSummaryError.noRoom
+            }
         }
         for step in 0...4 {
             try tools.validateRequestConfiguration(configuration, using: cloud)
@@ -723,21 +726,32 @@ public final class LocalInferenceModel {
                     }
                     return planned
                 }
-                while try await session.tokenCount(messages: continuation([:])) > toolInputLimit,
-                    let nextTurn = workerHistory.dropFirst().firstIndex(where: { $0.role == .user })
-                {
-                    try Task.checkCancellation()
-                    workerHistory.removeFirst(nextTurn)
+                do {
+                    context = try await fitToolResults(
+                        indices: completed.map(\.index), question: question,
+                        inputLimit: toolInputLimit, build: continuation)
+                } catch ToolSummaryError.noRoom {
+                    try await compactForWorker(before: baseCount)
+                    context = try await fitToolResults(
+                        indices: completed.map(\.index), question: question,
+                        inputLimit: toolInputLimit, build: continuation)
                 }
-                context = try await fitToolResults(
-                    indices: completed.map(\.index), question: question,
-                    inputLimit: toolInputLimit, build: continuation)
                 try Task.checkCancellation()
                 try tools.validateRequestConfiguration(configuration, using: cloud)
                 responseIndex = messages.count
                 messages.append(ChatMessage(role: .assistant, text: "", state: .streaming))
             }
         }
+    }
+
+    private func compactForWorker(before count: Int) async throws {
+        let prefix = projectedTranscript(count: count)
+        do {
+            _ = try compactionPolicy.plan(transcript: prefix, state: compaction)
+        } catch CompactionError.insufficientHistory { throw ToolSummaryError.noRoom }
+        _ = try await prepareContext(transcript: prefix, compactNow: true)
+        try await saveChatNow()
+        try Task.checkCancellation()
     }
 
     private struct ToolPass {
@@ -747,7 +761,7 @@ public final class LocalInferenceModel {
     }
 
     private func generateToolPass(
-        _ context: [ConversationMessage], outputTokens: Int? = nil
+        _ context: [ConversationMessage], outputTokens: Int? = nil, streamTo index: Int? = nil
     ) async throws -> ToolPass {
         try Task.checkCancellation()
         try tools.validateRequestNetwork()
@@ -765,10 +779,26 @@ public final class LocalInferenceModel {
             for try await event in run.events {
                 if Task.isCancelled { run.cancel(); break }
                 switch event {
-                case .answer(let text): answer += text
-                case .reasoning(let text): thought += text
-                case .finished(let metrics): measured = metrics
+                case .answer(let text):
+                    answer += text
+                    if let index {
+                        self.answer += text
+                        messages[index].text += text
+                    }
+                case .reasoning(let text):
+                    thought += text
+                    if let index {
+                        reasoning += text
+                        messages[index].reasoning += text
+                    }
+                case .finished(let metrics):
+                    measured = metrics
+                    if let index {
+                        self.metrics = metrics
+                        messages[index].generationMetrics = metrics
+                    }
                 }
+                if index != nil { scheduleChatSave() }
             }
         } catch { streamError = error }
         await run.waitUntilFinished()
@@ -791,8 +821,9 @@ public final class LocalInferenceModel {
         messages[index].text = text
         messages[index].reasoning = pass.reasoning
         messages[index].generationMetrics = pass.metrics
-        messages[index].state = .complete
-        status = "Finished."
+        let limited = pass.metrics.finishReason == "length"
+        messages[index].state = limited ? .limited : .complete
+        status = limited ? "Output limit reached." : "Finished."
     }
 
     private func completeWorker(
@@ -833,13 +864,12 @@ public final class LocalInferenceModel {
         try await saveToolProjection(receipt: receipt(summaries: [:]), at: last)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         status = "Answering…"
-        let pass = try await generateToolPass(continuation)
+        let pass = try await generateToolPass(continuation, streamTo: responseIndex)
         try tools.validateRequestConfiguration(configuration, using: cloud)
-        guard
-            case .answer(let text) = try ToolWorkerHandoff.parse(
-                pass.text, finishReason: pass.metrics.finishReason)
-        else { throw ToolProtocolError.invalidResponse }
-        finishToolAnswer(text, pass: pass, at: responseIndex)
+        guard !pass.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ToolProtocolError.invalidResponse
+        }
+        finishToolAnswer(pass.text, pass: pass, at: responseIndex)
     }
 
     private var toolInputLimit: Int {
@@ -898,7 +928,9 @@ public final class LocalInferenceModel {
         for candidate in candidates {
             try Task.checkCancellation()
             summaries[candidate.index] = try await summarizeToolResult(
-                source: messages[candidate.index].text, question: question,
+                source: messages[candidate.index].workerReceipt?.promptData
+                    ?? messages[candidate.index].text,
+                question: question,
                 outputTokens: min(share, candidate.contribution - 1))
         }
         try Task.checkCancellation()
@@ -964,7 +996,13 @@ public final class LocalInferenceModel {
     private func saveToolSummaries(_ summaries: [Int: String]) async throws {
         try Task.checkCancellation()
         var updated = messages
-        for (index, summary) in summaries { updated[index].toolResultSummary = summary }
+        for (index, summary) in summaries {
+            if updated[index].workerReceipt != nil {
+                updated[index].workerReceipt?.summary = summary
+            } else {
+                updated[index].toolResultSummary = summary
+            }
+        }
         try await commitToolProjection(updated)
     }
 

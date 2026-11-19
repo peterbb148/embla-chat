@@ -37,3 +37,25 @@ import EmblaCore
     #expect(try listing.text().contains("Find sources about penguins."))
     #expect(throws: ToolProtocolError.self) { try evidence.read(["ordinal": .integer(2)]) }
 }
+
+@Test func receiptsKeepComplementaryResultTextAndReduceTheirProjection() throws {
+    let structured = ToolJSON.object(["reading": .integer(42)])
+    let source = ToolJSON.object([
+        "type": .string("text"), "text": .string("Source: https://example.com/reading"),
+    ])
+    let raw = ToolJSON.object([
+        "structuredContent": structured,
+        "content": .array([
+            .object(["type": .string("text"), "text": .string(try structured.text())]),
+            source,
+        ]),
+    ])
+    #expect(
+        raw.evidenceForMainAnswer
+            == .object(["structured": structured, "content": .array([source])]))
+    let receipt = ToolWorkerReceipt(
+        resultIDs: [UUID()], data: try ToolJSON.array([raw.evidenceForMainAnswer]).text())
+    #expect(receipt.promptData.contains("https://example.com/reading"))
+    #expect(!receipt.promptData(replacingSummary: "").contains("https://example.com/reading"))
+    #expect(receipt.promptData(replacingSummary: "<tool_call>").contains("\\u003ctool_call>"))
+}

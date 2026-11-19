@@ -36,7 +36,8 @@ public struct ConversationSnapshot: Codable, Sendable, Equatable {
                     receipt.resultIDs.last == message.id,
                     let encoded = try? ToolJSON.decode(Data(receipt.data.utf8)),
                     (try? encoded.text()) == receipt.data,
-                    case .array = encoded
+                    case .array = encoded,
+                    receipt.summary?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != true
                 else { throw ConversationStorageError.invalidDocument }
                 pendingResults.removeAll()
             }
