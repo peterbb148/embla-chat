@@ -18,7 +18,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     private var answerFinish = "stop"
     let replies: [String]
     private let countCharacters: Bool
-    private let blockedContext: (@Sendable ([ConversationMessage]) -> Bool)?
+    private let contextTokenCount: (@Sendable ([ConversationMessage]) -> Int?)?
     private var holdSummary: Bool
     private var summaryCount = 0
     private var summaryText: String
@@ -33,7 +33,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
         replies: [String], holdFirst: Bool = false, countCharacters: Bool = false,
         holdSummary: Bool = false, summaryText: String = "BLUE PENGUIN — https://example.com/fact",
         summaryFinish: String = "stop",
-        blockedContext: (@Sendable ([ConversationMessage]) -> Bool)? = nil
+        contextTokenCount: (@Sendable ([ConversationMessage]) -> Int?)? = nil
     ) {
         self.replies = replies
         self.holdFirst = holdFirst
@@ -41,7 +41,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
         self.holdSummary = holdSummary
         self.summaryText = summaryText
         self.summaryFinish = summaryFinish
-        self.blockedContext = blockedContext
+        self.contextTokenCount = contextTokenCount
     }
     func releaseSummary() { lock.withLock { holdSummary = false } }
     func waitForSummary() async throws {
@@ -59,7 +59,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
 
     func encode(_ messages: [ConversationMessage]) -> [Int] {
         lock.withLock { inputs.append(messages) }
-        if blockedContext?(messages) == true { return Array(repeating: 1, count: contextSize) }
+        if let count = contextTokenCount?(messages) { return Array(repeating: 1, count: count) }
         return countCharacters
             ? Array(repeating: 1, count: messages.reduce(0) { $0 + $1.content.count + 4 })
             : [1, 2]
@@ -138,7 +138,7 @@ private let readSkillRequest = """
         resource: String = "BLUE PENGUIN", holdSummary: Bool = false,
         summaryFinish: String = "stop", rejectSummarySaves: Bool = false,
         pauseSummarySaves: Bool = false,
-        blockedContext: (@Sendable ([ConversationMessage]) -> Bool)? = nil
+        contextTokenCount: (@Sendable ([ConversationMessage]) -> Int?)? = nil
     ) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let data = Data("Synthetic tool-loop model".utf8)
@@ -166,7 +166,7 @@ private let readSkillRequest = """
                 ? ["DELEGATE"] + replies : replies,
             holdFirst: holdFirst, countCharacters: countCharacters,
             holdSummary: holdSummary, summaryFinish: summaryFinish,
-            blockedContext: blockedContext)
+            contextTokenCount: contextTokenCount)
         let backend = backend
         store = ConversationStore(root: root.appendingPathComponent("Chats"))
         repository = ModelRepository(root: root.appendingPathComponent("Model"), manifest: manifest)
@@ -516,10 +516,11 @@ func growingContinuationCanStartPagingAfterTheFirstCall() async throws {
     let finish = "<tool_call>\n<function=catalog__finish>\n</function>\n</tool_call>"
     let fixture = try await ToolLoopFixture(
         replies: [readSkillRequest, finish, "BLUE PENGUIN"], countCharacters: true,
-        blockedContext: { messages in
-            messages.contains { $0.content.contains("<tool_response>") }
+        contextTokenCount: { messages in
+            let unpaged = messages.contains { $0.content.contains("<tool_response>") }
                 && messages.contains { $0.content.contains("<tools>") }
                 && !messages.contains { $0.content.contains("Enabled catalogue page") }
+            return unpaged ? 8_192 : nil
         })
     defer { fixture.clean() }
     fixture.model.prompt = "Read the selected file."
@@ -531,6 +532,25 @@ func growingContinuationCanStartPagingAfterTheFirstCall() async throws {
     let prompts = fixture.backend.generations.map { $0.messages.map(\.content).joined() }
     #expect(prompts[1].contains("<tools>") && !prompts[1].contains("Enabled catalogue page"))
     #expect(prompts[2].contains("Enabled catalogue page") && prompts[2].contains("BLUE PENGUIN"))
+}
+
+@Test(arguments: [2_000, 7_000]) @MainActor
+func finalToolAnswerReservesMoreOutputWhenExactPromptFits(_ inputTokens: Int) async throws {
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest, "The fact is ready.", "BLUE PENGUIN"],
+        contextTokenCount: { messages in
+            messages.first?.content.hasPrefix("Answer the latest user question") == true
+                ? inputTokens : nil
+        })
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the selected file."
+    fixture.model.run()
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.model.error == nil && fixture.model.answer == "BLUE PENGUIN")
+    let finalAnswer = try #require(fixture.backend.generations.last)
+    #expect(finalAnswer.limit == (inputTokens == 2_000 ? 1_536 : 936))
+    #expect(inputTokens + finalAnswer.limit + 256 <= 8_192)
+    #expect(fixture.backend.generations[1].limit == 512)
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor

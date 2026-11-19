@@ -961,11 +961,17 @@ public final class LocalInferenceModel {
         let continuation = try await fitToolResults(
             indices: results.map(\.index), question: question, inputLimit: limit,
             build: { try mainAnswer(receipt(summaries: $0).promptData) })
+        // The reasoning model shares this allowance between thoughts and visible answer text.
+        let inputTokens = try await session.tokenCount(messages: continuation)
+        let answerBudget = min(
+            max(1_536, compactionPolicy.responseTokens),
+            compactionPolicy.contextSize - inputTokens - 256)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         try await saveToolProjection(receipt: receipt(summaries: [:]), at: last)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         status = "Answering…"
-        let pass = try await generateToolPass(continuation, streamTo: responseIndex)
+        let pass = try await generateToolPass(
+            continuation, outputTokens: answerBudget, streamTo: responseIndex)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         guard !pass.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolProtocolError.invalidResponse

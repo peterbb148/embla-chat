@@ -67,7 +67,9 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(0.4)
         if request["method"] == "server/discover":
             result = {"capabilities": {"tools": {}}, "resultType": "complete"}
-        elif self.path in {"/routing-time", "/routing-search", "/routing-oversized"}:
+        elif self.path in {
+            "/routing-time", "/routing-search", "/routing-oversized", "/routing-profile",
+        }:
             result = self.routing_result(request["method"], params)
         elif request["method"] == "tools/list":
             result = {
@@ -199,6 +201,23 @@ class Handler(BaseHTTPRequestHandler):
             value = {"timezones": ["Asia/Hong_Kong", "Asia/Tokyo"]}
         elif name == "tavily_search":
             value = {"url": "https://example.com/blue-penguin"}
+            if self.path == "/routing-profile":
+                value = {
+                    "url": "https://example.com/cedar-reference",
+                    "product": "Cedar Finch",
+                    "details": [
+                        "The synthetic Cedar Finch reference model is intended for offline use.",
+                        "The entire model stays on the device during inference.",
+                        "The original checkpoint is 5.62 GB and has ten billion parameters.",
+                        "The model activates a billion parameters for each generated token.",
+                        "The 8192-token context includes instructions, conversation, and generation.",
+                        "A separate worker selects tools so their schemas stay out of the main chat.",
+                        "Chat summaries keep older information available during long conversations.",
+                        "Optional network tools can search, while ordinary offline chat is local.",
+                        "Raw tool responses are available for inspection through the tool record.",
+                        "The synthetic benchmark name is Midnight Orchard.",
+                    ],
+                }
         else:
             value = {"message": "Unexpected routing fixture method", "method": name}
         return {"resultType": "complete", "structuredContent": value,

@@ -78,6 +78,47 @@ func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
     #expect(saved.snapshot.messages == model.messages)
 }
 
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_LONG_TOOL_ANSWER"] == "1"),
+    .timeLimit(.minutes(5))) @MainActor
+func groundedLongSearchAnswerCompletesWithThePinnedModel() async throws {
+    let env = ProcessInfo.processInfo.environment
+    let modelRoot = URL(fileURLWithPath: try #require(env["EMBLA_REAL_MODEL_ROOT"]))
+    let port = try #require(env["EMBLA_ROUTING_FIXTURE_PORT"])
+    let root = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workspace = ToolWorkspace(configuration: root.appendingPathComponent("servers.json"))
+    let server = MCPServer(
+        id: UUID(uuidString: "20000000-0000-4000-8000-000000000001")!,
+        name: "Search fixture", endpoint: URL(string: "http://127.0.0.1:\(port)/routing-profile")!)
+    try await workspace.saveServer(server)
+    workspace.discover(server.id)
+    await workspace.waitUntilIdle()
+    try #require(workspace.error == nil)
+    let manifest = try ModelManifest.bundled()
+    let model = LocalInferenceModel(
+        repository: ModelRepository(root: modelRoot, manifest: manifest),
+        manifest: manifest, session: EmblaRuntime.makeSession(), tools: workspace)
+    model.check()
+    await model.waitUntilIdle()
+    model.prompt = """
+        Search for the Cedar Finch reference model and give me a detailed overview in about
+        350 words. Explain its purpose, model size, context and tool handling. End with the
+        benchmark name and the exact source link.
+        """
+    model.run()
+    await model.waitUntilIdle()
+    let result = try #require(model.messages.last)
+    let metrics = try #require(result.generationMetrics)
+    print("LONG ANSWER finish=\(metrics.finishReason) output=\(metrics.completionTokens)")
+    #expect(model.error == nil && result.state == .complete)
+    #expect(metrics.completionTokens > 512)
+    #expect(result.text.contains("Midnight Orchard"))
+    #expect(result.text.contains("https://example.com/cedar-reference"))
+    #expect(model.messages.compactMap(\.toolName) == ["tavily_search"])
+}
+
 @Test(.enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_SAVED_EVIDENCE"] == "1"))
 @MainActor func actualModelRecallsSecondLinkAfterCompactionAndRestart() async throws {
     let modelRoot = URL(

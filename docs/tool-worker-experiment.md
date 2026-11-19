@@ -116,6 +116,11 @@ Navigation is bounded, local to the worker and absent from the saved transcript.
 calls still use the existing validation and execution limit. A single selected schema
 still needs to fit with the request.
 
+The final answer can use up to 1,536 generated tokens when the exact prompt leaves
+room. The allowance includes model reasoning. Selection and navigation still use
+their existing budgets. The opt-in `EMBLA_REAL_LONG_TOOL_ANSWER=1` test verifies
+that the pinned model completes a sourced answer exceeding 512 generated tokens.
+
 The opt-in `oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage` test uses
 `EMBLA_REAL_PAGED_CATALOGUE=1` and the loopback server above. Its full schema prompt
 has 19,769 tokens. The expected search method is on the third page and must execute
