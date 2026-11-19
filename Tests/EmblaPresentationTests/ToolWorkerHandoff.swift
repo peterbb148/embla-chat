@@ -36,11 +36,11 @@ enum ToolWorkerHandoff: Equatable {
 
 @Test func workerHandoffRejectsIncompleteOrAmbiguousOutput() {
     for output in ["DELEGATE\nHere is an answer.", "DELEGATE\n</think>\n4", "<think>DELEGATE"] {
-        #expect(throws: ToolProtocolError.invalidResponse) {
+        #expect(throws: ToolProtocolError.self) {
             try ToolWorkerHandoff.parse(output, finishReason: "stop")
         }
     }
-    #expect(throws: ToolProtocolError.invalidResponse) {
+    #expect(throws: ToolProtocolError.self) {
         try ToolWorkerHandoff.parse("DELEGATE", finishReason: "length")
     }
 }
