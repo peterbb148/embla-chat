@@ -695,6 +695,70 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
     }
 
     @Test(.timeLimit(.minutes(1))) @MainActor
+    func pagingBetweenTwoCallsPreservesHistoryResultsAndBudgets() async throws {
+        let remote = try SummaryNetworkFixture()
+        defer { remote.stop() }
+        func call(_ name: String, argument: String = "") -> String {
+            "<tool_call>\n<function=\(name)>\n\(argument)</function>\n</tool_call>"
+        }
+        func parameter(_ name: String, _ value: String) -> String {
+            "<parameter=\(name)>\n\(value)\n</parameter>\n"
+        }
+        let fixture = try await ToolLoopFixture(
+            replies: [
+                "I will remember the reference.", "DELEGATE",
+                call("catalog__open", argument: parameter("ordinal", "1")),
+                call(
+                    "mcp_10000000__get_current_time",
+                    argument: parameter("timezone", "Asia/Tokyo")),
+                call("catalog__browse"), call("catalog__browse"),
+                call("catalog__open", argument: parameter("ordinal", "20")),
+                call("mcp_20000000__tavily_search", argument: parameter("query", "blue penguins")),
+                "The facts are ready.", "Tokyo is 15:37. https://example.com/blue-penguin",
+            ], countCharacters: true)
+        defer { fixture.clean() }
+
+        let fixtureServers = [
+            ("10000000-0000-4000-8000-000000000001", "/routing-time"),
+            ("20000000-0000-4000-8000-000000000001", "/routing-oversized"),
+        ]
+        for (identifier, path) in fixtureServers {
+            let server = MCPServer(
+                id: UUID(uuidString: identifier)!, name: path,
+                endpoint: URL(string: "http://127.0.0.1:\(remote.port)\(path)")!)
+            try await fixture.workspace.saveServer(server)
+            fixture.workspace.discover(server.id)
+            await fixture.workspace.waitUntilIdle()
+            try #require(fixture.workspace.error == nil)
+        }
+        fixture.model.prompt = "Remember BOX-142."
+        fixture.model.run()
+        await fixture.model.waitUntilIdle()
+        fixture.model.prompt = "Find Tokyo time and a current source about blue penguins."
+        fixture.model.run()
+        await fixture.model.waitUntilIdle()
+
+        #expect(fixture.model.error == nil)
+        let saved = try #require(try await fixture.store.load())
+        let results = saved.snapshot.messages.filter { $0.toolName != nil }
+        #expect(results.compactMap(\.toolName) == ["get_current_time", "tavily_search"])
+        #expect(results.first?.text.contains("15:37") == true)
+        #expect(results.last?.text.contains("https://example.com/blue-penguin") == true)
+        #expect(results.last?.workerReceipt?.resultIDs == results.map(\.id))
+        #expect(!saved.snapshot.messages.contains { $0.text.contains("catalog__") })
+        let pagedAfterFirstCall = fixture.backend.generations.filter { generation in
+            generation.messages.contains { $0.content.contains("Enabled catalogue page") }
+                && generation.messages.contains { $0.content.contains("<tool_response>") }
+        }
+        #expect(pagedAfterFirstCall.count >= 4)
+        for generation in pagedAfterFirstCall {
+            #expect(generation.messages.contains { $0.content.contains("BOX-142") })
+            #expect(generation.messages.contains { $0.content.contains("15:37") })
+            #expect(fixtureContextTokens(generation.messages) + generation.limit <= 8_192)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) @MainActor
     func networkLossAndReconnectDuringAtomicSummarySaveRemainLatched() async throws {
         let remote = try SummaryNetworkFixture(); defer { remote.stop() }
         let fixture = try await ToolLoopFixture(

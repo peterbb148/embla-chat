@@ -634,7 +634,8 @@ public final class LocalInferenceModel {
 
                     Tools are shown in pages. To find a method, inspect the catalogue page.
                     If there is no relevant method and next_page is present, call catalog__browse
-                    with no arguments. To load a relevant method, call catalog__open with its ordinal.
+                    with no arguments. If needed, catalog__previous goes back one page without arguments.
+                    To load a relevant method, call catalog__open with its ordinal.
                     A loaded method can be called using its exact schema. Browse or open only when
                     needed. Once actual results answer the user, use them and finish.
                     """

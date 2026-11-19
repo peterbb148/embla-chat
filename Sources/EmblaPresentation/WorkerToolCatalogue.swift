@@ -12,6 +12,12 @@ struct WorkerToolCatalogue {
         inputSchema: .object([
             "type": .string("object"), "additionalProperties": .bool(false),
         ]))
+    static let previous = ModelToolSpecification(
+        server: server, name: "previous",
+        description: "Go back to the previous page of enabled tools. Call without arguments.",
+        inputSchema: .object([
+            "type": .string("object"), "additionalProperties": .bool(false),
+        ]))
     static let open = ModelToolSpecification(
         server: server, name: "open",
         description: "Load the exact argument schema for an enabled method by its listed ordinal.",
@@ -31,7 +37,8 @@ struct WorkerToolCatalogue {
     var passBudget: Int { 5 * (pageCount + 2) }
     var nextPage: Int? { page < pageCount ? page + 1 : nil }
     var offered: [ModelToolSpecification] {
-        (nextPage == nil ? [] : [Self.browse]) + [Self.open] + (selected.map { [$0] } ?? [])
+        (nextPage == nil ? [] : [Self.browse]) + (page > 1 ? [Self.previous] : [])
+            + [Self.open] + (selected.map { [$0] } ?? [])
     }
 
     mutating func navigate(_ tool: String, arguments: [String: ToolJSON]) throws {
@@ -41,6 +48,10 @@ struct WorkerToolCatalogue {
                 throw ToolProtocolError.invalidArguments
             }
             page = nextPage
+            selected = nil
+        case Self.previous.name:
+            guard arguments.isEmpty, page > 1 else { throw ToolProtocolError.invalidArguments }
+            page -= 1
             selected = nil
         case Self.open.name:
             guard arguments.count == 1, case .integer(let value) = arguments["ordinal"],
@@ -71,6 +82,7 @@ struct WorkerToolCatalogue {
         return try ToolJSON.object([
             "page": .integer(Int64(page)),
             "next_page": nextPage.map { .integer(Int64($0)) } ?? .null,
+            "previous_page": page > 1 ? .integer(Int64(page - 1)) : .null,
             "entries": .array(entries),
             "loaded_method": selected.map { .string($0.functionName) } ?? .null,
         ]).text()

@@ -28,7 +28,11 @@ import EmblaCore
     #expect(catalogue.nextPage == nil)
     try catalogue.navigate("open", arguments: ["ordinal": .integer(17)])
     #expect(catalogue.selected == tools.last)
-    #expect(catalogue.offered.count == 2 && catalogue.offered.last == tools.last)
+    #expect(catalogue.offered.count == 3 && catalogue.offered.last == tools.last)
+    try catalogue.navigate("previous", arguments: [:])
+    #expect(catalogue.page == 2 && catalogue.selected == nil)
+    try catalogue.navigate("open", arguments: ["ordinal": .integer(9)])
+    #expect(catalogue.selected == tools[8])
     catalogue.reset()
     #expect(catalogue.page == 1 && catalogue.selected == nil)
 }
@@ -41,6 +45,6 @@ import EmblaCore
             inputSchema: .object(["type": .string("object")]))
     }
     let prompt = try ToolWorkerHandoff.instructions(tools: tools)
-    #expect(prompt.contains("browse the full enabled catalogue"))
+    #expect(prompt.contains("example_24"))
     #expect(!prompt.contains("long capability description"))
 }

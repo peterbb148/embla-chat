@@ -57,14 +57,21 @@ public extension ToolWorkerHandoff {
                 .object(["name": .string($0.name), "description": .string($0.description)])
             }
         ).text()
-        // Limit the representation before tokenization. The worker still receives every
-        // enabled method through its catalogue, and all actual context checks use the tokenizer.
-        let catalogueIsPaged = capabilities.utf8.count > 4_096
-        let capabilityContext =
-            catalogueIsPaged
-            ? "The worker can browse the full enabled catalogue. Delegate requests needing "
-                + "a live lookup, external evidence, or an app action so it can find the capability."
-            : "Its enabled capabilities are " + capabilities + "."
+        // Limit the representation before tokenization. The worker can still browse
+        // every enabled method, and actual context checks use the tokenizer.
+        let capabilityContext: String
+        let capabilityLimit = 4_096
+        if capabilities.utf8.count <= capabilityLimit {
+            capabilityContext = "Its enabled capabilities are " + capabilities + "."
+        } else {
+            let names = try ToolJSON.array(tools.map { .string($0.name) }).text()
+            capabilityContext =
+                names.utf8.count <= capabilityLimit
+                ? "Its enabled method names are " + names + ". The worker can browse their details."
+                : "The full enabled catalogue is available in the worker. If the user asks "
+                    + "for a live lookup, external evidence, or an app action, always output "
+                    + "DELEGATE. The worker will check whether a matching tool exists."
+        }
         let instructions = """
             You are Embla. A tool worker can look up facts for you.
             \(capabilityContext)
