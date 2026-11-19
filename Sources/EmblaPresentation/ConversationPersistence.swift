@@ -25,6 +25,23 @@ public struct ConversationSnapshot: Codable, Sendable, Equatable {
     public func validate() throws {
         guard formatVersion == 1 else { throw ConversationStorageError.unsupportedVersion }
         let boundary = compaction.summarizedMessageCount
+        var pendingResults: [UUID] = []
+        for message in messages {
+            if message.role == .user { pendingResults.removeAll() }
+            if message.toolName != nil && message.state == .complete {
+                pendingResults.append(message.id)
+            }
+            if let receipt = message.workerReceipt {
+                guard !receipt.resultIDs.isEmpty, receipt.resultIDs == pendingResults,
+                    receipt.resultIDs.last == message.id,
+                    let encoded = try? ToolJSON.decode(Data(receipt.data.utf8)),
+                    (try? encoded.text()) == receipt.data,
+                    case .array = encoded,
+                    receipt.summary?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != true
+                else { throw ConversationStorageError.invalidDocument }
+                pendingResults.removeAll()
+            }
+        }
         guard boundary >= 0, boundary <= messages.count,
             compaction.summary.isEmpty == (boundary == 0),
             Set(messages.map(\.id)).count == messages.count,
@@ -68,9 +85,12 @@ public struct ConversationLibrary: Codable, Sendable, Equatable {
             guard version == 2 || version == 3 else {
                 throw ConversationStorageError.unsupportedVersion
             }
-            self.init(chats: try keys.decode([ConversationSnapshot].self, forKey: .chats),
-                projects: version == 2 ? [] : try keys.decode(
-                    [ChatProject].self, forKey: .projects))
+            self.init(
+                chats: try keys.decode([ConversationSnapshot].self, forKey: .chats),
+                projects: version == 2
+                    ? []
+                    : try keys.decode(
+                        [ChatProject].self, forKey: .projects))
         }
         try validate()
     }
@@ -94,7 +114,8 @@ public struct ConversationLibrary: Codable, Sendable, Equatable {
                     chats.contains(where: { chat in
                         chat.conversationID == entry.sourceConversationID
                             && chat.messages.contains(where: { $0.id == entry.sourceMessageID })
-                    }) else { throw ConversationStorageError.invalidDocument }
+                    })
+                else { throw ConversationStorageError.invalidDocument }
             }
         }
     }
@@ -108,7 +129,8 @@ public struct SavedConversation: Codable, Sendable, Equatable, Identifiable {
     public var title: String {
         let first = snapshot.messages.first(where: { $0.role == .user })?.text ?? draft
         let line = first.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        return line.trimmingCharacters(in: .whitespaces).isEmpty ? "New chat" : String(line.prefix(80))
+        return line.trimmingCharacters(in: .whitespaces).isEmpty
+            ? "New chat" : String(line.prefix(80))
     }
 
     public init(snapshot: ConversationSnapshot, draft: String = "") {
@@ -147,7 +169,8 @@ public struct ConversationArchive: Codable, Sendable, Equatable {
         var recovered = self
         func interrupt(_ snapshot: inout ConversationSnapshot) {
             guard snapshot.messages.contains(where: { $0.state == .streaming }) else { return }
-            for index in snapshot.messages.indices where snapshot.messages[index].state == .streaming {
+            for index in snapshot.messages.indices
+            where snapshot.messages[index].state == .streaming {
                 snapshot.messages[index].state = .interrupted
             }
             snapshot.revision = UUID()

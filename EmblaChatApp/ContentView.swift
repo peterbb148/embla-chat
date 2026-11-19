@@ -667,7 +667,7 @@ private struct ChatMessageRow: View, Equatable {
                         .foregroundStyle(.secondary)
                     }
                 }
-                if message.toolResultSummary != nil {
+                if message.hasToolResultSummary {
                     Text("Summarized locally for context. Inspect response to see the full original.")
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("tool-result-summary-notice")

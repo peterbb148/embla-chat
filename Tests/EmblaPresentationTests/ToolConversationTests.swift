@@ -12,6 +12,10 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     private var position = 0
     private var inputs: [[ConversationMessage]] = []
     private var holdFirst: Bool
+    private var holdFinal = false
+    private var holdAfterOutput = false
+    private var didEmitAnswer = false
+    private var answerFinish = "stop"
     let replies: [String]
     private let countCharacters: Bool
     private var holdSummary: Bool
@@ -45,6 +49,11 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
         throw SkillFailure.invalid("Synthetic summary fixture did not start.")
     }
     func release() { lock.withLock { holdFirst = false } }
+    func pauseFinalAnswer() { lock.withLock { holdFinal = true } }
+    var emittedAnswer: Bool { lock.withLock { didEmitAnswer } }
+    func pauseAfterAnswer() { lock.withLock { holdAfterOutput = true } }
+    func limitAnswer() { lock.withLock { answerFinish = "length" } }
+
     func encode(_ messages: [ConversationMessage]) -> [Int] {
         lock.withLock { inputs.append(messages) }
         return countCharacters
@@ -80,13 +89,23 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
             return text
         }
         let metrics = GenerationMetrics(
-            finishReason: "stop", promptTokens: 2, completionTokens: 2,
+            finishReason: lock.withLock { answerFinish }, promptTokens: 2, completionTokens: 2,
             promptMilliseconds: 1, decodeMilliseconds: 1)
         while lock.withLock({ holdFirst && position == 1 }) {
             guard emit(.reasoning("Synthetic blocked generation")) else { return metrics }
             Thread.sleep(forTimeInterval: 0.005)
         }
         _ = emit(.answer(text))
+        lock.withLock { didEmitAnswer = true }
+        while lock.withLock({
+            holdAfterOutput
+                || holdFinal
+                    && inputs.last?.first?.content.hasPrefix("Answer the latest user question")
+                        == true
+        }) {
+            guard emit(.reasoning("Synthetic final-answer pause")) else { break }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
         return metrics
     }
 }
@@ -138,12 +157,15 @@ private let readSkillRequest = """
             store: SkillStore(localRoot: root.appendingPathComponent("Skills")),
             configuration: root.appendingPathComponent("servers.json"))
         backend = ToolBackendFixture(
-            replies: replies, holdFirst: holdFirst, countCharacters: countCharacters,
+            replies: replies.first?.hasPrefix("<tool_call>") == true
+                ? ["DELEGATE"] + replies : replies,
+            holdFirst: holdFirst, countCharacters: countCharacters,
             holdSummary: holdSummary, summaryFinish: summaryFinish)
         let backend = backend
         store = ConversationStore(root: root.appendingPathComponent("Chats"))
         repository = ModelRepository(root: root.appendingPathComponent("Model"), manifest: manifest)
-        summaryStore = rejectSummarySaves || pauseSummarySaves
+        summaryStore =
+            rejectSummarySaves || pauseSummarySaves
             ? ToolSummaryTestStore(wrapped: store, reject: rejectSummarySaves) : nil
         let target: any ConversationStoring
         if let summaryStore { target = summaryStore } else { target = store }
@@ -186,19 +208,89 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
     fixture.model.prompt = "Read the selected skill's fact."
     fixture.model.run(); await fixture.model.waitUntilIdle()
     #expect(fixture.model.error == nil)
-    #expect(fixture.model.answer == "BLUE PENGUIN" && fixture.backend.calls == 2)
+    #expect(fixture.model.answer == "BLUE PENGUIN" && fixture.backend.calls == 4)
     #expect(fixture.model.averageDecodeTokensPerSecond == 1_000)
-    #expect(fixture.model.messages.filter { $0.generationMetrics != nil }.count == 2)
+    #expect(fixture.model.messages.filter { $0.generationMetrics != nil }.count == 1)
     #expect(fixture.backend.contexts.last?.last?.content.contains("BLUE PENGUIN") == true)
     let stored = try #require(try await fixture.store.load())
     #expect(
         stored.snapshot.messages.contains {
             $0.toolName == "read_skill_file" && $0.text.contains("BLUE PENGUIN")
         })
+    let tool = try #require(stored.snapshot.messages.first { $0.toolName == "read_skill_file" })
+    let receipt = try #require(tool.workerReceipt)
+    #expect(receipt.resultIDs == [tool.id])
+    #expect(receipt.promptData.contains("BLUE PENGUIN"))
+    #expect(receipt.promptData.contains(#""server":"skill""#))
+    #expect(receipt.promptData.contains("references/fact.txt"))
+    #expect(receipt.promptData(replacingSummary: "Local evidence").contains("read_skill_file"))
+    #expect(!receipt.promptData.contains("Selected skill folder"))
     #expect(stored.snapshot.messages.last?.text == "BLUE PENGUIN")
-    #expect(fixture.backend.contexts.first?.last?.content.contains("enabled_functions") == true)
+    #expect(
+        fixture.backend.contexts.first?.first?.content.contains("<tools>") == false
+            && fixture.backend.contexts.contains { $0.first?.content.contains("<tools>") == true })
     #expect(stored.snapshot.messages.first?.text == "Read the selected skill's fact.")
     #expect(stored.snapshot.messages.allSatisfy { !$0.text.contains("enabled_functions") })
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+func finalWorkerAnswerKeepsLiteralDelegateTextAndSurvivesStop(_ stop: Bool) async throws {
+    let expected = "The retrieved text says DELEGATE."
+    let fixture = try await ToolLoopFixture(replies: [readSkillRequest, expected])
+    defer { fixture.clean() }
+    if stop { fixture.backend.pauseFinalAnswer() }
+    fixture.model.prompt = "Quote the retrieved fact."
+    fixture.model.run()
+    if stop {
+        for _ in 0..<1_000 {
+            if fixture.model.answer == expected { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        fixture.model.stop()
+    }
+    await fixture.model.waitUntilIdle()
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages.last?.text == expected)
+    #expect(saved.snapshot.messages.last?.state == (stop ? .interrupted : .complete))
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+func stoppedRoutingKeepsOrdinaryTextButHidesControlSignals(_ signal: Bool) async throws {
+    let output = signal ? "DELE" : "An ordinary partial answer."
+    let fixture = try await ToolLoopFixture(replies: [output])
+    defer { fixture.clean() }
+    fixture.backend.pauseAfterAnswer()
+    fixture.model.prompt = "An ordinary request."
+    fixture.model.run()
+    for _ in 0..<1_000 {
+        if signal ? fixture.backend.emittedAnswer : fixture.model.answer == output { break }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(fixture.backend.emittedAnswer)
+    #expect(fixture.model.answer == (signal ? "" : output))
+    fixture.model.stop()
+    await fixture.model.waitUntilIdle()
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages.last?.text == (signal ? "" : output))
+    #expect(saved.snapshot.messages.last?.state == .interrupted)
+}
+
+@Test(arguments: ["Ordinary text within the output limit.", "DELEGATE"]) @MainActor
+func limitedDirectAnswerIsSavedButLimitedHandoffCannotExecute(_ text: String) async throws {
+    let fixture = try await ToolLoopFixture(replies: [text])
+    defer { fixture.clean() }
+    fixture.backend.limitAnswer()
+    fixture.model.prompt = "Answer my request."
+    fixture.model.run()
+    await fixture.model.waitUntilIdle()
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages.allSatisfy { $0.toolName == nil })
+    if text == "DELEGATE" {
+        #expect(fixture.model.error != nil && saved.snapshot.messages.last?.text == "")
+    } else {
+        #expect(fixture.model.error == nil && saved.snapshot.messages.last?.text == text)
+        #expect(saved.snapshot.messages.last?.state == .limited)
+    }
 }
 
 @Test @MainActor func unknownOrUnregisteredCallsFailWithoutExecution() async throws {
@@ -208,7 +300,7 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
     defer { fixture.clean() }
     fixture.model.prompt = "Synthetic unknown-tool test"
     fixture.model.run(); await fixture.model.waitUntilIdle()
-    #expect(fixture.backend.calls == 1 && fixture.model.error != nil)
+    #expect(fixture.backend.calls == 2 && fixture.model.error != nil)
     #expect(fixture.model.messages.last?.text.contains("Tool result data") == false)
     #expect(fixture.model.messages.last?.state == .failed)
 }
@@ -220,7 +312,7 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
         at: fixture.root.appendingPathComponent("Skills/example-skill/references/fact.txt"))
     fixture.model.prompt = "Synthetic missing-resource test"
     fixture.model.run(); await fixture.model.waitUntilIdle()
-    #expect(fixture.model.error != nil && fixture.backend.calls == 1)
+    #expect(fixture.model.error != nil && fixture.backend.calls == 2)
     #expect(fixture.model.messages.last?.text.contains("Tool failed:") == true)
     #expect(fixture.model.messages.last?.text.contains("Tool result data") == false)
 }
@@ -230,10 +322,9 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
     defer { fixture.clean() }
     fixture.model.prompt = "Synthetic bounded-loop test"
     fixture.model.run(); await fixture.model.waitUntilIdle()
-    #expect(fixture.backend.calls == 5 && fixture.model.error != nil)
+    #expect(fixture.backend.calls == 6 && fixture.model.error != nil)
     #expect(fixture.model.messages.filter { $0.toolName != nil }.count == 4)
 }
-
 
 private enum SummarySaveFixtureError: Error { case rejected }
 private actor ToolSummaryTestStore: ConversationStoring {
@@ -270,8 +361,9 @@ private actor ToolSummaryTestStore: ConversationStoring {
     }
 }
 
-private let largeToolEvidence = String(
-    repeating: "Synthetic source material with exact identifiers and source URLs. ", count: 250)
+private let largeToolEvidence =
+    String(
+        repeating: "Synthetic source material with exact identifiers and source URLs. ", count: 250)
     + " BLUE PENGUIN https://example.com/fact"
 
 @Test(.timeLimit(.minutes(1))) @MainActor
@@ -284,7 +376,7 @@ func oversizedToolResultUsesBoundedLocalChunksAndPersistsRawOutputAndSummary() a
     fixture.model.run(); await fixture.model.waitUntilIdle()
     #expect(fixture.model.error == nil)
     #expect(fixture.model.answer.contains("BLUE PENGUIN"))
-    #expect(fixture.backend.calls == 2 && fixture.backend.summaryCalls > 1)
+    #expect(fixture.backend.calls == 4 && fixture.backend.summaryCalls > 1)
     let tool = try #require(fixture.model.messages.first(where: { $0.toolName != nil }))
     #expect(tool.text.contains(largeToolEvidence))
     #expect(tool.toolResultSummary?.contains("https://example.com/fact") == true)
@@ -292,13 +384,15 @@ func oversizedToolResultUsesBoundedLocalChunksAndPersistsRawOutputAndSummary() a
     let saved = try #require(try await fixture.store.load())
     #expect(saved.snapshot.messages == fixture.model.messages)
     #expect(fixture.model.averageDecodeTokensPerSecond == 1_000)
-    #expect(fixture.model.messages.filter { $0.generationMetrics != nil }.count == 2)
+    #expect(fixture.model.messages.filter { $0.generationMetrics != nil }.count == 1)
     for generation in fixture.backend.generations {
         let tokens = generation.messages.reduce(0) { $0 + $1.content.count + 4 }
         #expect(tokens + generation.limit < 8_192)
     }
-    #expect(fixture.backend.generations.last?.messages.last?.content.contains("result_summary") == true)
-    #expect(fixture.backend.generations.last?.messages.last?.content.contains(largeToolEvidence) == false)
+    #expect(fixture.backend.generations.last?.messages.last?.content.contains("summary") == true)
+    #expect(
+        fixture.backend.generations.last?.messages.last?.content.contains(largeToolEvidence)
+            == false)
 }
 
 @Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
@@ -322,17 +416,32 @@ func stoppedOrIncompleteToolSummaryRestartsFromSavedResultWithoutReadingTheToolA
     #expect(raw.text.contains(largeToolEvidence) && raw.toolResultSummary == nil)
     try FileManager.default.removeItem(
         at: fixture.root.appendingPathComponent("Skills/example-skill/references/fact.txt"))
-    let backend = ToolBackendFixture(replies: ["BLUE PENGUIN"], countCharacters: true)
+    let recall = """
+        <tool_call>
+        <function=chat__read_saved_tool_result>
+        <parameter=ordinal>
+        1
+        </parameter>
+        </function>
+        </tool_call>
+        """
+    let backend = ToolBackendFixture(
+        replies: ["DELEGATE", recall, "BLUE PENGUIN"], countCharacters: true)
     let reopened = LocalInferenceModel(
         repository: fixture.repository, manifest: try #require(fixture.model.manifest),
-        session: InferenceSession { _, _ in backend }, chatStore: fixture.store, tools: fixture.workspace)
+        session: InferenceSession { _, _ in backend }, chatStore: fixture.store,
+        tools: fixture.workspace)
     reopened.check(); await reopened.waitUntilIdle()
     reopened.prompt = "Continue using the already returned result."
     reopened.run(); await reopened.waitUntilIdle()
     #expect(reopened.error == nil && reopened.answer == "BLUE PENGUIN")
-    #expect(backend.calls == 1 && backend.summaryCalls > 1)
+    #expect(backend.calls == 4 && backend.summaryCalls > 1)
     #expect(reopened.messages.first(where: { $0.id == raw.id })?.text == raw.text)
-    #expect(reopened.messages.first(where: { $0.id == raw.id })?.toolResultSummary != nil)
+    #expect(reopened.messages.filter { $0.toolName == "read_skill_file" }.count == 1)
+    #expect(
+        reopened.messages.last(where: { $0.toolName == "read_saved_tool_result" })?.workerReceipt
+            != nil)
+
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
@@ -352,7 +461,6 @@ func failedToolSummarySaveDoesNotPublishAnUncommittedProjection() async throws {
     #expect(saved.snapshot.messages.contains { $0.text.contains(largeToolEvidence) })
 }
 
-
 @Test(.timeLimit(.minutes(1))) @MainActor
 func backgroundDuringSummaryCommitCannotStartALateContinuation() async throws {
     let fixture = try await ToolLoopFixture(
@@ -363,11 +471,11 @@ func backgroundDuringSummaryCommitCannotStartALateContinuation() async throws {
     fixture.model.run()
     let writer = try #require(fixture.summaryStore)
     try await writer.waitForSummarySave()
-    #expect(fixture.backend.calls == 1 && !fixture.model.canNavigateChats)
+    #expect(fixture.backend.calls == 2 && !fixture.model.canNavigateChats)
     fixture.model.enteredBackground()
     await writer.release()
     await fixture.model.waitUntilIdle()
-    #expect(fixture.backend.calls == 1)
+    #expect(fixture.backend.calls == 2)
     #expect(!fixture.model.loaded && !fixture.model.busy)
     #expect(fixture.model.messages.contains { $0.toolResultSummary != nil })
 }
@@ -386,7 +494,7 @@ func newChatDuringToolSummaryDrainsWorkerWithoutPublishingIntoTheNewChat() async
     fixture.model.newChat()
     fixture.backend.releaseSummary()
     await fixture.model.waitUntilIdle()
-    #expect(fixture.backend.calls == 1)
+    #expect(fixture.backend.calls == 2)
     #expect(fixture.model.messages.isEmpty && fixture.model.conversationID != originalID)
     let saved = try #require(fixture.model.history.first(where: { $0.id == originalID }))
     #expect(saved.snapshot.messages.allSatisfy { $0.toolResultSummary == nil })
@@ -415,7 +523,8 @@ func aSecondLargeResultCanReduceEarlierRawResultsInTheSameToolTurn() async throw
         ]).text()
         return base + [
             ConversationMessage(role: .assistant, content: readSkillRequest),
-            ConversationMessage(role: .user, content: "<tool_response>\n" + data + "\n</tool_response>"),
+            ConversationMessage(
+                role: .user, content: "<tool_response>\n" + data + "\n</tool_response>"),
         ]
     }
     let suffix = " BLUE PENGUIN https://example.com/fact"
@@ -423,11 +532,12 @@ func aSecondLargeResultCanReduceEarlierRawResultsInTheSameToolTurn() async throw
     try #require(length > suffix.count + 128)
     let source = String(repeating: "x", count: length - suffix.count) + suffix
     #expect(try fixtureContextTokens(firstContext(source)) == 7_360)
-    try Data(source.utf8).write(to: fixture.root.appendingPathComponent("Skills/example-skill/references/fact.txt"))
+    try Data(source.utf8).write(
+        to: fixture.root.appendingPathComponent("Skills/example-skill/references/fact.txt"))
     fixture.model.prompt = question
     fixture.model.run(); await fixture.model.waitUntilIdle()
     #expect(fixture.model.error == nil && fixture.model.answer == "BLUE PENGUIN")
-    #expect(fixture.backend.calls == 3)
+    #expect(fixture.backend.calls == 5)
     let results = fixture.model.messages.filter { $0.toolName != nil }
     #expect(results.count == 2 && results.allSatisfy { $0.toolResultSummary != nil })
     #expect(results.allSatisfy { $0.text.contains(source) })
@@ -453,8 +563,7 @@ func savedResultsSmallerThanTheSummaryCeilingStillReduceToTheAvailableBudget() a
                 ConversationMessage(role: .assistant, content: empty.inferenceContent),
                 ConversationMessage(role: .user, content: question),
             ], state: .init(),
-            instructions: try fixture.workspace.instructions(using: fixture.model.cloud),
-            requestContext: try fixture.workspace.requestContext(using: fixture.model.cloud))
+            instructions: try fixture.workspace.routingInstructions(using: fixture.model.cloud))
     }
     let prefix = "Use the saved result. "
     let padding = 6_400 - (try fixtureContextTokens(context(prefix)))
@@ -463,10 +572,11 @@ func savedResultsSmallerThanTheSummaryCeilingStillReduceToTheAvailableBudget() a
     #expect(try fixtureContextTokens(context(question)) == 6_400)
     #expect(result.text.count + 4 < 1_536)
     let previous = try #require(try await fixture.store.load())
-    try await fixture.store.save(ConversationArchive(
-        sequence: previous.sequence + 1,
-        snapshot: ConversationSnapshot(
-            conversationID: UUID(), messages: [user, result], compaction: .init())))
+    try await fixture.store.save(
+        ConversationArchive(
+            sequence: previous.sequence + 1,
+            snapshot: ConversationSnapshot(
+                conversationID: UUID(), messages: [user, result], compaction: .init())))
     let backend = ToolBackendFixture(replies: ["BLUE PENGUIN"], countCharacters: true)
     let model = LocalInferenceModel(
         repository: fixture.repository, manifest: try #require(fixture.model.manifest),
@@ -476,7 +586,7 @@ func savedResultsSmallerThanTheSummaryCeilingStillReduceToTheAvailableBudget() a
     model.prompt = question
     model.run(); await model.waitUntilIdle()
     #expect(model.error == nil && model.answer == "BLUE PENGUIN")
-    #expect(backend.calls == 1 && backend.summaryCalls == 1)
+    #expect(backend.calls == 1 && backend.summaryCalls > 0)
     #expect(model.messages.first(where: { $0.id == result.id })?.text == result.text)
     #expect(model.messages.first(where: { $0.id == result.id })?.toolResultSummary != nil)
 }
@@ -489,19 +599,26 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
     result.toolName = "synthetic_lookup"
     var history = [ChatMessage(role: .user, text: "Earlier source"), result]
     for _ in 0..<3 {
-        history += [ChatMessage(role: .user, text: "Follow-up"), ChatMessage(role: .assistant, text: "Noted")]
+        history += [
+            ChatMessage(role: .user, text: "Follow-up"),
+            ChatMessage(role: .assistant, text: "Noted"),
+        ]
     }
     let question = "Continue using the saved facts."
-    let transcript = history.map { ConversationMessage(role: $0.role, content: $0.text) }
+    let transcript =
+        history.map { ConversationMessage(role: $0.role, content: $0.text) }
         + [ConversationMessage(role: .user, content: question)]
     let plan = try ContextCompaction().plan(transcript: transcript, state: .init())
     #expect(fixtureContextTokens(transcript) < 7_424)
     #expect(fixtureContextTokens(plan.messages) + 1_536 >= 8_192)
     let previous = try #require(try await fixture.store.load())
-    try await fixture.store.save(ConversationArchive(
-        sequence: previous.sequence + 1,
-        snapshot: ConversationSnapshot(conversationID: UUID(), messages: history, compaction: .init())))
-    let backend = ToolBackendFixture(replies: ["Memory: BLUE PENGUIN", "BLUE PENGUIN"], countCharacters: true)
+    try await fixture.store.save(
+        ConversationArchive(
+            sequence: previous.sequence + 1,
+            snapshot: ConversationSnapshot(
+                conversationID: UUID(), messages: history, compaction: .init())))
+    let backend = ToolBackendFixture(
+        replies: ["Memory: BLUE PENGUIN", "BLUE PENGUIN"], countCharacters: true)
     let model = LocalInferenceModel(
         repository: fixture.repository, manifest: try #require(fixture.model.manifest),
         session: InferenceSession { _, _ in backend }, chatStore: fixture.store,
@@ -528,11 +645,53 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
             process.standardOutput = pipe
             process.standardError = FileHandle.nullDevice
             try process.run()
-            port = try #require(Int(String(
-                decoding: pipe.fileHandleForReading.availableData, as: UTF8.self
-            ).trimmingCharacters(in: .whitespacesAndNewlines)))
+            port = try #require(
+                Int(
+                    String(
+                        decoding: pipe.fileHandleForReading.availableData, as: UTF8.self
+                    ).trimmingCharacters(in: .whitespacesAndNewlines)))
         }
         func stop() { if process.isRunning { process.terminate(); process.waitUntilExit() } }
+    }
+
+    @Test(.timeLimit(.minutes(1))) @MainActor
+    func largeRequestArgumentsAreReducedAfterASuccessfulCall() async throws {
+        let remote = try SummaryNetworkFixture()
+        defer { remote.stop() }
+        let query = String(repeating: "large but valid query ", count: 80)
+        let call = """
+            <tool_call>
+            <function=mcp_20000000__tavily_search>
+            <parameter=query>
+            \(query)
+            </parameter>
+            </function>
+            </tool_call>
+            """
+        let fixture = try await ToolLoopFixture(
+            replies: [call, "BLUE PENGUIN"], countCharacters: true)
+        defer { fixture.clean() }
+        let server = MCPServer(
+            id: UUID(uuidString: "20000000-0000-4000-8000-000000000001")!,
+            name: "Synthetic search",
+            endpoint: URL(string: "http://127.0.0.1:\(remote.port)/routing-search")!)
+        try await fixture.workspace.saveServer(server)
+        fixture.workspace.discover(server.id)
+        await fixture.workspace.waitUntilIdle()
+        try #require(fixture.workspace.error == nil)
+        fixture.model.prompt = "Find a source."
+        fixture.model.run()
+        await fixture.model.waitUntilIdle()
+
+        #expect(fixture.model.error == nil && fixture.model.answer == "BLUE PENGUIN")
+        let records = fixture.model.messages.filter { $0.toolName == "tavily_search" }
+        #expect(records.count == 1)
+        let record = try #require(records.first)
+        let receipt = try #require(record.workerReceipt)
+        #expect(record.text.contains(query))
+        #expect(receipt.promptData.contains("tavily_search"))
+        #expect(!receipt.promptData.contains(query))
+        #expect(fixture.backend.summaryCalls > 0)
     }
 
     @Test(.timeLimit(.minutes(1))) @MainActor
@@ -542,9 +701,11 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
             replies: [readSkillRequest, "This continuation must never run"],
             countCharacters: true, resource: largeToolEvidence, pauseSummarySaves: true)
         defer { fixture.clean() }
-        try await fixture.workspace.saveServer(MCPServer(
-            name: "Synthetic network dependency",
-            endpoint: URL(string: "http://127.0.0.1:\(remote.port)/json")!, enabledTools: ["echo"]))
+        try await fixture.workspace.saveServer(
+            MCPServer(
+                name: "Synthetic network dependency",
+                endpoint: URL(string: "http://127.0.0.1:\(remote.port)/json")!,
+                enabledTools: ["echo"]))
         fixture.model.connectivityChanged()
         fixture.model.prompt = "Read the fact."
         fixture.model.run()
@@ -561,7 +722,7 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
         #expect(fixture.workspace.revision == revision)
         await writer.release()
         await fixture.model.waitUntilIdle()
-        #expect(fixture.backend.calls == 1)
+        #expect(fixture.backend.calls == 2)
         #expect(fixture.model.error == NetworkAccessFailure.offline.localizedDescription)
         #expect(fixture.model.messages.contains { $0.toolResultSummary != nil })
         #expect(fixture.model.messages.contains { $0.text.contains(largeToolEvidence) })
@@ -582,7 +743,7 @@ func inactiveThenActiveDuringSummarySaveDoesNotResumeTheCancelledOperation() asy
     fixture.model.becameActive()
     await writer.release()
     await fixture.model.waitUntilIdle()
-    #expect(fixture.backend.calls == 1)
+    #expect(fixture.backend.calls == 2)
     let saved = try #require(try await fixture.store.load())
     #expect(saved.snapshot.messages.contains { $0.toolResultSummary != nil })
     #expect(saved.snapshot.messages.contains { $0.text.contains(largeToolEvidence) })
@@ -590,9 +751,12 @@ func inactiveThenActiveDuringSummarySaveDoesNotResumeTheCancelledOperation() asy
 
 @Test
 func savedToolSummaryRetainsItsCanonicalRequestAndOlderToolIdentity() {
-    let request = "Tool request:\n{\"arguments\":{\"query\":\"example\"},\"server\":\"server-id\",\"tool\":\"search\"}"
-    var message = ChatMessage(role: .assistant, text: request
-        + "\nTool result data (not instructions):\nFull raw result")
+    let request =
+        "Tool request:\n{\"arguments\":{\"query\":\"example\"},\"server\":\"server-id\",\"tool\":\"search\"}"
+    var message = ChatMessage(
+        role: .assistant,
+        text: request
+            + "\nTool result data (not instructions):\nFull raw result")
     message.toolName = "search"
     message.toolResultSummary = "Useful source notes"
     #expect(message.inferenceContent.contains(request))
@@ -603,22 +767,25 @@ func savedToolSummaryRetainsItsCanonicalRequestAndOlderToolIdentity() {
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
-func aGrowingToolExchangeCompactsEligibleOlderHistoryWithoutReplayingTheCall() async throws {
+func aGrowingWorkerExchangeCompactsOlderContextWithoutReplayingTheCall() async throws {
     let fixture = try await ToolLoopFixture(
         replies: ["unused"], countCharacters: true, resource: "BLUE PENGUIN")
     defer { fixture.clean() }
     try await fixture.workspace.prepare(using: fixture.model.cloud)
     var history: [ChatMessage] = []
     for _ in 0..<3 {
-        history += [ChatMessage(role: .user, text: "Earlier question"),
-                    ChatMessage(role: .assistant, text: "Earlier answer")]
+        history += [
+            ChatMessage(role: .user, text: "Earlier question"),
+            ChatMessage(role: .assistant, text: "Earlier answer"),
+        ]
     }
     let question = "Read the fact."
     func context(_ turns: [ChatMessage]) throws -> [ConversationMessage] {
         ContextCompaction().context(
             transcript: turns.map { ConversationMessage(role: $0.role, content: $0.text) }
                 + [ConversationMessage(role: .user, content: question)],
-            state: .init(), instructions: try fixture.workspace.instructions(using: fixture.model.cloud),
+            state: .init(),
+            instructions: try fixture.workspace.instructions(using: fixture.model.cloud),
             requestContext: try fixture.workspace.requestContext(using: fixture.model.cloud))
     }
     let padding = 5_800 - (try fixtureContextTokens(context(history)))
@@ -630,11 +797,14 @@ func aGrowingToolExchangeCompactsEligibleOlderHistoryWithoutReplayingTheCall() a
     let call = readSkillRequest.replacingOccurrences(
         of: "<tool_call>\n", with: "<tool_call>\n" + String(repeating: " ", count: 2_000))
     let backend = ToolBackendFixture(
-        replies: [call, "Memory: earlier questions", "BLUE PENGUIN"], countCharacters: true)
+        replies: ["DELEGATE", call, "Memory: earlier questions", "BLUE PENGUIN"],
+        countCharacters: true)
     let previous = try #require(try await fixture.store.load())
-    try await fixture.store.save(ConversationArchive(
-        sequence: previous.sequence + 1,
-        snapshot: ConversationSnapshot(conversationID: UUID(), messages: history, compaction: .init())))
+    try await fixture.store.save(
+        ConversationArchive(
+            sequence: previous.sequence + 1,
+            snapshot: ConversationSnapshot(
+                conversationID: UUID(), messages: history, compaction: .init())))
     let model = LocalInferenceModel(
         repository: fixture.repository, manifest: try #require(fixture.model.manifest),
         session: InferenceSession { _, _ in backend }, chatStore: fixture.store,
@@ -643,7 +813,7 @@ func aGrowingToolExchangeCompactsEligibleOlderHistoryWithoutReplayingTheCall() a
     model.prompt = question
     model.run(); await model.waitUntilIdle()
     #expect(model.error == nil && model.answer == "BLUE PENGUIN")
-    #expect(backend.calls == 3 && model.compaction.summarizedMessageCount > 0)
+    #expect(backend.calls == 5 && model.compaction.summarizedMessageCount > 0)
     #expect(model.messages.filter { $0.toolName != nil }.count == 1)
     #expect(model.messages.contains { $0.toolName != nil && $0.text.contains("BLUE PENGUIN") })
     for generation in backend.generations {
