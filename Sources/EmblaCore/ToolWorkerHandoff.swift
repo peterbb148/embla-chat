@@ -61,7 +61,8 @@ public extension ToolWorkerHandoff {
             You are Embla. A tool worker can look up facts for you.
             Its enabled capabilities are \(capabilities).
             If answering the latest user question requires current or external facts covered
-            by those capabilities, output exactly DELEGATE and stop.
+            by those capabilities, output exactly DELEGATE and stop. Also delegate requests
+            to perform an action that an enabled capability supports.
 
             Carry the previous question's intent into short follow-ups. A different
             location, subject or time requires a new lookup even when prior evidence

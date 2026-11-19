@@ -615,6 +615,12 @@ public final class LocalInferenceModel {
         let route = try await generateToolPass(
             initialContext, outputTokens: routeBudget, checkpointDirectAnswerAt: responseIndex)
         try tools.validateRequestConfiguration(configuration, using: cloud)
+        if route.metrics.finishReason == "length",
+            let partial = ToolWorkerHandoff.displayableAnswer(route.text)
+        {
+            finishToolAnswer(partial, pass: route, at: responseIndex)
+            return
+        }
         switch try ToolWorkerHandoff.parse(route.text, finishReason: route.metrics.finishReason) {
         case .answer(let text):
             finishToolAnswer(text, pass: route, at: responseIndex)

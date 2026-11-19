@@ -15,6 +15,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     private var holdFinal = false
     private var holdAfterOutput = false
     private var didEmitAnswer = false
+    private var answerFinish = "stop"
     let replies: [String]
     private let countCharacters: Bool
     private var holdSummary: Bool
@@ -51,6 +52,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     func pauseFinalAnswer() { lock.withLock { holdFinal = true } }
     var emittedAnswer: Bool { lock.withLock { didEmitAnswer } }
     func pauseAfterAnswer() { lock.withLock { holdAfterOutput = true } }
+    func limitAnswer() { lock.withLock { answerFinish = "length" } }
 
     func encode(_ messages: [ConversationMessage]) -> [Int] {
         lock.withLock { inputs.append(messages) }
@@ -87,7 +89,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
             return text
         }
         let metrics = GenerationMetrics(
-            finishReason: "stop", promptTokens: 2, completionTokens: 2,
+            finishReason: lock.withLock { answerFinish }, promptTokens: 2, completionTokens: 2,
             promptMilliseconds: 1, decodeMilliseconds: 1)
         while lock.withLock({ holdFirst && position == 1 }) {
             guard emit(.reasoning("Synthetic blocked generation")) else { return metrics }
@@ -271,6 +273,24 @@ func stoppedRoutingKeepsOrdinaryTextButHidesControlSignals(_ signal: Bool) async
     let saved = try #require(try await fixture.store.load())
     #expect(saved.snapshot.messages.last?.text == (signal ? "" : output))
     #expect(saved.snapshot.messages.last?.state == .interrupted)
+}
+
+@Test(arguments: ["Ordinary text within the output limit.", "DELEGATE"]) @MainActor
+func limitedDirectAnswerIsSavedButLimitedHandoffCannotExecute(_ text: String) async throws {
+    let fixture = try await ToolLoopFixture(replies: [text])
+    defer { fixture.clean() }
+    fixture.backend.limitAnswer()
+    fixture.model.prompt = "Answer my request."
+    fixture.model.run()
+    await fixture.model.waitUntilIdle()
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages.allSatisfy { $0.toolName == nil })
+    if text == "DELEGATE" {
+        #expect(fixture.model.error != nil && saved.snapshot.messages.last?.text == "")
+    } else {
+        #expect(fixture.model.error == nil && saved.snapshot.messages.last?.text == text)
+        #expect(saved.snapshot.messages.last?.state == .limited)
+    }
 }
 
 @Test @MainActor func unknownOrUnregisteredCallsFailWithoutExecution() async throws {
