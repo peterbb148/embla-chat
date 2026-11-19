@@ -46,10 +46,16 @@ struct WorkerToolCatalogue {
         ]))
 
     let tools: [ModelToolSpecification]
+    private var entriesPerPage = Self.pageSize
     private(set) var page = 1
-    private(set) var selected: ModelToolSpecification?
+    private var selectedIndex: Int?
 
-    var pageCount: Int { (tools.count + Self.pageSize - 1) / Self.pageSize }
+    init(tools: [ModelToolSpecification]) {
+        self.tools = tools
+    }
+
+    var selected: ModelToolSpecification? { selectedIndex.map { tools[$0] } }
+    var pageCount: Int { (tools.count + entriesPerPage - 1) / entriesPerPage }
     var passBudget: Int { 5 * (pageCount + 2) }
     var nextPage: Int? { page < pageCount ? page + 1 : nil }
     var offered: [ModelToolSpecification] {
@@ -58,8 +64,8 @@ struct WorkerToolCatalogue {
     }
 
     private var pageRange: Range<Int> {
-        let start = (page - 1) * Self.pageSize
-        return start..<min(start + Self.pageSize, tools.count)
+        let start = (page - 1) * entriesPerPage
+        return start..<min(start + entriesPerPage, tools.count)
     }
 
     /// A complete call naming a visible method is validated by the host's original schema.
@@ -75,16 +81,16 @@ struct WorkerToolCatalogue {
                 throw ToolProtocolError.invalidArguments
             }
             page = nextPage
-            selected = nil
+            selectedIndex = nil
         case Self.previous.name:
             guard arguments.isEmpty, page > 1 else { throw ToolProtocolError.invalidArguments }
             page -= 1
-            selected = nil
+            selectedIndex = nil
         case Self.open.name:
             guard arguments.count == 1, case .integer(let value) = arguments["ordinal"],
                 value > pageRange.lowerBound, value <= pageRange.upperBound
             else { throw ToolProtocolError.invalidArguments }
-            selected = tools[Int(value) - 1]
+            selectedIndex = Int(value) - 1
         default:
             throw ToolProtocolError.invalidArguments
         }
@@ -92,7 +98,16 @@ struct WorkerToolCatalogue {
 
     mutating func reset() {
         page = 1
-        selected = nil
+        selectedIndex = nil
+    }
+
+    /// Narrow the catalogue around the current position, preserving any opened method.
+    mutating func narrowPage() -> Bool {
+        guard entriesPerPage > 1 else { return false }
+        let anchor = selectedIndex ?? pageRange.lowerBound
+        entriesPerPage /= 2
+        page = anchor / entriesPerPage + 1
+        return true
     }
 
     func promptData() throws -> String {

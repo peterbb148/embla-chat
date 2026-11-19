@@ -673,19 +673,28 @@ public final class LocalInferenceModel {
             catalogue = WorkerToolCatalogue(tools: specifications)
         }
         var build: ([Int: String]) throws -> [ConversationMessage] = workerPrompt
+        var remainingNavigation = catalogue?.passBudget ?? 0
         func fitWorkerContext() async throws -> [ConversationMessage] {
-            let indices = toolResultIndices(before: baseCount) + results.map(\.index)
-            do {
-                return try await fitToolResults(
-                    indices: indices, question: question, inputLimit: toolInputLimit, build: build)
-            } catch ToolSummaryError.noRoom {
-                try await compactForWorker(before: baseCount)
-                return try await fitToolResults(
-                    indices: indices, question: question, inputLimit: toolInputLimit, build: build)
+            var compacted = false
+            while true {
+                let indices = toolResultIndices(before: baseCount) + results.map(\.index)
+                do {
+                    return try await fitToolResults(
+                        indices: indices, question: question,
+                        inputLimit: toolInputLimit, build: build)
+                } catch ToolSummaryError.noRoom {
+                    let previousBudget = catalogue?.passBudget ?? 0
+                    if catalogue?.narrowPage() == true {
+                        remainingNavigation += (catalogue?.passBudget ?? 0) - previousBudget
+                    } else {
+                        guard !compacted else { throw ToolSummaryError.noRoom }
+                        try await compactForWorker(before: baseCount)
+                        compacted = true
+                    }
+                }
             }
         }
         var context = try await fitWorkerContext()
-        var remainingNavigation = catalogue?.passBudget ?? 0
         while true {
             try tools.validateRequestConfiguration(configuration, using: cloud)
             status = "Thinking about tools…"

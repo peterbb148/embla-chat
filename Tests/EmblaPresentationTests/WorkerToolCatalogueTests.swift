@@ -52,6 +52,18 @@ import EmblaCore
     #expect(catalogue.page == 2 && catalogue.selected == nil)
     try catalogue.navigate("open", arguments: ["ordinal": .integer(9)])
     #expect(catalogue.selected == tools[8])
+    let originalBudget = catalogue.passBudget
+    let narrowed = catalogue.narrowPage()
+    #expect(narrowed)
+    #expect(catalogue.page == 3 && catalogue.selected == tools[8])
+    #expect(catalogue.passBudget > originalBudget)
+    let furtherNarrowing = (0..<3).map { _ in catalogue.narrowPage() }
+    #expect(furtherNarrowing == [true, true, false])
+    #expect(catalogue.page == 9 && catalogue.selected == tools[8])
+    #expect(catalogue.callable.filter { $0.server == "mcp_fixture" } == [tools[8]])
+    try catalogue.navigate("browse", arguments: [:])
+    #expect(catalogue.page == 10 && catalogue.selected == nil)
+    #expect(catalogue.callable.contains(tools[9]))
     catalogue.reset()
     #expect(catalogue.page == 1 && catalogue.selected == nil)
 }
