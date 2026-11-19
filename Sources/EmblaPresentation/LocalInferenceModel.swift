@@ -625,12 +625,12 @@ public final class LocalInferenceModel {
         }
 
         var catalogue: WorkerToolCatalogue?
-        func clarificationTools() -> [ModelToolSpecification] {
-            (catalogue?.selected != nil && results.isEmpty) ? [WorkerToolCatalogue.clarify] : []
+        func catalogueControls() -> [ModelToolSpecification] {
+            if !results.isEmpty { return [WorkerToolCatalogue.finish] }
+            return catalogue?.selected == nil ? [] : [WorkerToolCatalogue.clarify]
         }
         func workerPrompt(_ summaries: [Int: String]) throws -> [ConversationMessage] {
-            let clarification = clarificationTools()
-            let offered = catalogue.map { $0.offered + clarification } ?? specifications
+            let offered = catalogue.map { $0.offered + catalogueControls() } ?? specifications
             var instructions = try tools.instructions(
                 using: cloud, selectedCatalogue: offered)
             let requestContext: String
@@ -644,7 +644,14 @@ public final class LocalInferenceModel {
                     A loaded method can be called using its exact schema. Browse or open only when
                     needed. Once actual results answer the user, use them and finish.
                     """
-                if !clarification.isEmpty {
+                if !results.isEmpty {
+                    instructions += """
+
+                        When the collected results answer every part of the request,
+                        call catalog__finish with no arguments. If more work remains,
+                        find and use the next method.
+                        """
+                } else if catalogue.selected != nil {
                     instructions += """
 
                         If the opened method fits but needs an input only the user can supply,
@@ -687,12 +694,12 @@ public final class LocalInferenceModel {
             let output = pass.text
             let response = try ModelToolResponse.parse(
                 output, finishReason: pass.metrics.finishReason,
-                tools: catalogue.map { $0.callable + clarificationTools() } ?? specifications)
+                tools: catalogue.map { $0.callable + catalogueControls() } ?? specifications)
             switch response {
             case .answer(let text):
-                if results.isEmpty, catalogue?.nextPage != nil {
+                if catalogue?.nextPage != nil {
                     // A page is only a partial view of the catalogue. An ordinary reply from
-                    // this selection pass does not establish that the remaining pages lack a match.
+                    // this selection pass does not end the search while another page exists.
                     guard remainingNavigation > 0 else {
                         throw WorkerToolCatalogueError.navigationLimit
                     }
@@ -718,6 +725,12 @@ public final class LocalInferenceModel {
                         let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !text.isEmpty else { throw ToolProtocolError.invalidArguments }
                         finishToolAnswer(text, pass: pass, at: responseIndex)
+                        return
+                    }
+                    if name == WorkerToolCatalogue.finish.name {
+                        try await completeWorker(
+                            results, baseCount: baseCount, responseIndex: responseIndex,
+                            configuration: configuration, question: question)
                         return
                     }
                     guard remainingNavigation > 0 else {

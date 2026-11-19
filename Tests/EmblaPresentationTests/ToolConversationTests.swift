@@ -715,10 +715,11 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
                 call(
                     "mcp_10000000__get_current_time",
                     argument: parameter("timezone", "Asia/Tokyo")),
-                call("catalog__browse"), call("catalog__browse"),
+                "Tokyo time is available. I still need a current source.",
+                call("catalog__browse"),
                 call("catalog__open", argument: parameter("ordinal", "20")),
                 call("mcp_20000000__tavily_search", argument: parameter("query", "blue penguins")),
-                "The facts are ready.", "Tokyo is 15:37. https://example.com/blue-penguin",
+                call("catalog__finish"), "Tokyo is 15:37. https://example.com/blue-penguin",
                 "DELEGATE",
                 call("catalog__open", argument: parameter("ordinal", "3")),
                 call("catalog__clarify", argument: parameter("question", clarification)),
@@ -754,6 +755,7 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
         #expect(results.last?.workerReceipt?.resultIDs == results.map(\.id))
         #expect(!saved.snapshot.messages.contains { $0.text.contains("catalog__") })
         #expect(!saved.snapshot.messages.contains { $0.text.contains("Listing timezone names") })
+        #expect(!saved.snapshot.messages.contains { $0.text.contains("I still need a current source") })
         let pagedAfterFirstCall = fixture.backend.generations.filter { generation in
             generation.messages.contains { $0.content.contains("Enabled catalogue page") }
                 && generation.messages.contains { $0.content.contains("<tool_response>") }

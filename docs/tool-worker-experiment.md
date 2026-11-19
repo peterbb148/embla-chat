@@ -106,12 +106,13 @@ The normal worker measures the full prompt with the real tokenizer. If it does n
 the worker receives a page of up to eight enabled methods, can page forward or back,
 and can load the exact schema of one listed method. If it returns a complete call
 for a visible method, the host validates that call against the original schema.
-An answer on a partial page before any call advances the scan so later methods remain
-discoverable. An opened method that needs missing input can ask the user a question
-without dispatching a call. Both automatic and explicit navigation retry after compacting history
-if the new page needs more room. Navigation is bounded, local to the worker and absent
-from the saved transcript. Actual calls still use the existing validation and execution
-limit. A single selected schema still needs to fit with the request.
+An unmarked answer on a partial page advances the scan so later methods remain
+discoverable, including between calls. After gathering results, the worker can mark
+the request complete and stop scanning as soon as the evidence covers it. Before any
+call, an opened method that needs missing input can ask the user a question. Navigation
+retries after compacting history if the new page needs more room. It is bounded, local to
+the worker and absent from the saved transcript. Actual calls still use the existing validation
+and execution limit. A single selected schema still needs to fit with the request.
 
 The opt-in `oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage` test uses
 `EMBLA_REAL_PAGED_CATALOGUE=1` and the loopback server above. Its full schema prompt

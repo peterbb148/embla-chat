@@ -38,6 +38,12 @@ struct WorkerToolCatalogue {
             ]),
             "required": .array([.string("question")]), "additionalProperties": .bool(false),
         ]))
+    static let finish = ModelToolSpecification(
+        server: server, name: "finish",
+        description: "Finish when the collected results answer every part of the request.",
+        inputSchema: .object([
+            "type": .string("object"), "additionalProperties": .bool(false),
+        ]))
 
     let tools: [ModelToolSpecification]
     private(set) var page = 1
