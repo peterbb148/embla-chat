@@ -692,7 +692,7 @@ public final class LocalInferenceModel {
                     } else if catalogue?.narrowPage() == true {
                         remainingNavigation += (catalogue?.passBudget ?? 0) - previousBudget
                     } else {
-                        guard error == .noRoom, !compacted else { throw error }
+                        guard !compacted else { throw error }
                         try await compactForWorker(before: baseCount)
                         compacted = true
                     }
