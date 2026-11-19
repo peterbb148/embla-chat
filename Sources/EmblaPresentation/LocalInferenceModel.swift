@@ -678,7 +678,7 @@ public final class LocalInferenceModel {
                 tools: catalogue?.callable ?? specifications)
             switch response {
             case .answer(let text):
-                if results.isEmpty, catalogue?.selected == nil, catalogue?.nextPage != nil {
+                if results.isEmpty, catalogue?.nextPage != nil {
                     // A page is only a partial view of the catalogue. An ordinary reply from
                     // this selection pass does not establish that the remaining pages lack a match.
                     guard remainingNavigation > 0 else {

@@ -707,6 +707,9 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
         let fixture = try await ToolLoopFixture(
             replies: [
                 "I will remember the reference.", "DELEGATE",
+                call("catalog__open", argument: parameter("ordinal", "2")),
+                "Listing timezone names does not answer the request.",
+                call("catalog__previous"),
                 call("catalog__open", argument: parameter("ordinal", "1")),
                 call(
                     "mcp_10000000__get_current_time",
@@ -746,6 +749,7 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
         #expect(results.last?.text.contains("https://example.com/blue-penguin") == true)
         #expect(results.last?.workerReceipt?.resultIDs == results.map(\.id))
         #expect(!saved.snapshot.messages.contains { $0.text.contains("catalog__") })
+        #expect(!saved.snapshot.messages.contains { $0.text.contains("Listing timezone names") })
         let pagedAfterFirstCall = fixture.backend.generations.filter { generation in
             generation.messages.contains { $0.content.contains("Enabled catalogue page") }
                 && generation.messages.contains { $0.content.contains("<tool_response>") }
