@@ -682,12 +682,17 @@ public final class LocalInferenceModel {
                     return try await fitToolResults(
                         indices: indices, question: question,
                         inputLimit: toolInputLimit, build: build)
-                } catch ToolSummaryError.noRoom {
+                } catch let error as ToolSummaryError
+                    where error == .noRoom || error == .doesNotFit
+                {
                     let previousBudget = catalogue?.passBudget ?? 0
-                    if catalogue?.narrowPage() == true {
+                    if catalogue == nil, !results.isEmpty {
+                        catalogue = WorkerToolCatalogue(tools: specifications)
+                        remainingNavigation = catalogue?.passBudget ?? 0
+                    } else if catalogue?.narrowPage() == true {
                         remainingNavigation += (catalogue?.passBudget ?? 0) - previousBudget
                     } else {
-                        guard !compacted else { throw ToolSummaryError.noRoom }
+                        guard error == .noRoom, !compacted else { throw error }
                         try await compactForWorker(before: baseCount)
                         compacted = true
                     }

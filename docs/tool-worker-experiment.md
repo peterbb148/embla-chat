@@ -109,8 +109,9 @@ for a visible method, the host validates that call against the original schema.
 An unmarked answer on a partial page advances the scan so later methods remain
 discoverable, including between calls. After gathering results, the worker can mark
 the request complete and stop scanning as soon as the evidence covers it. Before any
-call, an opened method that needs missing input can ask the user a question. If a page
-needs more room, the worker uses smaller pages before retrying with compacted history.
+call, an opened method that needs missing input can ask the user a question. A continuation
+can begin paging if the original full catalogue no longer fits alongside tool results.
+If a page needs more room, the worker uses smaller pages before retrying with compacted history.
 Navigation is bounded, local to the worker and absent from the saved transcript. Actual
 calls still use the existing validation and execution limit. A single selected schema
 still needs to fit with the request.

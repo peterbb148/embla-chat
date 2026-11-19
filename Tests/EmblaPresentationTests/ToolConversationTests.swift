@@ -18,6 +18,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     private var answerFinish = "stop"
     let replies: [String]
     private let countCharacters: Bool
+    private let blockedContext: (@Sendable ([ConversationMessage]) -> Bool)?
     private var holdSummary: Bool
     private var summaryCount = 0
     private var summaryText: String
@@ -31,7 +32,8 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     init(
         replies: [String], holdFirst: Bool = false, countCharacters: Bool = false,
         holdSummary: Bool = false, summaryText: String = "BLUE PENGUIN — https://example.com/fact",
-        summaryFinish: String = "stop"
+        summaryFinish: String = "stop",
+        blockedContext: (@Sendable ([ConversationMessage]) -> Bool)? = nil
     ) {
         self.replies = replies
         self.holdFirst = holdFirst
@@ -39,6 +41,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
         self.holdSummary = holdSummary
         self.summaryText = summaryText
         self.summaryFinish = summaryFinish
+        self.blockedContext = blockedContext
     }
     func releaseSummary() { lock.withLock { holdSummary = false } }
     func waitForSummary() async throws {
@@ -56,6 +59,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
 
     func encode(_ messages: [ConversationMessage]) -> [Int] {
         lock.withLock { inputs.append(messages) }
+        if blockedContext?(messages) == true { return Array(repeating: 1, count: contextSize) }
         return countCharacters
             ? Array(repeating: 1, count: messages.reduce(0) { $0 + $1.content.count + 4 })
             : [1, 2]
@@ -133,7 +137,8 @@ private let readSkillRequest = """
         replies: [String], holdFirst: Bool = false, countCharacters: Bool = false,
         resource: String = "BLUE PENGUIN", holdSummary: Bool = false,
         summaryFinish: String = "stop", rejectSummarySaves: Bool = false,
-        pauseSummarySaves: Bool = false
+        pauseSummarySaves: Bool = false,
+        blockedContext: (@Sendable ([ConversationMessage]) -> Bool)? = nil
     ) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let data = Data("Synthetic tool-loop model".utf8)
@@ -160,7 +165,8 @@ private let readSkillRequest = """
             replies: replies.first?.hasPrefix("<tool_call>") == true
                 ? ["DELEGATE"] + replies : replies,
             holdFirst: holdFirst, countCharacters: countCharacters,
-            holdSummary: holdSummary, summaryFinish: summaryFinish)
+            holdSummary: holdSummary, summaryFinish: summaryFinish,
+            blockedContext: blockedContext)
         let backend = backend
         store = ConversationStore(root: root.appendingPathComponent("Chats"))
         repository = ModelRepository(root: root.appendingPathComponent("Model"), manifest: manifest)
@@ -503,6 +509,28 @@ func newChatDuringToolSummaryDrainsWorkerWithoutPublishingIntoTheNewChat() async
 
 private func fixtureContextTokens(_ messages: [ConversationMessage]) -> Int {
     messages.reduce(0) { $0 + $1.content.count + 4 }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func growingContinuationCanStartPagingAfterTheFirstCall() async throws {
+    let finish = "<tool_call>\n<function=catalog__finish>\n</function>\n</tool_call>"
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest, finish, "BLUE PENGUIN"], countCharacters: true,
+        blockedContext: { messages in
+            messages.contains { $0.content.contains("<tool_response>") }
+                && messages.contains { $0.content.contains("<tools>") }
+                && !messages.contains { $0.content.contains("Enabled catalogue page") }
+        })
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the selected file."
+    fixture.model.run()
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.model.error == nil && fixture.model.answer == "BLUE PENGUIN")
+    #expect(fixture.model.messages.compactMap(\.toolName) == ["read_skill_file"])
+    #expect(fixture.backend.generations.count == 4)
+    let prompts = fixture.backend.generations.map { $0.messages.map(\.content).joined() }
+    #expect(prompts[1].contains("<tools>") && !prompts[1].contains("Enabled catalogue page"))
+    #expect(prompts[2].contains("Enabled catalogue page") && prompts[2].contains("BLUE PENGUIN"))
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
