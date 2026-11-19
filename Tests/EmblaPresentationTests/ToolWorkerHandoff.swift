@@ -18,7 +18,7 @@ enum ToolWorkerHandoff: Equatable {
 
         // A router signal embedded in an otherwise ambiguous output is never a direct answer.
         guard segments.count == 1, !output.contains("<think"),
-            !output.split(whereSeparator: \.isWhitespace).contains("DELEGATE"),
+            output.range(of: #"\bDELEGATE\b"#, options: .regularExpression) == nil,
             case .answer(let text) = try ModelToolResponse.parse(output, finishReason: finishReason)
         else { throw ToolProtocolError.invalidResponse }
         return .answer(text)
@@ -35,7 +35,10 @@ enum ToolWorkerHandoff: Equatable {
 }
 
 @Test func workerHandoffRejectsIncompleteOrAmbiguousOutput() {
-    for output in ["DELEGATE\nHere is an answer.", "DELEGATE\n</think>\n4", "<think>DELEGATE"] {
+    for output in [
+        "DELEGATE\nHere is an answer.", "DELEGATE\n</think>\n4", "<think>DELEGATE",
+        "DELEGATE.", "(DELEGATE)", "`DELEGATE`",
+    ] {
         #expect(throws: ToolProtocolError.self) {
             try ToolWorkerHandoff.parse(output, finishReason: "stop")
         }
