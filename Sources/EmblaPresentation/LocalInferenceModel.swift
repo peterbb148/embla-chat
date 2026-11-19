@@ -612,7 +612,8 @@ public final class LocalInferenceModel {
         status = "Thinking about tools…"
         let routeInput = try await session.tokenCount(messages: initialContext)
         let routeBudget = min(1_024, compactionPolicy.contextSize - routeInput - 257)
-        let route = try await generateToolPass(initialContext, outputTokens: routeBudget)
+        let route = try await generateToolPass(
+            initialContext, outputTokens: routeBudget, preserveDirectAnswerAt: responseIndex)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         switch try ToolWorkerHandoff.parse(route.text, finishReason: route.metrics.finishReason) {
         case .answer(let text):
@@ -761,7 +762,8 @@ public final class LocalInferenceModel {
     }
 
     private func generateToolPass(
-        _ context: [ConversationMessage], outputTokens: Int? = nil, streamTo index: Int? = nil
+        _ context: [ConversationMessage], outputTokens: Int? = nil, streamTo index: Int? = nil,
+        preserveDirectAnswerAt interruptedIndex: Int? = nil
     ) async throws -> ToolPass {
         try Task.checkCancellation()
         try tools.validateRequestNetwork()
@@ -807,6 +809,14 @@ public final class LocalInferenceModel {
             loaded = false
             throw PresentationFailure(message: message)
         }
+        if Task.isCancelled, let interruptedIndex,
+            let partial = ToolWorkerHandoff.interruptedAnswer(answer)
+        {
+            self.answer = partial
+            reasoning = thought
+            messages[interruptedIndex].text = partial
+            messages[interruptedIndex].reasoning = thought
+        }
         if let streamError { throw streamError }
         try Task.checkCancellation()
         try tools.validateRequestNetwork()
@@ -843,8 +853,7 @@ public final class LocalInferenceModel {
                 }
                 return .object([
                     "tool": .string(entry.request.name),
-                    "data": entry.result["structuredContent"] ?? entry.result["content"]
-                        ?? entry.result,
+                    "data": entry.result.evidenceForMainAnswer,
                 ])
             }
             return ToolWorkerReceipt(resultIDs: ids, data: try ToolJSON.array(evidence).text())

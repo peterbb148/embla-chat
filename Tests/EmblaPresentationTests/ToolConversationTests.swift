@@ -13,6 +13,8 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     private var inputs: [[ConversationMessage]] = []
     private var holdFirst: Bool
     private var holdFinal = false
+    private var holdAfterOutput = false
+    private var didEmitAnswer = false
     let replies: [String]
     private let countCharacters: Bool
     private var holdSummary: Bool
@@ -47,6 +49,9 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     }
     func release() { lock.withLock { holdFirst = false } }
     func pauseFinalAnswer() { lock.withLock { holdFinal = true } }
+    var emittedAnswer: Bool { lock.withLock { didEmitAnswer } }
+    func pauseAfterAnswer() { lock.withLock { holdAfterOutput = true } }
+
     func encode(_ messages: [ConversationMessage]) -> [Int] {
         lock.withLock { inputs.append(messages) }
         return countCharacters
@@ -89,9 +94,12 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.005)
         }
         _ = emit(.answer(text))
+        lock.withLock { didEmitAnswer = true }
         while lock.withLock({
-            holdFinal
-                && inputs.last?.first?.content.hasPrefix("Answer the latest user question") == true
+            holdAfterOutput
+                || holdFinal
+                    && inputs.last?.first?.content.hasPrefix("Answer the latest user question")
+                        == true
         }) {
             guard emit(.reasoning("Synthetic final-answer pause")) else { break }
             Thread.sleep(forTimeInterval: 0.005)
@@ -239,6 +247,26 @@ func finalWorkerAnswerKeepsLiteralDelegateTextAndSurvivesStop(_ stop: Bool) asyn
     let saved = try #require(try await fixture.store.load())
     #expect(saved.snapshot.messages.last?.text == expected)
     #expect(saved.snapshot.messages.last?.state == (stop ? .interrupted : .complete))
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+func stoppedRoutingKeepsOrdinaryTextButHidesControlSignals(_ signal: Bool) async throws {
+    let output = signal ? "DELE" : "An ordinary partial answer."
+    let fixture = try await ToolLoopFixture(replies: [output])
+    defer { fixture.clean() }
+    fixture.backend.pauseAfterAnswer()
+    fixture.model.prompt = "An ordinary request."
+    fixture.model.run()
+    for _ in 0..<1_000 {
+        if fixture.backend.emittedAnswer { break }
+        try await Task.sleep(for: .milliseconds(5))
+    }
+    #expect(fixture.backend.emittedAnswer)
+    fixture.model.stop()
+    await fixture.model.waitUntilIdle()
+    let saved = try #require(try await fixture.store.load())
+    #expect(saved.snapshot.messages.last?.text == (signal ? "" : output))
+    #expect(saved.snapshot.messages.last?.state == .interrupted)
 }
 
 @Test @MainActor func unknownOrUnregisteredCallsFailWithoutExecution() async throws {
