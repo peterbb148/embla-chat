@@ -107,19 +107,15 @@
                     if prototype {
                         let initial = try await generatePrototypePass(session, mainPrompt)
                         passes.append(("main route", initial.metrics.promptTokens))
-                        guard initial.metrics.finishReason == "stop" else {
-                            throw ToolProtocolError.invalidResponse
-                        }
-                        if initial.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                            == "DELEGATE"
-                        {
+                        switch try ToolWorkerHandoff.parse(
+                            initial.text, finishReason: initial.metrics.finishReason
+                        ) {
+                        case .delegate:
                             delegated = true
                             continuation = policy.context(
                                 transcript: history, state: .init(),
                                 instructions: instructions, requestContext: requestContext)
-                        } else if case .answer(let text) = try ModelToolResponse.parse(
-                            initial.text, finishReason: initial.metrics.finishReason)
-                        {
+                        case .answer(let text):
                             answer = text
                         }
                     }

@@ -67,3 +67,11 @@ A single-word delegation prompt then completed fresh lookups and ordinary search
 failed both Tokyo follow-ups. The final prompt improved one follow-up and regressed search.
 These results meet the fixture savings target and fail the routing requirement. The
 persistence refactor remains gated on a reliable routing contract.
+
+## Handoff parser update
+
+The iPhone search run returned the delegation decision twice, separated by a closing
+reasoning delimiter. The router now accepts a standalone decision or that exact repeated
+decision as a handoff. An ambiguous response that mixes a decision with answer text fails
+before it can reach the transcript. The worker still receives the original question and
+runs separately on the same loaded model.
