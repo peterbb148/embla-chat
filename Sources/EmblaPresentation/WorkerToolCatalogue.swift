@@ -28,6 +28,16 @@ struct WorkerToolCatalogue {
             ]),
             "required": .array([.string("ordinal")]), "additionalProperties": .bool(false),
         ]))
+    static let clarify = ModelToolSpecification(
+        server: server, name: "clarify",
+        description: "Ask the user for a missing input required by the opened method.",
+        inputSchema: .object([
+            "type": .string("object"),
+            "properties": .object([
+                "question": .object(["type": .string("string"), "minLength": .integer(1)])
+            ]),
+            "required": .array([.string("question")]), "additionalProperties": .bool(false),
+        ]))
 
     let tools: [ModelToolSpecification]
     private(set) var page = 1

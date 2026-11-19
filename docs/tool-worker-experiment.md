@@ -107,7 +107,8 @@ the worker receives a page of up to eight enabled methods, can page forward or b
 and can load the exact schema of one listed method. If it returns a complete call
 for a visible method, the host validates that call against the original schema.
 An answer on a partial page before any call advances the scan so later methods remain
-discoverable. Both automatic and explicit navigation retry after compacting history
+discoverable. An opened method that needs missing input can ask the user a question
+without dispatching a call. Both automatic and explicit navigation retry after compacting history
 if the new page needs more room. Navigation is bounded, local to the worker and absent
 from the saved transcript. Actual calls still use the existing validation and execution
 limit. A single selected schema still needs to fit with the request.

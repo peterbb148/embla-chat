@@ -698,6 +698,7 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
     func pagingBetweenTwoCallsPreservesHistoryResultsAndBudgets() async throws {
         let remote = try SummaryNetworkFixture()
         defer { remote.stop() }
+        let clarification = "Which IP address should I look up?"
         func call(_ name: String, argument: String = "") -> String {
             "<tool_call>\n<function=\(name)>\n\(argument)</function>\n</tool_call>"
         }
@@ -718,6 +719,9 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
                 call("catalog__open", argument: parameter("ordinal", "20")),
                 call("mcp_20000000__tavily_search", argument: parameter("query", "blue penguins")),
                 "The facts are ready.", "Tokyo is 15:37. https://example.com/blue-penguin",
+                "DELEGATE",
+                call("catalog__open", argument: parameter("ordinal", "3")),
+                call("catalog__clarify", argument: parameter("question", clarification)),
             ], countCharacters: true)
         defer { fixture.clean() }
 
@@ -760,6 +764,14 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
             #expect(generation.messages.contains { $0.content.contains("15:37") })
             #expect(fixtureContextTokens(generation.messages) + generation.limit <= 8_192)
         }
+        fixture.model.prompt = "What is the current local time for this IP address?"
+        fixture.model.run()
+        await fixture.model.waitUntilIdle()
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.answer == clarification)
+        let clarified = try #require(try await fixture.store.load())
+        #expect(clarified.snapshot.messages.filter { $0.toolName != nil } == results)
+        #expect(clarified.snapshot.messages.last?.text == clarification)
     }
 
     @Test(.timeLimit(.minutes(1))) @MainActor

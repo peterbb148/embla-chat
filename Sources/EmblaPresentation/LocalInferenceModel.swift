@@ -625,9 +625,14 @@ public final class LocalInferenceModel {
         }
 
         var catalogue: WorkerToolCatalogue?
+        func clarificationTools() -> [ModelToolSpecification] {
+            (catalogue?.selected != nil && results.isEmpty) ? [WorkerToolCatalogue.clarify] : []
+        }
         func workerPrompt(_ summaries: [Int: String]) throws -> [ConversationMessage] {
+            let clarification = clarificationTools()
+            let offered = catalogue.map { $0.offered + clarification } ?? specifications
             var instructions = try tools.instructions(
-                using: cloud, selectedCatalogue: catalogue?.offered ?? specifications)
+                using: cloud, selectedCatalogue: offered)
             let requestContext: String
             if let catalogue {
                 instructions += """
@@ -639,6 +644,13 @@ public final class LocalInferenceModel {
                     A loaded method can be called using its exact schema. Browse or open only when
                     needed. Once actual results answer the user, use them and finish.
                     """
+                if !clarification.isEmpty {
+                    instructions += """
+
+                        If the opened method fits but needs an input only the user can supply,
+                        call catalog__clarify with one question for the user.
+                        """
+                }
                 requestContext =
                     "Enabled catalogue page (JSON data): " + (try catalogue.promptData())
                     + "\nDevice timezone: " + TimeZone.autoupdatingCurrent.identifier
@@ -675,7 +687,7 @@ public final class LocalInferenceModel {
             let output = pass.text
             let response = try ModelToolResponse.parse(
                 output, finishReason: pass.metrics.finishReason,
-                tools: catalogue?.callable ?? specifications)
+                tools: catalogue.map { $0.callable + clarificationTools() } ?? specifications)
             switch response {
             case .answer(let text):
                 if results.isEmpty, catalogue?.nextPage != nil {
@@ -699,6 +711,15 @@ public final class LocalInferenceModel {
                 return
             case .call(let server, let name, let arguments):
                 if server == WorkerToolCatalogue.server, catalogue != nil {
+                    if name == WorkerToolCatalogue.clarify.name {
+                        guard case let .string(question) = arguments["question"] else {
+                            throw ToolProtocolError.invalidArguments
+                        }
+                        let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else { throw ToolProtocolError.invalidArguments }
+                        finishToolAnswer(text, pass: pass, at: responseIndex)
+                        return
+                    }
                     guard remainingNavigation > 0 else {
                         throw WorkerToolCatalogueError.navigationLimit
                     }
