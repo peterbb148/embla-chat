@@ -104,8 +104,11 @@ including after compaction, without replaying a remote tool call.
 The main prompt keeps method names if the descriptions exceed its catalogue allowance.
 The normal worker measures the full prompt with the real tokenizer. If it does not fit,
 the worker receives a page of up to eight enabled methods, can page forward or back,
-and can load the exact schema of one listed method. An answer on a partial page before any call advances the scan so
-later methods remain discoverable. Navigation is bounded, local to the worker and absent
+and can load the exact schema of one listed method. If it returns a complete call
+for a visible method, the host validates that call against the original schema.
+An answer on a partial page before any call advances the scan so later methods remain
+discoverable. Both automatic and explicit navigation retry after compacting history
+if the new page needs more room. Navigation is bounded, local to the worker and absent
 from the saved transcript. Actual calls still use the existing validation and execution
 limit. A single selected schema still needs to fit with the request.
 

@@ -26,6 +26,25 @@ import EmblaCore
     #expect((try catalogue.promptData()).contains("method_16"))
     try catalogue.navigate("browse", arguments: [:])
     #expect(catalogue.nextPage == nil)
+    #expect(catalogue.callable.contains(tools[16]) && !catalogue.callable.contains(tools[0]))
+    #expect(!catalogue.offered.contains(tools[16]))
+    let directCall = """
+        <tool_call>
+        <function=mcp_fixture__method_17>
+        <parameter=record>
+        17
+        </parameter>
+        </function>
+        </tool_call>
+        """
+    #expect(
+        try ModelToolResponse.parse(directCall, finishReason: "stop", tools: catalogue.callable)
+            == .call(server: "mcp_fixture", name: "method_17", arguments: ["record": .integer(17)]))
+    #expect(throws: ToolProtocolError.self) {
+        try ModelToolResponse.parse(
+            directCall.replacingOccurrences(of: "\n17\n", with: "\n16\n"),
+            finishReason: "stop", tools: catalogue.callable)
+    }
     try catalogue.navigate("open", arguments: ["ordinal": .integer(17)])
     #expect(catalogue.selected == tools.last)
     #expect(catalogue.offered.count == 3 && catalogue.offered.last == tools.last)

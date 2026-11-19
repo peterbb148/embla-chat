@@ -2,7 +2,7 @@ import Foundation
 
 import EmblaCore
 
-/// A transient, ordered catalogue for the worker. Only its selected method can be dispatched.
+/// A transient, ordered catalogue for the worker. Calls are restricted to its visible page.
 struct WorkerToolCatalogue {
     static let server = "catalog"
     static let pageSize = 8
@@ -41,6 +41,17 @@ struct WorkerToolCatalogue {
             + [Self.open] + (selected.map { [$0] } ?? [])
     }
 
+    private var pageRange: Range<Int> {
+        let start = (page - 1) * Self.pageSize
+        return start..<min(start + Self.pageSize, tools.count)
+    }
+
+    /// A complete call naming a visible method is validated by the host's original schema.
+    /// Only the selected schema is added to the model prompt.
+    var callable: [ModelToolSpecification] {
+        offered.filter { $0.server == Self.server } + Array(tools[pageRange])
+    }
+
     mutating func navigate(_ tool: String, arguments: [String: ToolJSON]) throws {
         switch tool {
         case Self.browse.name:
@@ -55,8 +66,7 @@ struct WorkerToolCatalogue {
             selected = nil
         case Self.open.name:
             guard arguments.count == 1, case .integer(let value) = arguments["ordinal"],
-                value > (page - 1) * Self.pageSize,
-                value <= min(page * Self.pageSize, tools.count)
+                value > pageRange.lowerBound, value <= pageRange.upperBound
             else { throw ToolProtocolError.invalidArguments }
             selected = tools[Int(value) - 1]
         default:
@@ -70,9 +80,7 @@ struct WorkerToolCatalogue {
     }
 
     func promptData() throws -> String {
-        let start = (page - 1) * Self.pageSize
-        let end = min(start + Self.pageSize, tools.count)
-        let entries = (start..<end).map { index in
+        let entries = pageRange.map { index in
             ToolJSON.object([
                 "ordinal": .integer(Int64(index + 1)),
                 "name": .string(tools[index].functionName),

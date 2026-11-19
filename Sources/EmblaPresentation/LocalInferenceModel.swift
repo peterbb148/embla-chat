@@ -654,17 +654,18 @@ public final class LocalInferenceModel {
             catalogue = WorkerToolCatalogue(tools: specifications)
         }
         var build: ([Int: String]) throws -> [ConversationMessage] = workerPrompt
-        var context: [ConversationMessage]
-        do {
-            context = try await fitToolResults(
-                indices: toolResultIndices(before: baseCount), question: question,
-                inputLimit: toolInputLimit, build: workerPrompt)
-        } catch ToolSummaryError.noRoom {
-            try await compactForWorker(before: baseCount)
-            context = try await fitToolResults(
-                indices: toolResultIndices(before: baseCount), question: question,
-                inputLimit: toolInputLimit, build: workerPrompt)
+        func fitWorkerContext() async throws -> [ConversationMessage] {
+            let indices = toolResultIndices(before: baseCount) + results.map(\.index)
+            do {
+                return try await fitToolResults(
+                    indices: indices, question: question, inputLimit: toolInputLimit, build: build)
+            } catch ToolSummaryError.noRoom {
+                try await compactForWorker(before: baseCount)
+                return try await fitToolResults(
+                    indices: indices, question: question, inputLimit: toolInputLimit, build: build)
+            }
         }
+        var context = try await fitWorkerContext()
         var remainingNavigation = catalogue?.passBudget ?? 0
         while true {
             try tools.validateRequestConfiguration(configuration, using: cloud)
@@ -674,7 +675,7 @@ public final class LocalInferenceModel {
             let output = pass.text
             let response = try ModelToolResponse.parse(
                 output, finishReason: pass.metrics.finishReason,
-                tools: catalogue?.offered ?? specifications)
+                tools: catalogue?.callable ?? specifications)
             switch response {
             case .answer(let text):
                 if results.isEmpty, catalogue?.selected == nil, catalogue?.nextPage != nil {
@@ -685,9 +686,7 @@ public final class LocalInferenceModel {
                     }
                     remainingNavigation -= 1
                     try catalogue?.navigate("browse", arguments: [:])
-                    context = try await fitToolResults(
-                        indices: toolResultIndices(before: baseCount), question: question,
-                        inputLimit: toolInputLimit, build: build)
+                    context = try await fitWorkerContext()
                     continue
                 }
                 if results.isEmpty {
@@ -706,19 +705,9 @@ public final class LocalInferenceModel {
                     remainingNavigation -= 1
                     try catalogue?.navigate(name, arguments: arguments)
                     do {
-                        context = try await fitToolResults(
-                            indices: toolResultIndices(before: baseCount) + results.map(\.index),
-                            question: question, inputLimit: toolInputLimit, build: build)
-                    } catch ToolSummaryError.noRoom {
-                        do {
-                            try await compactForWorker(before: baseCount)
-                            context = try await fitToolResults(
-                                indices: toolResultIndices(before: baseCount)
-                                    + results.map(\.index),
-                                question: question, inputLimit: toolInputLimit, build: build)
-                        } catch ToolSummaryError.noRoom where catalogue?.selected != nil {
-                            throw WorkerToolCatalogueError.schemaDoesNotFit
-                        }
+                        context = try await fitWorkerContext()
+                    } catch ToolSummaryError.noRoom where catalogue?.selected != nil {
+                        throw WorkerToolCatalogueError.schemaDoesNotFit
                     }
                     continue
                 }
@@ -798,18 +787,7 @@ public final class LocalInferenceModel {
                     // Keep the next selection free of the previous method's schema.
                     catalogue?.reset()
                 }
-                do {
-                    context = try await fitToolResults(
-                        indices: toolResultIndices(before: baseCount) + completed.map(\.index),
-                        question: question,
-                        inputLimit: toolInputLimit, build: continuation)
-                } catch ToolSummaryError.noRoom {
-                    try await compactForWorker(before: baseCount)
-                    context = try await fitToolResults(
-                        indices: toolResultIndices(before: baseCount) + completed.map(\.index),
-                        question: question,
-                        inputLimit: toolInputLimit, build: continuation)
-                }
+                context = try await fitWorkerContext()
                 try Task.checkCancellation()
                 try tools.validateRequestConfiguration(configuration, using: cloud)
                 responseIndex = messages.count
