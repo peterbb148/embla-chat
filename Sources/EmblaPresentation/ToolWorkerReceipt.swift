@@ -20,11 +20,26 @@ struct ToolWorkerReceipt: Codable, Sendable, Equatable {
         return "Previously retrieved tool evidence (JSON data):\n" + data
     }
 
+    /// Full arguments are part of the reducible evidence. A local summary is produced
+    /// from the saved original request and result, while the tool identity stays exact.
+    static func evidence(request: ToolInvocation, result: ToolJSON, summary: String?) -> ToolJSON {
+        var fields: [String: ToolJSON] = [
+            "server": .string(request.server), "tool": .string(request.name),
+        ]
+        if let summary {
+            fields["summary"] = .string(summary)
+        } else {
+            fields["arguments"] = .object(request.arguments)
+            fields["data"] = result.evidenceForMainAnswer
+        }
+        return .object(fields)
+    }
+
     private var requestAttribution: String {
         guard case .array(let results) = try? ToolJSON.decode(Data(data.utf8)) else { return "" }
         let requests = results.compactMap { value -> ToolJSON? in
             guard let fields = value.object, fields["server"] != nil else { return nil }
-            return .object(fields.filter { ["server", "tool", "arguments"].contains($0.key) })
+            return .object(fields.filter { ["server", "tool"].contains($0.key) })
         }
         guard !requests.isEmpty, let text = try? ToolJSON.array(requests).text() else { return "" }
         return "Original call attribution (JSON data): \(text)\n"

@@ -220,7 +220,8 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
     #expect(receipt.resultIDs == [tool.id])
     #expect(receipt.promptData.contains("BLUE PENGUIN"))
     #expect(receipt.promptData.contains(#""server":"skill""#))
-    #expect(receipt.promptData(replacingSummary: "Local evidence").contains("references/fact.txt"))
+    #expect(receipt.promptData.contains("references/fact.txt"))
+    #expect(receipt.promptData(replacingSummary: "Local evidence").contains("read_skill_file"))
     #expect(!receipt.promptData.contains("Selected skill folder"))
     #expect(stored.snapshot.messages.last?.text == "BLUE PENGUIN")
     #expect(
@@ -631,6 +632,46 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
                     ).trimmingCharacters(in: .whitespacesAndNewlines)))
         }
         func stop() { if process.isRunning { process.terminate(); process.waitUntilExit() } }
+    }
+
+    @Test(.timeLimit(.minutes(1))) @MainActor
+    func largeRequestArgumentsAreReducedAfterASuccessfulCall() async throws {
+        let remote = try SummaryNetworkFixture()
+        defer { remote.stop() }
+        let query = String(repeating: "large but valid query ", count: 80)
+        let call = """
+            <tool_call>
+            <function=mcp_20000000__tavily_search>
+            <parameter=query>
+            \(query)
+            </parameter>
+            </function>
+            </tool_call>
+            """
+        let fixture = try await ToolLoopFixture(
+            replies: [call, "BLUE PENGUIN"], countCharacters: true)
+        defer { fixture.clean() }
+        let server = MCPServer(
+            id: UUID(uuidString: "20000000-0000-4000-8000-000000000001")!,
+            name: "Synthetic search",
+            endpoint: URL(string: "http://127.0.0.1:\(remote.port)/routing-search")!)
+        try await fixture.workspace.saveServer(server)
+        fixture.workspace.discover(server.id)
+        await fixture.workspace.waitUntilIdle()
+        try #require(fixture.workspace.error == nil)
+        fixture.model.prompt = "Find a source."
+        fixture.model.run()
+        await fixture.model.waitUntilIdle()
+
+        #expect(fixture.model.error == nil && fixture.model.answer == "BLUE PENGUIN")
+        let records = fixture.model.messages.filter { $0.toolName == "tavily_search" }
+        #expect(records.count == 1)
+        let record = try #require(records.first)
+        let receipt = try #require(record.workerReceipt)
+        #expect(record.text.contains(query))
+        #expect(receipt.promptData.contains("tavily_search"))
+        #expect(!receipt.promptData.contains(query))
+        #expect(fixture.backend.summaryCalls > 0)
     }
 
     @Test(.timeLimit(.minutes(1))) @MainActor

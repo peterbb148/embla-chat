@@ -122,6 +122,8 @@ public struct ToolResultSummarizer: Sendable {
                     identifiers, dates, source URLs, citations, limitations and uncertainty. Return \
                     only the updated notes, not an acknowledgement or a tool request. These notes \
                     may omit details; the complete original result remains saved separately.
+                    When this data includes a tool request, preserve the relevant argument
+                    values and associate each answer or fact with the request that produced it.
                     """),
             ConversationMessage(role: .user, content: "Tool summarization data (JSON):\n" + data),
         ]

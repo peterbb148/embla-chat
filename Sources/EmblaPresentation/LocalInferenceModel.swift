@@ -849,17 +849,10 @@ public final class LocalInferenceModel {
         let memory = try projectContext()
         let instructions = try tools.answerInstructions(using: cloud)
         func receipt(summaries: [Int: String]) throws -> ToolWorkerReceipt {
-            let evidence = results.map { entry -> ToolJSON in
-                var fields: [String: ToolJSON] = [
-                    "server": .string(entry.request.server), "tool": .string(entry.request.name),
-                    "arguments": .object(entry.request.arguments),
-                ]
-                if let summary = summaries[entry.index] ?? messages[entry.index].toolResultSummary {
-                    fields["summary"] = .string(summary)
-                } else {
-                    fields["data"] = entry.result.evidenceForMainAnswer
-                }
-                return .object(fields)
+            let evidence = results.map { entry in
+                ToolWorkerReceipt.evidence(
+                    request: entry.request, result: entry.result,
+                    summary: summaries[entry.index] ?? messages[entry.index].toolResultSummary)
             }
             return ToolWorkerReceipt(resultIDs: ids, data: try ToolJSON.array(evidence).text())
         }
