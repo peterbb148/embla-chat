@@ -98,3 +98,22 @@ The archive stores the receipt on the last result row and retains the underlying
 positions for compaction. Older chats can still load their original tool records and saved
 summaries. The worker can read previously saved tool evidence from the selected chat,
 including after compaction, without replaying a remote tool call.
+
+## Oversized catalogues
+
+The normal worker measures the full prompt with the real tokenizer. If it does not fit,
+the worker receives a page of up to eight enabled methods and can load the exact schema
+of one listed method. An answer on a partial page before any call advances the scan so
+later methods remain discoverable. Navigation is bounded, local to the worker and absent
+from the saved transcript. Actual calls still use the existing validation and execution
+limit. A single selected schema still needs to fit with the request.
+
+The opt-in `oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage` test uses
+`EMBLA_REAL_PAGED_CATALOGUE=1` and the loopback server above. Its full schema prompt
+has 19,769 tokens. The expected search method is on the third page and must execute
+once and return the fixture's exact URL.
+
+The device comparison uses two fresh processes with the same signed build and pinned
+model. It reads iOS's process physical-footprint high-water mark from
+`TASK_VM_INFO.ledger_phys_footprint_peak` after each workload. Peak RSS from
+`getrusage` is a separate measurement, and neither value measures system-wide memory.

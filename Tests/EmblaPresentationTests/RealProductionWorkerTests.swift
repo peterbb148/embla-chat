@@ -130,3 +130,49 @@ func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
     #expect(
         model.messages.dropFirst(turns.count).contains { $0.toolName == "read_saved_tool_result" })
 }
+
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_PAGED_CATALOGUE"] == "1"),
+    .timeLimit(.minutes(5))) @MainActor
+func oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage() async throws {
+    let env = ProcessInfo.processInfo.environment
+    let modelRoot = URL(fileURLWithPath: try #require(env["EMBLA_REAL_MODEL_ROOT"]))
+    let port = try #require(env["EMBLA_ROUTING_FIXTURE_PORT"])
+    let root = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let tools = ToolWorkspace(configuration: root.appendingPathComponent("servers.json"))
+    let server = MCPServer(
+        id: UUID(uuidString: "20000000-0000-4000-8000-000000000001")!,
+        name: "Oversized fixture",
+        endpoint: URL(string: "http://127.0.0.1:\(port)/routing-oversized")!)
+    try await tools.saveServer(server)
+    tools.discover(server.id)
+    await tools.waitUntilIdle()
+    try #require(tools.error == nil && tools.servers.first?.enabledTools.count == 17)
+    let manifest = try ModelManifest.bundled()
+    let session = EmblaRuntime.makeSession()
+    let model = LocalInferenceModel(
+        repository: ModelRepository(root: modelRoot, manifest: manifest),
+        manifest: manifest, session: session, tools: tools)
+    model.check()
+    await model.waitUntilIdle()
+    let question = "Find a current web source about blue penguins and give me its link."
+    let tokenizer = EmblaPromptTokenizer()
+    let full = [
+        ConversationMessage(
+            role: .system, content: try tools.instructions(using: model.cloud, forRequest: false)),
+        ConversationMessage(role: .user, content: question),
+    ]
+    let count = try await tokenizer.count(
+        messages: full, in: modelRoot.appendingPathComponent(manifest.revision))
+    #expect(count > 8_192)
+    model.prompt = question
+    model.run()
+    await model.waitUntilIdle()
+    print(
+        "PAGED WORKER full catalogue=\(count) answer=\(model.answer) error=\(model.error ?? "-") calls=\(model.messages.compactMap(\.toolName))"
+    )
+    #expect(model.error == nil && model.answer.contains("https://example.com/blue-penguin"))
+    #expect(model.messages.compactMap(\.toolName) == ["tavily_search"])
+}

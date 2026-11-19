@@ -67,7 +67,7 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(0.4)
         if request["method"] == "server/discover":
             result = {"capabilities": {"tools": {}}, "resultType": "complete"}
-        elif self.path in {"/routing-time", "/routing-search"}:
+        elif self.path in {"/routing-time", "/routing-search", "/routing-oversized"}:
             result = self.routing_result(request["method"], params)
         elif request["method"] == "tools/list":
             result = {
@@ -159,6 +159,28 @@ class Handler(BaseHTTPRequestHandler):
                 ("tavily_search", "Search the web for current sources and links.", "query"),
                 ("tavily_research", "Perform extensive multi-step web research.", "input"),
             ]
+        if method == "tools/list" and self.path == "/routing-oversized":
+            padding = [{
+                "name": f"warehouse_inventory_{index:02d}",
+                "description": "Look up a warehouse stock movement for its stored inventory record.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        f"warehouse_inventory_reference_{field:03d}": {"type": "string"}
+                        for field in range(75)
+                    },
+                    "required": ["warehouse_inventory_reference_000"],
+                    "additionalProperties": False,
+                },
+            } for index in range(16)]
+            return {"resultType": "complete", "tools": padding + [{
+                "name": "tavily_search",
+                "description": "Search the web for current sources and links.",
+                "inputSchema": {
+                    "type": "object", "properties": {"query": {"type": "string"}},
+                    "required": ["query"], "additionalProperties": False,
+                },
+            }]}
         if method == "tools/list":
             return {"resultType": "complete", "tools": [
                 {"name": name, "description": description, "inputSchema": {

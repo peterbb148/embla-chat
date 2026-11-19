@@ -40,11 +40,12 @@ extension ToolWorkspace {
 
     func instructions(
         using cloud: ConversationCloudSync, forRequest: Bool = true,
-        additionalTools: [ModelToolSpecification] = []
+        additionalTools: [ModelToolSpecification] = [],
+        selectedCatalogue: [ModelToolSpecification]? = nil
     ) throws -> String {
         let specifications =
-            try specifications(using: cloud, forRequest: forRequest)
-            + additionalTools
+            try selectedCatalogue
+            ?? (specifications(using: cloud, forRequest: forRequest) + additionalTools)
         var text = availabilityInstructions(using: cloud, forRequest: forRequest)
         if !specifications.isEmpty {
             text += "\n" + (try ModelToolResponse.instructions(tools: specifications))
@@ -94,10 +95,13 @@ extension ToolWorkspace {
     }
 
     /// Ephemeral app state beside the current request; it never changes the saved transcript.
-    func requestContext(using cloud: ConversationCloudSync, forRequest: Bool = true) throws
-        -> String
-    {
-        let specifications = try specifications(using: cloud, forRequest: forRequest)
+    func requestContext(
+        using cloud: ConversationCloudSync, forRequest: Bool = true,
+        selectedCatalogue: [ModelToolSpecification]? = nil
+    ) throws -> String {
+        let specifications =
+            try selectedCatalogue
+            ?? specifications(using: cloud, forRequest: forRequest)
         guard !specifications.isEmpty else { return "" }
         let data = try ToolJSON.object([
             "enabled_functions": .array(
