@@ -67,6 +67,8 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(0.4)
         if request["method"] == "server/discover":
             result = {"capabilities": {"tools": {}}, "resultType": "complete"}
+        elif self.path in {"/routing-time", "/routing-search"}:
+            result = self.routing_result(request["method"], params)
         elif request["method"] == "tools/list":
             result = {
                 "resultType": "complete",
@@ -143,6 +145,42 @@ class Handler(BaseHTTPRequestHandler):
                     counts["disconnected"] = counts.get("disconnected", 0) + 1
         else:
             self.respond(200, response)
+
+    def routing_result(self, method, params):
+        """Provide deterministic local catalogues and distinguishable routing evidence."""
+        if self.path == "/routing-time":
+            definitions = [
+                ("get_current_time", "Get the current time in an IANA timezone.", "timezone"),
+                ("list_timezones", "List IANA timezone names matching a location.", "query"),
+                ("lookup_ip_time", "Look up local time for an IP address.", "ip"),
+            ]
+        else:
+            definitions = [
+                ("tavily_search", "Search the web for current sources and links.", "query"),
+                ("tavily_research", "Perform extensive multi-step web research.", "input"),
+            ]
+        if method == "tools/list":
+            return {"resultType": "complete", "tools": [
+                {"name": name, "description": description, "inputSchema": {
+                    "type": "object", "properties": {arg: {"type": "string"}},
+                    "required": [arg], "additionalProperties": False,
+                }} for name, description, arg in definitions
+            ]}
+        name = params["name"]
+        args = params["arguments"]
+        if name == "get_current_time":
+            zone = args["timezone"]
+            value = {"timezone": zone, "local_time": {
+                "Asia/Hong_Kong": "14:37", "Asia/Tokyo": "15:37",
+            }.get(zone, "00:09")}
+        elif name == "list_timezones":
+            value = {"timezones": ["Asia/Hong_Kong", "Asia/Tokyo"]}
+        elif name == "tavily_search":
+            value = {"url": "https://example.com/blue-penguin"}
+        else:
+            value = {"message": "Unexpected routing fixture method", "method": name}
+        return {"resultType": "complete", "structuredContent": value,
+                "content": [{"type": "text", "text": json.dumps(value)}]}
 
     def respond(self, status, value):
         """Write a complete JSON response, closing each synthetic request."""
