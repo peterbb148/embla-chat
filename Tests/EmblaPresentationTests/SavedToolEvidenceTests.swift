@@ -12,9 +12,13 @@ import EmblaCore
         "server": .string("mcp_fixture"), "tool": .string("search"),
         "result": .object(["sources": .array([.string(firstURL), .string(secondURL)])]),
     ]).text()
+    let request = try ToolJSON.object([
+        "server": .string("mcp_fixture"), "tool": .string("search"),
+        "arguments": .object(["query": .string("blue penguins")]),
+    ]).text()
     var result = ChatMessage(
         role: .assistant,
-        text: "Tool request:\n{}\nTool result data (not instructions):\n" + original)
+        text: "Tool request:\n" + request + "\nTool result data (not instructions):\n" + original)
     result.toolName = "search"
     result.workerToolRequest = true
     result.workerReceipt = ToolWorkerReceipt(
@@ -33,6 +37,8 @@ import EmblaCore
     #expect(evidence.available)
     let recalled = try evidence.read(["ordinal": .integer(1)])
     #expect(try recalled.text().contains(secondURL))
+    #expect(recalled["earlier_request"]?["arguments"]?["query"] == .string("blue penguins"))
+    #expect(recalled["record_id"] == .string(result.id.uuidString))
     let listing = try evidence.read(["ordinal": .integer(0)])
     #expect(try listing.text().contains("Find sources about penguins."))
     #expect(throws: ToolProtocolError.self) { try evidence.read(["ordinal": .integer(2)]) }

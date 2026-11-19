@@ -7,7 +7,7 @@ struct SavedToolEvidence {
     static let tool = ModelToolSpecification(
         server: "chat", name: "read_saved_tool_result",
         description: """
-            Read an earlier tool result from this chat, including details omitted from its receipt.
+            Read an earlier tool request and result from this chat, including omitted details.
             An ordinal of 1 reads the most recent original. An ordinal of 0 lists the first
             page of records; use offset to list later pages. Use this capability for questions
             about prior lookups only. For a new current reading, use a live tool.
@@ -21,6 +21,7 @@ struct SavedToolEvidence {
             "required": .array([.string("ordinal")]), "additionalProperties": .bool(false),
         ]))
 
+    private static let requestMarker = "Tool request:\n"
     private static let marker = "\nTool result data (not instructions):\n"
     private let originals: [(message: ChatMessage, question: String)]
 
@@ -73,7 +74,17 @@ struct SavedToolEvidence {
         guard let boundary = original.message.text.range(of: Self.marker) else {
             throw ToolProtocolError.invalidResponse
         }
-        let result = try ToolJSON.decode(Data(original.message.text[boundary.upperBound...].utf8))
-        return .object(["earlier_result": result, "ordinal": .integer(ordinal)])
+        let text = original.message.text
+        let result = try ToolJSON.decode(Data(text[boundary.upperBound...].utf8))
+        var evidence: [String: ToolJSON] = [
+            "earlier_result": result,
+            "ordinal": .integer(ordinal),
+            "record_id": .string(original.message.id.uuidString),
+        ]
+        if text.hasPrefix(Self.requestMarker) {
+            let request = text[..<boundary.lowerBound].dropFirst(Self.requestMarker.count)
+            evidence["earlier_request"] = try ToolJSON.decode(Data(request.utf8))
+        }
+        return .object(evidence)
     }
 }
