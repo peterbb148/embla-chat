@@ -67,7 +67,9 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(0.4)
         if request["method"] == "server/discover":
             result = {"capabilities": {"tools": {}}, "resultType": "complete"}
-        elif self.path in {"/routing-time", "/routing-search"}:
+        elif self.path in {
+            "/routing-time", "/routing-search", "/routing-oversized", "/routing-profile",
+        }:
             result = self.routing_result(request["method"], params)
         elif request["method"] == "tools/list":
             result = {
@@ -159,6 +161,28 @@ class Handler(BaseHTTPRequestHandler):
                 ("tavily_search", "Search the web for current sources and links.", "query"),
                 ("tavily_research", "Perform extensive multi-step web research.", "input"),
             ]
+        if method == "tools/list" and self.path == "/routing-oversized":
+            padding = [{
+                "name": f"warehouse_inventory_{index:02d}",
+                "description": "Look up a warehouse stock movement for its stored inventory record.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        f"warehouse_inventory_reference_{field:03d}": {"type": "string"}
+                        for field in range(75)
+                    },
+                    "required": ["warehouse_inventory_reference_000"],
+                    "additionalProperties": False,
+                },
+            } for index in range(16)]
+            return {"resultType": "complete", "tools": padding + [{
+                "name": "tavily_search",
+                "description": "Search the web for current sources and links.",
+                "inputSchema": {
+                    "type": "object", "properties": {"query": {"type": "string"}},
+                    "required": ["query"], "additionalProperties": False,
+                },
+            }]}
         if method == "tools/list":
             return {"resultType": "complete", "tools": [
                 {"name": name, "description": description, "inputSchema": {
@@ -177,6 +201,23 @@ class Handler(BaseHTTPRequestHandler):
             value = {"timezones": ["Asia/Hong_Kong", "Asia/Tokyo"]}
         elif name == "tavily_search":
             value = {"url": "https://example.com/blue-penguin"}
+            if self.path == "/routing-profile":
+                value = {
+                    "url": "https://example.com/cedar-reference",
+                    "product": "Cedar Finch",
+                    "details": [
+                        "The synthetic Cedar Finch reference model is intended for offline use.",
+                        "The entire model stays on the device during inference.",
+                        "The original checkpoint is 5.62 GB and has ten billion parameters.",
+                        "The model activates a billion parameters for each generated token.",
+                        "The 8192-token context includes instructions, conversation, and generation.",
+                        "A separate worker selects tools so their schemas stay out of the main chat.",
+                        "Chat summaries keep older information available during long conversations.",
+                        "Optional network tools can search, while ordinary offline chat is local.",
+                        "Raw tool responses are available for inspection through the tool record.",
+                        "The synthetic benchmark name is Midnight Orchard.",
+                    ],
+                }
         else:
             value = {"message": "Unexpected routing fixture method", "method": name}
         return {"resultType": "complete", "structuredContent": value,

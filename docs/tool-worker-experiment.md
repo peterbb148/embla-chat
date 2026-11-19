@@ -98,3 +98,35 @@ The archive stores the receipt on the last result row and retains the underlying
 positions for compaction. Older chats can still load their original tool records and saved
 summaries. The worker can read previously saved tool evidence from the selected chat,
 including after compaction, without replaying a remote tool call.
+
+## Oversized catalogues
+
+The main prompt keeps method names if the descriptions exceed its catalogue allowance.
+The normal worker measures the full prompt with the real tokenizer. If it does not fit,
+the worker receives a page of up to eight enabled methods, can page forward or back,
+and can load the exact schema of one listed method. If it returns a complete call
+for a visible method, the host validates that call against the original schema.
+An unmarked answer on a partial page advances the scan so later methods remain
+discoverable, including between calls. After gathering results, the worker can mark
+the request complete and stop scanning as soon as the evidence covers it. Before any
+call, an opened method that needs missing input can ask the user a question. A continuation
+can begin paging if the original full catalogue no longer fits alongside tool results.
+If a page needs more room, the worker uses smaller pages before retrying with compacted history.
+Navigation is bounded, local to the worker and absent from the saved transcript. Actual
+calls still use the existing validation and execution limit. A single selected schema
+still needs to fit with the request.
+
+The final answer can use up to 1,536 generated tokens when the exact prompt leaves
+room. The allowance includes model reasoning. Selection and navigation still use
+their existing budgets. The opt-in `EMBLA_REAL_LONG_TOOL_ANSWER=1` test verifies
+that the pinned model completes a sourced answer exceeding 512 generated tokens.
+
+The opt-in `oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage` test uses
+`EMBLA_REAL_PAGED_CATALOGUE=1` and the loopback server above. Its full schema prompt
+has 19,769 tokens. The expected search method is on the third page and must execute
+once and return the fixture's exact URL.
+
+The device comparison uses two fresh processes with the same signed build and pinned
+model. It reads iOS's process physical-footprint high-water mark from
+`TASK_VM_INFO.ledger_phys_footprint_peak` after each workload. Peak RSS from
+`getrusage` is a separate measurement, and neither value measures system-wide memory.

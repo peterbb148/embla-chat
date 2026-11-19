@@ -18,6 +18,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     private var answerFinish = "stop"
     let replies: [String]
     private let countCharacters: Bool
+    private let contextTokenCount: (@Sendable ([ConversationMessage]) -> Int?)?
     private var holdSummary: Bool
     private var summaryCount = 0
     private var summaryText: String
@@ -31,7 +32,8 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
     init(
         replies: [String], holdFirst: Bool = false, countCharacters: Bool = false,
         holdSummary: Bool = false, summaryText: String = "BLUE PENGUIN — https://example.com/fact",
-        summaryFinish: String = "stop"
+        summaryFinish: String = "stop",
+        contextTokenCount: (@Sendable ([ConversationMessage]) -> Int?)? = nil
     ) {
         self.replies = replies
         self.holdFirst = holdFirst
@@ -39,6 +41,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
         self.holdSummary = holdSummary
         self.summaryText = summaryText
         self.summaryFinish = summaryFinish
+        self.contextTokenCount = contextTokenCount
     }
     func releaseSummary() { lock.withLock { holdSummary = false } }
     func waitForSummary() async throws {
@@ -56,6 +59,7 @@ private final class ToolBackendFixture: InferenceBackend, @unchecked Sendable {
 
     func encode(_ messages: [ConversationMessage]) -> [Int] {
         lock.withLock { inputs.append(messages) }
+        if let count = contextTokenCount?(messages) { return Array(repeating: 1, count: count) }
         return countCharacters
             ? Array(repeating: 1, count: messages.reduce(0) { $0 + $1.content.count + 4 })
             : [1, 2]
@@ -133,7 +137,8 @@ private let readSkillRequest = """
         replies: [String], holdFirst: Bool = false, countCharacters: Bool = false,
         resource: String = "BLUE PENGUIN", holdSummary: Bool = false,
         summaryFinish: String = "stop", rejectSummarySaves: Bool = false,
-        pauseSummarySaves: Bool = false
+        pauseSummarySaves: Bool = false,
+        contextTokenCount: (@Sendable ([ConversationMessage]) -> Int?)? = nil
     ) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let data = Data("Synthetic tool-loop model".utf8)
@@ -160,7 +165,8 @@ private let readSkillRequest = """
             replies: replies.first?.hasPrefix("<tool_call>") == true
                 ? ["DELEGATE"] + replies : replies,
             holdFirst: holdFirst, countCharacters: countCharacters,
-            holdSummary: holdSummary, summaryFinish: summaryFinish)
+            holdSummary: holdSummary, summaryFinish: summaryFinish,
+            contextTokenCount: contextTokenCount)
         let backend = backend
         store = ConversationStore(root: root.appendingPathComponent("Chats"))
         repository = ModelRepository(root: root.appendingPathComponent("Model"), manifest: manifest)
@@ -506,6 +512,48 @@ private func fixtureContextTokens(_ messages: [ConversationMessage]) -> Int {
 }
 
 @Test(.timeLimit(.minutes(1))) @MainActor
+func growingContinuationCanStartPagingAfterTheFirstCall() async throws {
+    let finish = "<tool_call>\n<function=catalog__finish>\n</function>\n</tool_call>"
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest, finish, "BLUE PENGUIN"], countCharacters: true,
+        contextTokenCount: { messages in
+            let unpaged = messages.contains { $0.content.contains("<tool_response>") }
+                && messages.contains { $0.content.contains("<tools>") }
+                && !messages.contains { $0.content.contains("Enabled catalogue page") }
+            return unpaged ? 8_192 : nil
+        })
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the selected file."
+    fixture.model.run()
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.model.error == nil && fixture.model.answer == "BLUE PENGUIN")
+    #expect(fixture.model.messages.compactMap(\.toolName) == ["read_skill_file"])
+    #expect(fixture.backend.generations.count == 4)
+    let prompts = fixture.backend.generations.map { $0.messages.map(\.content).joined() }
+    #expect(prompts[1].contains("<tools>") && !prompts[1].contains("Enabled catalogue page"))
+    #expect(prompts[2].contains("Enabled catalogue page") && prompts[2].contains("BLUE PENGUIN"))
+}
+
+@Test(arguments: [2_000, 7_000]) @MainActor
+func finalToolAnswerReservesMoreOutputWhenExactPromptFits(_ inputTokens: Int) async throws {
+    let fixture = try await ToolLoopFixture(
+        replies: [readSkillRequest, "The fact is ready.", "BLUE PENGUIN"],
+        contextTokenCount: { messages in
+            messages.first?.content.hasPrefix("Answer the latest user question") == true
+                ? inputTokens : nil
+        })
+    defer { fixture.clean() }
+    fixture.model.prompt = "Read the selected file."
+    fixture.model.run()
+    await fixture.model.waitUntilIdle()
+    #expect(fixture.model.error == nil && fixture.model.answer == "BLUE PENGUIN")
+    let finalAnswer = try #require(fixture.backend.generations.last)
+    #expect(finalAnswer.limit == (inputTokens == 2_000 ? 1_536 : 936))
+    #expect(inputTokens + finalAnswer.limit + 256 <= 8_192)
+    #expect(fixture.backend.generations[1].limit == 512)
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
 func aSecondLargeResultCanReduceEarlierRawResultsInTheSameToolTurn() async throws {
     let fixture = try await ToolLoopFixture(
         replies: [readSkillRequest, readSkillRequest, "BLUE PENGUIN"], countCharacters: true)
@@ -692,6 +740,88 @@ func savedToolResultCanFitTheReplyButStillNeedReductionForHistoryCompaction() as
         #expect(receipt.promptData.contains("tavily_search"))
         #expect(!receipt.promptData.contains(query))
         #expect(fixture.backend.summaryCalls > 0)
+    }
+
+    @Test(.timeLimit(.minutes(1))) @MainActor
+    func pagingBetweenTwoCallsPreservesHistoryResultsAndBudgets() async throws {
+        let remote = try SummaryNetworkFixture()
+        defer { remote.stop() }
+        let clarification = "Which IP address should I look up?"
+        func call(_ name: String, argument: String = "") -> String {
+            "<tool_call>\n<function=\(name)>\n\(argument)</function>\n</tool_call>"
+        }
+        func parameter(_ name: String, _ value: String) -> String {
+            "<parameter=\(name)>\n\(value)\n</parameter>\n"
+        }
+        let fixture = try await ToolLoopFixture(
+            replies: [
+                "I will remember the reference.", "DELEGATE",
+                call("catalog__open", argument: parameter("ordinal", "2")),
+                "Listing timezone names does not answer the request.",
+                call("catalog__previous"),
+                call("catalog__open", argument: parameter("ordinal", "1")),
+                call(
+                    "mcp_10000000__get_current_time",
+                    argument: parameter("timezone", "Asia/Tokyo")),
+                "Tokyo time is available. I still need a current source.",
+                call("catalog__browse"),
+                call("catalog__open", argument: parameter("ordinal", "20")),
+                call("mcp_20000000__tavily_search", argument: parameter("query", "blue penguins")),
+                call("catalog__finish"), "Tokyo is 15:37. https://example.com/blue-penguin",
+                "DELEGATE",
+                call("catalog__open", argument: parameter("ordinal", "3")),
+                call("catalog__clarify", argument: parameter("question", clarification)),
+            ], countCharacters: true)
+        defer { fixture.clean() }
+
+        let fixtureServers = [
+            ("10000000-0000-4000-8000-000000000001", "/routing-time"),
+            ("20000000-0000-4000-8000-000000000001", "/routing-oversized"),
+        ]
+        for (identifier, path) in fixtureServers {
+            let server = MCPServer(
+                id: UUID(uuidString: identifier)!, name: path,
+                endpoint: URL(string: "http://127.0.0.1:\(remote.port)\(path)")!)
+            try await fixture.workspace.saveServer(server)
+            fixture.workspace.discover(server.id)
+            await fixture.workspace.waitUntilIdle()
+            try #require(fixture.workspace.error == nil)
+        }
+        fixture.model.prompt = "Remember BOX-142."
+        fixture.model.run()
+        await fixture.model.waitUntilIdle()
+        fixture.model.prompt = "Find Tokyo time and a current source about blue penguins."
+        fixture.model.run()
+        await fixture.model.waitUntilIdle()
+
+        #expect(fixture.model.error == nil)
+        let saved = try #require(try await fixture.store.load())
+        let results = saved.snapshot.messages.filter { $0.toolName != nil }
+        #expect(results.compactMap(\.toolName) == ["get_current_time", "tavily_search"])
+        #expect(results.first?.text.contains("15:37") == true)
+        #expect(results.last?.text.contains("https://example.com/blue-penguin") == true)
+        #expect(results.last?.workerReceipt?.resultIDs == results.map(\.id))
+        #expect(!saved.snapshot.messages.contains { $0.text.contains("catalog__") })
+        #expect(!saved.snapshot.messages.contains { $0.text.contains("Listing timezone names") })
+        #expect(!saved.snapshot.messages.contains { $0.text.contains("I still need a current source") })
+        let pagedAfterFirstCall = fixture.backend.generations.filter { generation in
+            generation.messages.contains { $0.content.contains("Enabled catalogue page") }
+                && generation.messages.contains { $0.content.contains("<tool_response>") }
+        }
+        #expect(pagedAfterFirstCall.count >= 4)
+        for generation in pagedAfterFirstCall {
+            #expect(generation.messages.contains { $0.content.contains("BOX-142") })
+            #expect(generation.messages.contains { $0.content.contains("15:37") })
+            #expect(fixtureContextTokens(generation.messages) + generation.limit <= 8_192)
+        }
+        fixture.model.prompt = "What is the current local time for this IP address?"
+        fixture.model.run()
+        await fixture.model.waitUntilIdle()
+        #expect(fixture.model.error == nil)
+        #expect(fixture.model.answer == clarification)
+        let clarified = try #require(try await fixture.store.load())
+        #expect(clarified.snapshot.messages.filter { $0.toolName != nil } == results)
+        #expect(clarified.snapshot.messages.last?.text == clarification)
     }
 
     @Test(.timeLimit(.minutes(1))) @MainActor

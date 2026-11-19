@@ -601,11 +601,6 @@ public final class LocalInferenceModel {
         let savedEvidence = SavedToolEvidence(messages.prefix(baseCount))
         var specifications = try tools.specifications(using: cloud)
         if savedEvidence.available { specifications.append(SavedToolEvidence.tool) }
-        let instructions = try tools.instructions(
-            using: cloud,
-            additionalTools: savedEvidence.available
-                ? [SavedToolEvidence.tool] : [])
-        let requestContext = try tools.requestContext(using: cloud)
         let memory = try projectContext()
         let question = messages.prefix(baseCount).last(where: { $0.role == .user })?.text ?? ""
 
@@ -629,33 +624,104 @@ public final class LocalInferenceModel {
             break
         }
 
-        func workerPrompt(_ summaries: [Int: String]) -> [ConversationMessage] {
-            compactionPolicy.context(
+        var catalogue: WorkerToolCatalogue?
+        func catalogueControls() -> [ModelToolSpecification] {
+            if !results.isEmpty { return [WorkerToolCatalogue.finish] }
+            return catalogue?.selected == nil ? [] : [WorkerToolCatalogue.clarify]
+        }
+        func workerPrompt(_ summaries: [Int: String]) throws -> [ConversationMessage] {
+            let offered = catalogue.map { $0.offered + catalogueControls() } ?? specifications
+            var instructions = try tools.instructions(
+                using: cloud, selectedCatalogue: offered)
+            let requestContext: String
+            if let catalogue {
+                instructions += """
+
+                    Tools are shown in pages. To find a method, inspect the catalogue page.
+                    If there is no relevant method and next_page is present, call catalog__browse
+                    with no arguments. If needed, catalog__previous goes back one page without arguments.
+                    To load a relevant method, call catalog__open with its ordinal.
+                    A loaded method can be called using its exact schema. Browse or open only when
+                    needed. Once actual results answer the user, use them and finish.
+                    """
+                if !results.isEmpty {
+                    instructions += """
+
+                        When the collected results answer every part of the request,
+                        call catalog__finish with no arguments. If more work remains,
+                        find and use the next method.
+                        """
+                } else if catalogue.selected != nil {
+                    instructions += """
+
+                        If the opened method fits but needs an input only the user can supply,
+                        call catalog__clarify with one question for the user.
+                        """
+                }
+                requestContext =
+                    "Enabled catalogue page (JSON data): " + (try catalogue.promptData())
+                    + "\nDevice timezone: " + TimeZone.autoupdatingCurrent.identifier
+            } else {
+                requestContext = try tools.requestContext(using: cloud)
+            }
+            return compactionPolicy.context(
                 transcript: projectedTranscript(count: baseCount, summaries: summaries),
                 state: compaction, projectMemory: memory, instructions: instructions,
                 requestContext: requestContext)
         }
-        var context: [ConversationMessage]
-        do {
-            context = try await fitToolResults(
-                indices: toolResultIndices(before: baseCount), question: question,
-                inputLimit: toolInputLimit, build: workerPrompt)
-        } catch ToolSummaryError.noRoom {
-            try await compactForWorker(before: baseCount)
-            context = try await fitToolResults(
-                indices: toolResultIndices(before: baseCount), question: question,
-                inputLimit: toolInputLimit, build: workerPrompt)
+        if try await session.tokenCount(messages: workerPrompt([:])) > toolInputLimit {
+            catalogue = WorkerToolCatalogue(tools: specifications)
         }
-        for step in 0...4 {
+        var build: ([Int: String]) throws -> [ConversationMessage] = workerPrompt
+        var remainingNavigation = catalogue?.passBudget ?? 0
+        func fitWorkerContext() async throws -> [ConversationMessage] {
+            var compacted = false
+            while true {
+                let indices = toolResultIndices(before: baseCount) + results.map(\.index)
+                do {
+                    return try await fitToolResults(
+                        indices: indices, question: question,
+                        inputLimit: toolInputLimit, build: build)
+                } catch let error as ToolSummaryError
+                    where error == .noRoom || error == .doesNotFit
+                {
+                    let previousBudget = catalogue?.passBudget ?? 0
+                    if catalogue == nil, !results.isEmpty {
+                        catalogue = WorkerToolCatalogue(tools: specifications)
+                        remainingNavigation = catalogue?.passBudget ?? 0
+                    } else if catalogue?.narrowPage() == true {
+                        remainingNavigation += (catalogue?.passBudget ?? 0) - previousBudget
+                    } else {
+                        guard !compacted else { throw error }
+                        try await compactForWorker(before: baseCount)
+                        compacted = true
+                    }
+                }
+            }
+        }
+        var context = try await fitWorkerContext()
+        while true {
             try tools.validateRequestConfiguration(configuration, using: cloud)
             status = "Thinking about tools…"
             let pass = try await generateToolPass(context)
             try tools.validateRequestConfiguration(configuration, using: cloud)
             let output = pass.text
             let response = try ModelToolResponse.parse(
-                output, finishReason: pass.metrics.finishReason, tools: specifications)
+                output, finishReason: pass.metrics.finishReason,
+                tools: catalogue.map { $0.callable + catalogueControls() } ?? specifications)
             switch response {
             case .answer(let text):
+                if catalogue?.nextPage != nil {
+                    // A page is only a partial view of the catalogue. An ordinary reply from
+                    // this selection pass does not end the search while another page exists.
+                    guard remainingNavigation > 0 else {
+                        throw WorkerToolCatalogueError.navigationLimit
+                    }
+                    remainingNavigation -= 1
+                    try catalogue?.navigate("browse", arguments: [:])
+                    context = try await fitWorkerContext()
+                    continue
+                }
                 if results.isEmpty {
                     finishToolAnswer(text, pass: pass, at: responseIndex)
                 } else {
@@ -665,7 +731,35 @@ public final class LocalInferenceModel {
                 }
                 return
             case .call(let server, let name, let arguments):
-                guard step < 4 else { throw ToolProtocolError.loopLimit }
+                if server == WorkerToolCatalogue.server, catalogue != nil {
+                    if name == WorkerToolCatalogue.clarify.name {
+                        guard case let .string(question) = arguments["question"] else {
+                            throw ToolProtocolError.invalidArguments
+                        }
+                        let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else { throw ToolProtocolError.invalidArguments }
+                        finishToolAnswer(text, pass: pass, at: responseIndex)
+                        return
+                    }
+                    if name == WorkerToolCatalogue.finish.name {
+                        try await completeWorker(
+                            results, baseCount: baseCount, responseIndex: responseIndex,
+                            configuration: configuration, question: question)
+                        return
+                    }
+                    guard remainingNavigation > 0 else {
+                        throw WorkerToolCatalogueError.navigationLimit
+                    }
+                    remainingNavigation -= 1
+                    try catalogue?.navigate(name, arguments: arguments)
+                    do {
+                        context = try await fitWorkerContext()
+                    } catch ToolSummaryError.noRoom where catalogue?.selected != nil {
+                        throw WorkerToolCatalogueError.schemaDoesNotFit
+                    }
+                    continue
+                }
+                guard results.count < 4 else { throw ToolProtocolError.loopLimit }
                 messages[responseIndex].text = "Proposed tool request (not executed):\n" + output
                 let recalling =
                     server == SavedToolEvidence.tool.server
@@ -719,7 +813,7 @@ public final class LocalInferenceModel {
                         rawData: data, result: result))
                 let completed = results
                 let continuation: ([Int: String]) throws -> [ConversationMessage] = { summaries in
-                    var planned = workerPrompt(summaries)
+                    var planned = try workerPrompt(summaries)
                     for result in completed {
                         let summary =
                             summaries[result.index]
@@ -736,18 +830,12 @@ public final class LocalInferenceModel {
                     }
                     return planned
                 }
-                do {
-                    context = try await fitToolResults(
-                        indices: toolResultIndices(before: baseCount) + completed.map(\.index),
-                        question: question,
-                        inputLimit: toolInputLimit, build: continuation)
-                } catch ToolSummaryError.noRoom {
-                    try await compactForWorker(before: baseCount)
-                    context = try await fitToolResults(
-                        indices: toolResultIndices(before: baseCount) + completed.map(\.index),
-                        question: question,
-                        inputLimit: toolInputLimit, build: continuation)
+                build = continuation
+                if catalogue != nil {
+                    // Keep the next selection free of the previous method's schema.
+                    catalogue?.reset()
                 }
+                context = try await fitWorkerContext()
                 try Task.checkCancellation()
                 try tools.validateRequestConfiguration(configuration, using: cloud)
                 responseIndex = messages.count
@@ -873,11 +961,17 @@ public final class LocalInferenceModel {
         let continuation = try await fitToolResults(
             indices: results.map(\.index), question: question, inputLimit: limit,
             build: { try mainAnswer(receipt(summaries: $0).promptData) })
+        // The reasoning model shares this allowance between thoughts and visible answer text.
+        let inputTokens = try await session.tokenCount(messages: continuation)
+        let answerBudget = min(
+            max(1_536, compactionPolicy.responseTokens),
+            compactionPolicy.contextSize - inputTokens - 256)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         try await saveToolProjection(receipt: receipt(summaries: [:]), at: last)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         status = "Answering…"
-        let pass = try await generateToolPass(continuation, streamTo: responseIndex)
+        let pass = try await generateToolPass(
+            continuation, outputTokens: answerBudget, streamTo: responseIndex)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         guard !pass.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ToolProtocolError.invalidResponse

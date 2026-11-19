@@ -78,6 +78,47 @@ func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
     #expect(saved.snapshot.messages == model.messages)
 }
 
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_LONG_TOOL_ANSWER"] == "1"),
+    .timeLimit(.minutes(5))) @MainActor
+func groundedLongSearchAnswerCompletesWithThePinnedModel() async throws {
+    let env = ProcessInfo.processInfo.environment
+    let modelRoot = URL(fileURLWithPath: try #require(env["EMBLA_REAL_MODEL_ROOT"]))
+    let port = try #require(env["EMBLA_ROUTING_FIXTURE_PORT"])
+    let root = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let workspace = ToolWorkspace(configuration: root.appendingPathComponent("servers.json"))
+    let server = MCPServer(
+        id: UUID(uuidString: "20000000-0000-4000-8000-000000000001")!,
+        name: "Search fixture", endpoint: URL(string: "http://127.0.0.1:\(port)/routing-profile")!)
+    try await workspace.saveServer(server)
+    workspace.discover(server.id)
+    await workspace.waitUntilIdle()
+    try #require(workspace.error == nil)
+    let manifest = try ModelManifest.bundled()
+    let model = LocalInferenceModel(
+        repository: ModelRepository(root: modelRoot, manifest: manifest),
+        manifest: manifest, session: EmblaRuntime.makeSession(), tools: workspace)
+    model.check()
+    await model.waitUntilIdle()
+    model.prompt = """
+        Search for the Cedar Finch reference model and give me a detailed overview in about
+        350 words. Explain its purpose, model size, context and tool handling. End with the
+        benchmark name and the exact source link.
+        """
+    model.run()
+    await model.waitUntilIdle()
+    let result = try #require(model.messages.last)
+    let metrics = try #require(result.generationMetrics)
+    print("LONG ANSWER finish=\(metrics.finishReason) output=\(metrics.completionTokens)")
+    #expect(model.error == nil && result.state == .complete)
+    #expect(metrics.completionTokens > 512)
+    #expect(result.text.contains("Midnight Orchard"))
+    #expect(result.text.contains("https://example.com/cedar-reference"))
+    #expect(model.messages.compactMap(\.toolName) == ["tavily_search"])
+}
+
 @Test(.enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_SAVED_EVIDENCE"] == "1"))
 @MainActor func actualModelRecallsSecondLinkAfterCompactionAndRestart() async throws {
     let modelRoot = URL(
@@ -129,4 +170,50 @@ func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
     #expect(model.error == nil && model.answer.contains(sources[1]))
     #expect(
         model.messages.dropFirst(turns.count).contains { $0.toolName == "read_saved_tool_result" })
+}
+
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_PAGED_CATALOGUE"] == "1"),
+    .timeLimit(.minutes(5))) @MainActor
+func oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage() async throws {
+    let env = ProcessInfo.processInfo.environment
+    let modelRoot = URL(fileURLWithPath: try #require(env["EMBLA_REAL_MODEL_ROOT"]))
+    let port = try #require(env["EMBLA_ROUTING_FIXTURE_PORT"])
+    let root = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let tools = ToolWorkspace(configuration: root.appendingPathComponent("servers.json"))
+    let server = MCPServer(
+        id: UUID(uuidString: "20000000-0000-4000-8000-000000000001")!,
+        name: "Oversized fixture",
+        endpoint: URL(string: "http://127.0.0.1:\(port)/routing-oversized")!)
+    try await tools.saveServer(server)
+    tools.discover(server.id)
+    await tools.waitUntilIdle()
+    try #require(tools.error == nil && tools.servers.first?.enabledTools.count == 17)
+    let manifest = try ModelManifest.bundled()
+    let session = EmblaRuntime.makeSession()
+    let model = LocalInferenceModel(
+        repository: ModelRepository(root: modelRoot, manifest: manifest),
+        manifest: manifest, session: session, tools: tools)
+    model.check()
+    await model.waitUntilIdle()
+    let question = "Find a current web source about blue penguins and give me its link."
+    let tokenizer = EmblaPromptTokenizer()
+    let full = [
+        ConversationMessage(
+            role: .system, content: try tools.instructions(using: model.cloud, forRequest: false)),
+        ConversationMessage(role: .user, content: question),
+    ]
+    let count = try await tokenizer.count(
+        messages: full, in: modelRoot.appendingPathComponent(manifest.revision))
+    #expect(count > 8_192)
+    model.prompt = question
+    model.run()
+    await model.waitUntilIdle()
+    print(
+        "PAGED WORKER full catalogue=\(count) answer=\(model.answer) error=\(model.error ?? "-") calls=\(model.messages.compactMap(\.toolName))"
+    )
+    #expect(model.error == nil && model.answer.contains("https://example.com/blue-penguin"))
+    #expect(model.messages.compactMap(\.toolName) == ["tavily_search"])
 }
