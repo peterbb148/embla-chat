@@ -13,25 +13,32 @@ public enum ToolWorkerHandoff: Equatable {
             return .delegate
         }
 
-        // A router signal embedded in an otherwise ambiguous output is never a direct answer.
-        guard segments.count == 1, !output.contains("<think"),
-            output.range(of: #"\bDELEGATE\b"#, options: .regularExpression) == nil,
+        // A reserved line can be an ambiguous control signal. Ordinary sentences may
+        // quote the word as literal text after their purpose is clear.
+        let ambiguous = output.split(whereSeparator: \.isNewline).contains { line in
+            let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            let unwrapped = text.trimmingCharacters(in: .punctuationCharacters.union(.symbols))
+            return unwrapped == "DELEGATE" || text.hasPrefix("DELEGATE:")
+                || text.hasPrefix("DELEGATE. ")
+        }
+        guard segments.count == 1, !output.contains("<think"), !ambiguous,
             case .answer(let text) = try ModelToolResponse.parse(output, finishReason: finishReason)
         else { throw ToolProtocolError.invalidResponse }
         return .answer(text)
     }
 
-    /// Keeps ordinary text from an interrupted routing pass without exposing a partial signal.
-    public static func interruptedAnswer(_ output: String) -> String? {
+    /// Returns displayable reply text without exposing an unfinished routing signal.
+    public static func displayableAnswer(_ output: String) -> String? {
         let reserved = [
             "DELEGATE", "<think>", "</think>", "<tool_call>", "</tool_call>",
             "<function=", "</function>", "<parameter=", "</parameter>",
         ]
         var prefix = output
-        if let tail = output.split(whereSeparator: \.isWhitespace).last,
-            reserved.contains(where: { $0.hasPrefix(tail) })
-        {
-            prefix = String(output[..<tail.startIndex])
+        if let tail = output.split(whereSeparator: \.isWhitespace).last {
+            let signal = tail.drop(while: { $0.isPunctuation && $0 != "<" })
+            if !signal.isEmpty && reserved.contains(where: { $0.hasPrefix(signal) }) {
+                prefix = String(output[..<tail.startIndex])
+            }
         }
         guard case .answer(let answer) = try? parse(prefix, finishReason: "stop")
         else { return nil }

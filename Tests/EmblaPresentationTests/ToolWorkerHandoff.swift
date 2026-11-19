@@ -10,6 +10,8 @@ import EmblaCore
     #expect(try ToolWorkerHandoff.parse("DELEGATE", finishReason: "stop") == .delegate)
     #expect(
         try ToolWorkerHandoff.parse("2 + 2 is 4.", finishReason: "stop") == .answer("2 + 2 is 4."))
+    let literal = "The word `DELEGATE` means to assign a task."
+    #expect(try ToolWorkerHandoff.parse(literal, finishReason: "stop") == .answer(literal))
 }
 
 @Test func workerHandoffRejectsIncompleteOrAmbiguousOutput() {

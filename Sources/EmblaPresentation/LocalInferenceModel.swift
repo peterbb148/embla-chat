@@ -613,7 +613,7 @@ public final class LocalInferenceModel {
         let routeInput = try await session.tokenCount(messages: initialContext)
         let routeBudget = min(1_024, compactionPolicy.contextSize - routeInput - 257)
         let route = try await generateToolPass(
-            initialContext, outputTokens: routeBudget, preserveDirectAnswerAt: responseIndex)
+            initialContext, outputTokens: routeBudget, checkpointDirectAnswerAt: responseIndex)
         try tools.validateRequestConfiguration(configuration, using: cloud)
         switch try ToolWorkerHandoff.parse(route.text, finishReason: route.metrics.finishReason) {
         case .answer(let text):
@@ -623,19 +623,22 @@ public final class LocalInferenceModel {
             break
         }
 
-        func workerPrompt() -> [ConversationMessage] {
+        func workerPrompt(_ summaries: [Int: String]) -> [ConversationMessage] {
             compactionPolicy.context(
-                transcript: projectedTranscript(count: baseCount),
+                transcript: projectedTranscript(count: baseCount, summaries: summaries),
                 state: compaction, projectMemory: memory, instructions: instructions,
                 requestContext: requestContext)
         }
-        var context = workerPrompt()
-        if try await session.tokenCount(messages: context) > toolInputLimit {
+        var context: [ConversationMessage]
+        do {
+            context = try await fitToolResults(
+                indices: toolResultIndices(before: baseCount), question: question,
+                inputLimit: toolInputLimit, build: workerPrompt)
+        } catch ToolSummaryError.noRoom {
             try await compactForWorker(before: baseCount)
-            context = workerPrompt()
-            guard try await session.tokenCount(messages: context) <= toolInputLimit else {
-                throw ToolSummaryError.noRoom
-            }
+            context = try await fitToolResults(
+                indices: toolResultIndices(before: baseCount), question: question,
+                inputLimit: toolInputLimit, build: workerPrompt)
         }
         for step in 0...4 {
             try tools.validateRequestConfiguration(configuration, using: cloud)
@@ -710,7 +713,7 @@ public final class LocalInferenceModel {
                         rawData: data, result: result))
                 let completed = results
                 let continuation: ([Int: String]) throws -> [ConversationMessage] = { summaries in
-                    var planned = workerPrompt()
+                    var planned = workerPrompt(summaries)
                     for result in completed {
                         let summary =
                             summaries[result.index]
@@ -729,12 +732,14 @@ public final class LocalInferenceModel {
                 }
                 do {
                     context = try await fitToolResults(
-                        indices: completed.map(\.index), question: question,
+                        indices: toolResultIndices(before: baseCount) + completed.map(\.index),
+                        question: question,
                         inputLimit: toolInputLimit, build: continuation)
                 } catch ToolSummaryError.noRoom {
                     try await compactForWorker(before: baseCount)
                     context = try await fitToolResults(
-                        indices: completed.map(\.index), question: question,
+                        indices: toolResultIndices(before: baseCount) + completed.map(\.index),
+                        question: question,
                         inputLimit: toolInputLimit, build: continuation)
                 }
                 try Task.checkCancellation()
@@ -763,7 +768,7 @@ public final class LocalInferenceModel {
 
     private func generateToolPass(
         _ context: [ConversationMessage], outputTokens: Int? = nil, streamTo index: Int? = nil,
-        preserveDirectAnswerAt interruptedIndex: Int? = nil
+        checkpointDirectAnswerAt routingIndex: Int? = nil
     ) async throws -> ToolPass {
         try Task.checkCancellation()
         try tools.validateRequestNetwork()
@@ -800,6 +805,13 @@ public final class LocalInferenceModel {
                         messages[index].generationMetrics = metrics
                     }
                 }
+                if let routingIndex, let direct = ToolWorkerHandoff.displayableAnswer(answer) {
+                    self.answer = direct
+                    reasoning = thought
+                    messages[routingIndex].text = direct
+                    messages[routingIndex].reasoning = thought
+                    scheduleChatSave()
+                }
                 if index != nil { scheduleChatSave() }
             }
         } catch { streamError = error }
@@ -808,14 +820,6 @@ public final class LocalInferenceModel {
         if case let .failed(message) = await session.state {
             loaded = false
             throw PresentationFailure(message: message)
-        }
-        if Task.isCancelled, let interruptedIndex,
-            let partial = ToolWorkerHandoff.interruptedAnswer(answer)
-        {
-            self.answer = partial
-            reasoning = thought
-            messages[interruptedIndex].text = partial
-            messages[interruptedIndex].reasoning = thought
         }
         if let streamError { throw streamError }
         try Task.checkCancellation()
@@ -846,15 +850,16 @@ public final class LocalInferenceModel {
         let instructions = try tools.answerInstructions(using: cloud)
         func receipt(summaries: [Int: String]) throws -> ToolWorkerReceipt {
             let evidence = results.map { entry -> ToolJSON in
+                var fields: [String: ToolJSON] = [
+                    "server": .string(entry.request.server), "tool": .string(entry.request.name),
+                    "arguments": .object(entry.request.arguments),
+                ]
                 if let summary = summaries[entry.index] ?? messages[entry.index].toolResultSummary {
-                    return .object([
-                        "tool": .string(entry.request.name), "summary": .string(summary),
-                    ])
+                    fields["summary"] = .string(summary)
+                } else {
+                    fields["data"] = entry.result.evidenceForMainAnswer
                 }
-                return .object([
-                    "tool": .string(entry.request.name),
-                    "data": entry.result.evidenceForMainAnswer,
-                ])
+                return .object(fields)
             }
             return ToolWorkerReceipt(resultIDs: ids, data: try ToolJSON.array(evidence).text())
         }

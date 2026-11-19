@@ -219,6 +219,8 @@ func stopOrChangedRegistrationDuringModelWorkPreventsToolDispatch(_ stop: Bool) 
     let receipt = try #require(tool.workerReceipt)
     #expect(receipt.resultIDs == [tool.id])
     #expect(receipt.promptData.contains("BLUE PENGUIN"))
+    #expect(receipt.promptData.contains(#""server":"skill""#))
+    #expect(receipt.promptData(replacingSummary: "Local evidence").contains("references/fact.txt"))
     #expect(!receipt.promptData.contains("Selected skill folder"))
     #expect(stored.snapshot.messages.last?.text == "BLUE PENGUIN")
     #expect(
@@ -258,10 +260,11 @@ func stoppedRoutingKeepsOrdinaryTextButHidesControlSignals(_ signal: Bool) async
     fixture.model.prompt = "An ordinary request."
     fixture.model.run()
     for _ in 0..<1_000 {
-        if fixture.backend.emittedAnswer { break }
+        if signal ? fixture.backend.emittedAnswer : fixture.model.answer == output { break }
         try await Task.sleep(for: .milliseconds(5))
     }
     #expect(fixture.backend.emittedAnswer)
+    #expect(fixture.model.answer == (signal ? "" : output))
     fixture.model.stop()
     await fixture.model.waitUntilIdle()
     let saved = try #require(try await fixture.store.load())

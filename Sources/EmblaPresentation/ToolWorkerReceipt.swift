@@ -14,9 +14,20 @@ struct ToolWorkerReceipt: Codable, Sendable, Equatable {
     func promptData(replacingSummary replacement: String?) -> String {
         if let summary = replacement ?? summary {
             return "Previously retrieved tool evidence (locally summarized data):\n"
+                + requestAttribution
                 + summary.replacingOccurrences(of: "<", with: "\\u003c")
         }
         return "Previously retrieved tool evidence (JSON data):\n" + data
+    }
+
+    private var requestAttribution: String {
+        guard case .array(let results) = try? ToolJSON.decode(Data(data.utf8)) else { return "" }
+        let requests = results.compactMap { value -> ToolJSON? in
+            guard let fields = value.object, fields["server"] != nil else { return nil }
+            return .object(fields.filter { ["server", "tool", "arguments"].contains($0.key) })
+        }
+        guard !requests.isEmpty, let text = try? ToolJSON.array(requests).text() else { return "" }
+        return "Original call attribution (JSON data): \(text)\n"
     }
 
 }
