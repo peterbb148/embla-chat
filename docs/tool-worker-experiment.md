@@ -75,3 +75,26 @@ reasoning delimiter. The router now accepts a standalone decision or that exact 
 decision as a handoff. An ambiguous response that mixes a decision with answer text fails
 before it can reach the transcript. The worker still receives the original question and
 runs separately on the same loaded model.
+
+## Production integration
+
+The main prompt uses short capability descriptions. Complete tool schemas and intermediate
+exchanges are scoped to a temporary worker prompt. Both phases use the same serial Metal
+session. A successful task saves a compact receipt against its original tool records before
+the main model writes the answer. Original records stay available through Inspect response.
+
+The context counter uses the main prompt projection, including the selected skill, project
+memory and draft where applicable. Quick actions enter the prompt when they populate or
+send the composer. The worker and the main prompt each have their own input budget.
+On the tested iPhone 17 Pro configuration, an empty chat dropped from 47% to 5% after
+the production change.
+
+The phone regression exercised the actual Send path with loopback time and search fixtures.
+A Hong Kong lookup followed by “What about Tokyo?” dispatched a new call for Tokyo with
+time alone and with both fixtures enabled. Ordinary search returned the fixture's URL.
+The Mac loopback regression uses the same cases through the production Send path.
+
+The archive stores the receipt on the last result row and retains the underlying message
+positions for compaction. Older chats can still load their original tool records and saved
+summaries. The worker can read previously saved tool evidence from the selected chat,
+including after compaction, without replaying a remote tool call.

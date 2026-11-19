@@ -17,6 +17,8 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     public var toolName: String?
     public var generationMetrics: GenerationMetrics?
     public var toolResultSummary: String?
+    var workerReceipt: ToolWorkerReceipt?
+    var workerToolRequest: Bool?
 
     /// Raw text remains visible/copyable; only inference uses the explicitly marked local notes.
     public var inferenceContent: String {
@@ -254,9 +256,9 @@ public final class LocalInferenceModel {
                     transcript: self.conversationMessages(), state: self.compaction,
                     draft: self.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     projectMemory: try self.projectContext(),
-                    instructions: try self.tools.instructions(using: self.cloud, forRequest: false),
-                    requestContext: try self.tools.requestContext(
-                        using: self.cloud, forRequest: false))
+                    instructions: try self.tools.routingInstructions(
+                        using: self.cloud, forRequest: false,
+                        savedEvidence: SavedToolEvidence(self.messages[...]).available))
                 let count = try await countTokens(directory, context)
                 try Task.checkCancellation()
                 guard self.usageRequest == request else { return }
@@ -289,9 +291,24 @@ public final class LocalInferenceModel {
     private func projectedTranscript(count: Int, summaries: [Int: String] = [:])
         -> [ConversationMessage]
     {
-        messages.prefix(count).enumerated().map { index, stored in
+        let covered = Set(messages.prefix(count).compactMap(\.workerReceipt).flatMap(\.resultIDs))
+        return messages.prefix(count).enumerated().map { index, stored in
             var message = stored
             if let summary = summaries[index] { message.toolResultSummary = summary }
+            if let receipt = message.workerReceipt {
+                return ConversationMessage(role: .assistant, content: receipt.promptData)
+            }
+            if covered.contains(message.id) {
+                return ConversationMessage(role: .assistant, content: "")
+            }
+            if message.workerToolRequest == true {
+                let detail =
+                    message.toolResultSummary.map {
+                        "Partial earlier lookup (locally summarized): " + $0
+                    }
+                    ?? "Earlier tool request did not complete an answer. The original is available in saved tool history."
+                return ConversationMessage(role: .assistant, content: detail)
+            }
             return ConversationMessage(
                 role: message.role, content: message.inferenceContent,
                 reasoning: message.reasoning.isEmpty ? nil : message.reasoning)
@@ -525,7 +542,9 @@ public final class LocalInferenceModel {
         let context = try await prepareContext(transcript: transcript)
         try Task.checkCancellation()
         try tools.validateRequestConfiguration(configuration, using: cloud)
-        if !(try tools.specifications(using: cloud)).isEmpty {
+        if !(try tools.specifications(using: cloud)).isEmpty
+            || SavedToolEvidence(messages.prefix(responseIndex)).available
+        {
             try await generateWithTools(context: context, responseIndex: responseIndex)
             return
         }
@@ -569,76 +588,84 @@ public final class LocalInferenceModel {
     private func generateWithTools(
         context initialContext: [ConversationMessage], responseIndex: Int
     ) async throws {
-        var context = initialContext
         let baseCount = responseIndex
         var responseIndex = responseIndex
         var results: [ActiveToolResult] = []
         let configuration = tools.revision
-        let instructions = try tools.instructions(using: cloud)
+        let savedEvidence = SavedToolEvidence(messages.prefix(baseCount))
+        var specifications = try tools.specifications(using: cloud)
+        if savedEvidence.available { specifications.append(SavedToolEvidence.tool) }
+        let instructions = try tools.instructions(
+            using: cloud,
+            additionalTools: savedEvidence.available
+                ? [SavedToolEvidence.tool] : [])
         let requestContext = try tools.requestContext(using: cloud)
         let memory = try projectContext()
         let question = messages.prefix(baseCount).last(where: { $0.role == .user })?.text ?? ""
+
+        status = "Thinking about tools…"
+        let routeInput = try await session.tokenCount(messages: initialContext)
+        let routeBudget = min(1_024, compactionPolicy.contextSize - routeInput - 257)
+        let route = try await generateToolPass(initialContext, outputTokens: routeBudget)
+        try tools.validateRequestConfiguration(configuration, using: cloud)
+        switch try ToolWorkerHandoff.parse(route.text, finishReason: route.metrics.finishReason) {
+        case .answer(let text):
+            finishToolAnswer(text, pass: route, at: responseIndex)
+            return
+        case .delegate:
+            break
+        }
+
+        var workerHistory = Array(
+            projectedTranscript(count: baseCount)
+                .dropFirst(compaction.summarizedMessageCount))
+        func workerPrompt() -> [ConversationMessage] {
+            compactionPolicy.context(
+                transcript: workerHistory,
+                state: CompactionState(summary: compaction.summary),
+                projectMemory: memory, instructions: instructions, requestContext: requestContext)
+        }
+        var context = workerPrompt()
+        while try await session.tokenCount(messages: context) > toolInputLimit {
+            try Task.checkCancellation()
+            guard let nextTurn = workerHistory.dropFirst().firstIndex(where: { $0.role == .user })
+            else { throw ToolSummaryError.noRoom }
+            workerHistory.removeFirst(nextTurn)
+            context = workerPrompt()
+        }
         for step in 0...4 {
-            try Task.checkCancellation()
-            try tools.validateRequestNetwork()
             try tools.validateRequestConfiguration(configuration, using: cloud)
-            let run = try await session.generate(
-                messages: context,
-                options: GenerationOptions(
-                    maxTokens: compactionPolicy.responseTokens, temperature: 0, topP: 1))
-            activeRun = run
-            if Task.isCancelled { run.cancel() }
             status = "Thinking about tools…"
-            var output = ""
-            var finish: String?
-            var streamError: Error?
-            do {
-                for try await event in run.events {
-                    if Task.isCancelled { run.cancel(); break }
-                    switch event {
-                    case .answer(let text): output += text
-                    case .reasoning(let text):
-                        reasoning += text
-                        messages[responseIndex].reasoning += text
-                    case .finished(let value):
-                        metrics = value
-                        finish = value.finishReason
-                        messages[responseIndex].generationMetrics = value
-                    }
-                    scheduleChatSave()
-                }
-            } catch { streamError = error }
-            await run.waitUntilFinished()
-            activeRun = nil
-            if case let .failed(message) = await session.state {
-                loaded = false
-                throw PresentationFailure(message: message)
-            }
-            if let streamError { throw streamError }
-            try Task.checkCancellation()
-            try tools.validateRequestNetwork()
-            let response: ModelToolResponse
-            do {
-                response = try ModelToolResponse.parse(
-                    output, finishReason: finish,
-                    tools: tools.specifications(using: cloud))
-            } catch {
-                messages[responseIndex].text =
-                    "Unexecuted model output (\(finish ?? "no finish reason")):\n" + output
-                throw error
-            }
+            let pass = try await generateToolPass(context)
+            try tools.validateRequestConfiguration(configuration, using: cloud)
+            let output = pass.text
+            let response = try ModelToolResponse.parse(
+                output, finishReason: pass.metrics.finishReason, tools: specifications)
             switch response {
             case .answer(let text):
-                answer = text
-                messages[responseIndex].text = text
-                messages[responseIndex].state = .complete
-                status = "Finished."
+                if results.isEmpty {
+                    finishToolAnswer(text, pass: pass, at: responseIndex)
+                } else {
+                    try await completeWorker(
+                        results, baseCount: baseCount, responseIndex: responseIndex,
+                        configuration: configuration, question: question)
+                }
                 return
             case .call(let server, let name, let arguments):
                 guard step < 4 else { throw ToolProtocolError.loopLimit }
                 messages[responseIndex].text = "Proposed tool request (not executed):\n" + output
-                let request = try tools.invocation(server: server, name: name, arguments: arguments)
+                let recalling =
+                    server == SavedToolEvidence.tool.server
+                    && name == SavedToolEvidence.tool.name && savedEvidence.available
+                let request =
+                    try recalling
+                    ? ToolInvocation(
+                        server: server, name: name, destination: "Saved tool evidence",
+                        arguments: arguments, local: true)
+                    : tools.invocation(server: server, name: name, arguments: arguments)
                 messages[responseIndex].toolName = name
+                messages[responseIndex].workerToolRequest = true
+                messages[responseIndex].reasoning = pass.reasoning
                 let requestData = try ToolJSON.object([
                     "server": .string(server), "tool": .string(name),
                     "destination": .string(request.destination), "arguments": .object(arguments),
@@ -650,7 +677,13 @@ public final class LocalInferenceModel {
                 status =
                     request.local ? "Reading skill resource…" : "Calling \(request.destination)…"
                 let result: ToolJSON
-                do { result = try await tools.execute(request, using: cloud) } catch {
+                do {
+                    if recalling {
+                        result = try savedEvidence.read(arguments)
+                    } else {
+                        result = try await tools.execute(request, using: cloud)
+                    }
+                } catch {
                     if case MCPFailure.toolError(let detail) = error {
                         messages[responseIndex].text += "\nTool error data:\n" + (try detail.text())
                     } else {
@@ -666,53 +699,147 @@ public final class LocalInferenceModel {
                 messages[responseIndex].state = .complete
                 try await saveChatNow()
                 try Task.checkCancellation()
-                results.append(ActiveToolResult(
-                    index: responseIndex, request: request,
-                    call: ConversationMessage(role: .assistant, content: output, reasoning: ""),
-                    rawData: data))
+                results.append(
+                    ActiveToolResult(
+                        index: responseIndex, request: request,
+                        call: ConversationMessage(role: .assistant, content: output, reasoning: ""),
+                        rawData: data, result: result))
                 let completed = results
                 let continuation: ([Int: String]) throws -> [ConversationMessage] = { summaries in
-                    var planned = self.compactionPolicy.context(
-                        transcript: self.projectedTranscript(count: baseCount, summaries: summaries),
-                        state: self.compaction, projectMemory: memory, instructions: instructions,
-                        requestContext: requestContext)
+                    var planned = workerPrompt()
                     for result in completed {
-                        let summary = summaries[result.index]
+                        let summary =
+                            summaries[result.index]
                             ?? self.messages[result.index].toolResultSummary
-                        let data = try summary.map {
-                            try self.summarizedToolData(request: result.request, summary: $0)
-                        } ?? result.rawData
+                        let data =
+                            try summary.map {
+                                try self.summarizedToolData(request: result.request, summary: $0)
+                            } ?? result.rawData
                         planned.append(result.call)
-                        planned.append(ConversationMessage(
-                            role: .user,
-                            content: "<tool_response>\n" + data + "\n</tool_response>"))
+                        planned.append(
+                            ConversationMessage(
+                                role: .user,
+                                content: "<tool_response>\n" + data + "\n</tool_response>"))
                     }
                     return planned
                 }
-                do {
-                    context = try await fitToolResults(
-                        indices: toolResultIndices(before: messages.count), question: question,
-                        inputLimit: toolInputLimit, build: continuation)
-                } catch ToolSummaryError.noRoom {
-                    // A tool exchange can cross the trigger after the original Send fit.
-                    // Compact only an eligible older prefix; completed calls are never replayed.
-                    let prefix = projectedTranscript(count: baseCount)
-                    do { _ = try compactionPolicy.plan(transcript: prefix, state: compaction) }
-                    catch { throw ToolSummaryError.noRoom }
-                    _ = try await prepareContext(transcript: prefix, compactNow: true)
-                    try await saveChatNow()
+                while try await session.tokenCount(messages: continuation([:])) > toolInputLimit,
+                    let nextTurn = workerHistory.dropFirst().firstIndex(where: { $0.role == .user })
+                {
                     try Task.checkCancellation()
-                    try tools.validateRequestConfiguration(configuration, using: cloud)
-                    context = try await fitToolResults(
-                        indices: toolResultIndices(before: messages.count), question: question,
-                        inputLimit: toolInputLimit, build: continuation)
+                    workerHistory.removeFirst(nextTurn)
                 }
+                context = try await fitToolResults(
+                    indices: completed.map(\.index), question: question,
+                    inputLimit: toolInputLimit, build: continuation)
                 try Task.checkCancellation()
                 try tools.validateRequestConfiguration(configuration, using: cloud)
                 responseIndex = messages.count
                 messages.append(ChatMessage(role: .assistant, text: "", state: .streaming))
             }
         }
+    }
+
+    private struct ToolPass {
+        var text = ""
+        var reasoning = ""
+        let metrics: GenerationMetrics
+    }
+
+    private func generateToolPass(
+        _ context: [ConversationMessage], outputTokens: Int? = nil
+    ) async throws -> ToolPass {
+        try Task.checkCancellation()
+        try tools.validateRequestNetwork()
+        let run = try await session.generate(
+            messages: context,
+            options: GenerationOptions(
+                maxTokens: outputTokens ?? compactionPolicy.responseTokens, temperature: 0, topP: 1)
+        )
+        activeRun = run
+        var answer = ""
+        var thought = ""
+        var measured: GenerationMetrics?
+        var streamError: Error?
+        do {
+            for try await event in run.events {
+                if Task.isCancelled { run.cancel(); break }
+                switch event {
+                case .answer(let text): answer += text
+                case .reasoning(let text): thought += text
+                case .finished(let metrics): measured = metrics
+                }
+            }
+        } catch { streamError = error }
+        await run.waitUntilFinished()
+        activeRun = nil
+        if case let .failed(message) = await session.state {
+            loaded = false
+            throw PresentationFailure(message: message)
+        }
+        if let streamError { throw streamError }
+        try Task.checkCancellation()
+        try tools.validateRequestNetwork()
+        guard let measured else { throw ToolProtocolError.invalidResponse }
+        return ToolPass(text: answer, reasoning: thought, metrics: measured)
+    }
+
+    private func finishToolAnswer(_ text: String, pass: ToolPass, at index: Int) {
+        answer = text
+        reasoning = pass.reasoning
+        metrics = pass.metrics
+        messages[index].text = text
+        messages[index].reasoning = pass.reasoning
+        messages[index].generationMetrics = pass.metrics
+        messages[index].state = .complete
+        status = "Finished."
+    }
+
+    private func completeWorker(
+        _ results: [ActiveToolResult], baseCount: Int, responseIndex: Int,
+        configuration: UUID, question: String
+    ) async throws {
+        let last = results[results.count - 1].index
+        let ids = results.map { messages[$0.index].id }
+        let memory = try projectContext()
+        let instructions = try tools.answerInstructions(using: cloud)
+        func receipt(summaries: [Int: String]) throws -> ToolWorkerReceipt {
+            let evidence = results.map { entry -> ToolJSON in
+                if let summary = summaries[entry.index] ?? messages[entry.index].toolResultSummary {
+                    return .object([
+                        "tool": .string(entry.request.name), "summary": .string(summary),
+                    ])
+                }
+                return .object([
+                    "tool": .string(entry.request.name),
+                    "data": entry.result["structuredContent"] ?? entry.result["content"]
+                        ?? entry.result,
+                ])
+            }
+            return ToolWorkerReceipt(resultIDs: ids, data: try ToolJSON.array(evidence).text())
+        }
+        let prefix = projectedTranscript(count: baseCount)
+        func mainAnswer(_ evidence: String) -> [ConversationMessage] {
+            compactionPolicy.context(
+                transcript: prefix, state: compaction, projectMemory: memory,
+                instructions: instructions, requestContext: evidence)
+        }
+        let baseline = try await session.tokenCount(messages: mainAnswer(""))
+        let limit = min(toolInputLimit, baseline + 768)
+        let continuation = try await fitToolResults(
+            indices: results.map(\.index), question: question, inputLimit: limit,
+            build: { try mainAnswer(receipt(summaries: $0).promptData) })
+        try tools.validateRequestConfiguration(configuration, using: cloud)
+        try await saveToolProjection(receipt: receipt(summaries: [:]), at: last)
+        try tools.validateRequestConfiguration(configuration, using: cloud)
+        status = "Answering…"
+        let pass = try await generateToolPass(continuation)
+        try tools.validateRequestConfiguration(configuration, using: cloud)
+        guard
+            case .answer(let text) = try ToolWorkerHandoff.parse(
+                pass.text, finishReason: pass.metrics.finishReason)
+        else { throw ToolProtocolError.invalidResponse }
+        finishToolAnswer(text, pass: pass, at: responseIndex)
     }
 
     private var toolInputLimit: Int {
@@ -724,7 +851,8 @@ public final class LocalInferenceModel {
             "server": .string(request.server), "tool": .string(request.name),
             "result_summary": .string(summary),
             "context_note": .string(
-                "Locally summarized tool data; may omit details. Full original saved in the chat. Do not repeat the completed call solely because this is a summary."),
+                "Locally summarized tool data; may omit details. Full original saved in the chat. Do not repeat the completed call solely because this is a summary."
+            ),
         ]).text()
     }
 
@@ -733,6 +861,7 @@ public final class LocalInferenceModel {
         let request: ToolInvocation
         let call: ConversationMessage
         let rawData: String
+        let result: ToolJSON
     }
 
     private func toolResultIndices(before end: Int, startingAt start: Int? = nil) -> [Int] {
@@ -836,6 +965,17 @@ public final class LocalInferenceModel {
         try Task.checkCancellation()
         var updated = messages
         for (index, summary) in summaries { updated[index].toolResultSummary = summary }
+        try await commitToolProjection(updated)
+    }
+
+    private func saveToolProjection(receipt: ToolWorkerReceipt, at index: Int) async throws {
+        var updated = messages
+        updated[index].workerReceipt = receipt
+        try await commitToolProjection(updated)
+    }
+
+    private func commitToolProjection(_ updated: [ChatMessage]) async throws {
+        try Task.checkCancellation()
         savingToolSummary = true
         defer { savingToolSummary = false }
         replacingContext = true
@@ -843,9 +983,10 @@ public final class LocalInferenceModel {
         running = false
         status = "Saving tool result summary…"
         do {
-            try await saveChatNow(snapshot: ConversationSnapshot(
-                conversationID: conversationID, messages: updated, compaction: compaction,
-                projectID: activeProjectID))
+            try await saveChatNow(
+                snapshot: ConversationSnapshot(
+                    conversationID: conversationID, messages: updated, compaction: compaction,
+                    projectID: activeProjectID))
             messages = updated
             replacingContext = false
             running = wasRunning
@@ -876,10 +1017,13 @@ public final class LocalInferenceModel {
         compactNow: Bool = false
     ) async throws -> [ConversationMessage] {
         let memory = try projectContext()
-        let instructions = try tools.instructions(using: cloud)
-        let requestContext = try tools.requestContext(using: cloud)
+        let instructions = try tools.routingInstructions(
+            using: cloud,
+            savedEvidence: SavedToolEvidence(messages.prefix(original.count)).available)
+        let requestContext = ""
         let transcriptCount = original.count
-        let question = draft.flatMap { $0.isEmpty ? nil : $0 }
+        let question =
+            draft.flatMap { $0.isEmpty ? nil : $0 }
             ?? messages.prefix(transcriptCount).last(where: { $0.role == .user })?.text ?? ""
         var transcript = original
         let context = compactionPolicy.context(
@@ -897,14 +1041,17 @@ public final class LocalInferenceModel {
             if force { throw CompactionError.insufficientHistory }
             let indices = toolResultIndices(before: transcriptCount)
             if indices.isEmpty {
-                guard inputCount <= toolInputLimit else { throw CompactionError.insufficientHistory }
+                guard inputCount <= toolInputLimit else {
+                    throw CompactionError.insufficientHistory
+                }
                 return context
             }
             return try await fitToolResults(
                 indices: indices, question: question, inputLimit: toolInputLimit,
                 build: { summaries in
                     self.compactionPolicy.context(
-                        transcript: self.projectedTranscript(count: transcriptCount, summaries: summaries),
+                        transcript: self.projectedTranscript(
+                            count: transcriptCount, summaries: summaries),
                         state: self.compaction, draft: draft, projectMemory: memory,
                         instructions: instructions, requestContext: requestContext)
                 })
@@ -917,12 +1064,15 @@ public final class LocalInferenceModel {
                     indices: indices, question: question, inputLimit: summaryInputLimit,
                     build: { summaries in
                         try self.compactionPolicy.plan(
-                            transcript: planning(self.projectedTranscript(
-                                count: transcriptCount, summaries: summaries)), state: self.compaction
+                            transcript: planning(
+                                self.projectedTranscript(
+                                    count: transcriptCount, summaries: summaries)),
+                            state: self.compaction
                         ).messages
                     })
                 transcript = projectedTranscript(count: transcriptCount)
-                plan = try compactionPolicy.plan(transcript: planning(transcript), state: compaction)
+                plan = try compactionPolicy.plan(
+                    transcript: planning(transcript), state: compaction)
             }
         }
         compacting = true
@@ -967,7 +1117,8 @@ public final class LocalInferenceModel {
                 indices: indices, question: question, inputLimit: toolInputLimit,
                 build: { summaries in
                     self.compactionPolicy.context(
-                        transcript: self.projectedTranscript(count: transcriptCount, summaries: summaries),
+                        transcript: self.projectedTranscript(
+                            count: transcriptCount, summaries: summaries),
                         state: candidate, draft: draft, projectMemory: memory,
                         instructions: instructions, requestContext: requestContext)
                 })

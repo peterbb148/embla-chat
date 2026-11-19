@@ -1,0 +1,62 @@
+import Foundation
+
+/// Interprets the tool router output before any text is shown or added to history.
+public enum ToolWorkerHandoff: Equatable {
+    case delegate
+    case answer(String)
+
+    public static func parse(_ output: String, finishReason: String?) throws -> Self {
+        guard finishReason == "stop" else { throw ToolProtocolError.invalidResponse }
+        let segments = output.components(separatedBy: "</think>")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if segments == ["DELEGATE"] || segments == ["DELEGATE", "DELEGATE"] {
+            return .delegate
+        }
+
+        // A router signal embedded in an otherwise ambiguous output is never a direct answer.
+        guard segments.count == 1, !output.contains("<think"),
+            output.range(of: #"\bDELEGATE\b"#, options: .regularExpression) == nil,
+            case .answer(let text) = try ModelToolResponse.parse(output, finishReason: finishReason)
+        else { throw ToolProtocolError.invalidResponse }
+        return .answer(text)
+    }
+}
+
+public extension ToolWorkerHandoff {
+    /// The main conversation sees capability descriptions, while schemas stay in the worker.
+    static func instructions(
+        tools: [ModelToolSpecification], hasPriorLookup: Bool = false
+    ) throws -> String {
+        let capabilities = try ToolJSON.array(
+            tools.map {
+                .object(["name": .string($0.name), "description": .string($0.description)])
+            }
+        ).text()
+        let instructions = """
+            You are Embla. A tool worker can look up facts for you.
+            Its enabled capabilities are \(capabilities).
+            If answering the latest user question requires current or external facts covered
+            by those capabilities, output exactly DELEGATE and stop.
+
+            Carry the previous question's intent into short follow-ups. A different
+            location, subject or time requires a new lookup even when prior evidence
+            appears in the conversation. For example, after checking live weather
+            somewhere, "And in the next town?" requires DELEGATE if live weather is
+            supported. A question about the prior reading itself can use the old result.
+
+            Use prior evidence only for its original subject and location. If no enabled
+            capability can provide the requested fact, explain that and do not guess.
+            Answer ordinary questions directly. Never emit tool-call markup.
+            """
+        guard hasPriorLookup else { return instructions }
+        return instructions + """
+
+            A prior tool result is historical. A follow-up about a different location or a
+            fresh reading needs a new lookup. For example, after the time in Madrid, "What
+            about Lisbon?" requests a live time lookup. Output DELEGATE immediately for such
+            a request, even if the timezone identifier or another exact argument is unknown.
+            The worker resolves those arguments. For missing details about the prior result
+            itself, use the saved-evidence capability when listed.
+            """
+    }
+}

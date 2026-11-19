@@ -66,27 +66,7 @@
                 let tools = try workspace.specifications(using: cloud)
                 let instructions = try workspace.instructions(using: cloud)
                 let requestContext = try workspace.requestContext(using: cloud)
-                let capabilities = try ToolJSON.array(
-                    tools.map {
-                        .object(["name": .string($0.name), "description": .string($0.description)])
-                    }
-                ).text()
-                let routingInstructions = """
-                    You are Embla. A tool worker can look up facts for you.
-                    Its enabled capabilities are \(capabilities).
-                    If answering the latest user question requires current or external facts covered
-                    by those capabilities, output exactly DELEGATE and stop.
-
-                    Carry the previous question's intent into short follow-ups. A different
-                    location, subject or time requires a new lookup even when prior evidence
-                    appears in the conversation. For example, after checking live weather
-                    somewhere, "And in the next town?" requires DELEGATE if live weather is
-                    supported. A question about the prior reading itself can use the old result.
-
-                    Use prior evidence only for its original subject and location. If no enabled
-                    capability can provide the requested fact, explain that and do not guess.
-                    Answer ordinary questions directly. Never emit tool-call markup.
-                    """
+                let routingInstructions = try ToolWorkerHandoff.instructions(tools: tools)
                 let before = history
                 history.append(.init(role: .user, content: question))
                 let start = ContinuousClock.now
