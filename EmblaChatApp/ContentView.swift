@@ -21,6 +21,13 @@ struct ContentView: View {
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
 
+    #if DEBUG
+        private let testsTranscriptScroll = ProcessInfo.processInfo.arguments.contains(
+            "--tool-result-summary-fixture"
+        ) && ProcessInfo.processInfo.arguments.contains("--transcript-scroll-fixture")
+        @State private var transcriptFixtureStep = 0
+    #endif
+
     init(network: NetworkAccess = .shared) {
         #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--tool-result-summary-fixture") {
@@ -34,7 +41,8 @@ struct ContentView: View {
                         includeMCPSettings: ProcessInfo.processInfo.arguments.contains(
                             "--mcp-tool-settings-fixture"),
                         tallToolResult: ProcessInfo.processInfo.arguments.contains(
-                            "--tall-tool-result-fixture"))
+                            "--tall-tool-result-fixture"),
+                        transcriptScroll: testsTranscriptScroll)
                     _model = State(initialValue: fixture.model)
                     _quickActions = State(initialValue: fixture.actions)
                     _connectivity = State(initialValue: AppConnectivity(access: network))
@@ -82,14 +90,12 @@ struct ContentView: View {
 
     private struct Viewport: Equatable {
         let height: CGFloat
-        let contentHeight: CGFloat
         let offset: Double
         let bounds: ClosedRange<Double>
         let nearBottom: Bool
 
         init(_ geometry: ScrollGeometry) {
             height = geometry.containerSize.height
-            contentHeight = geometry.contentSize.height
             offset = geometry.contentOffset.y
             bounds = TranscriptScrollState.scrollBounds(
                 contentHeight: geometry.contentSize.height,
@@ -106,6 +112,13 @@ struct ContentView: View {
             ScrollViewReader { reader in
                 VStack(spacing: 0) {
                     #if DEBUG
+                        if testsTranscriptScroll {
+                            Button("Advance transcript fixture") {
+                                transcriptFixtureStep += 1
+                                model.advanceTranscriptScrollFixture(to: transcriptFixtureStep)
+                            }
+                            .disabled(!model.chatRestored || transcriptFixtureStep == 4)
+                        }
                         if ProcessInfo.processInfo.arguments.contains("--network-policy-fixture") {
                             Button("Test connectivity: " + connectivity.snapshot.path.rawValue) {
                                 model.tools.network.updatePath(
@@ -142,6 +155,7 @@ struct ContentView: View {
                     }
                     .frame(maxHeight: .infinity)
                     .clipped()
+                    .scrollBounceBehavior(.basedOnSize)
                     .scrollDismissesKeyboard(.interactively)
                     .onScrollGeometryChange(for: Viewport.self) { geometry in
                         Viewport(geometry)
@@ -149,21 +163,24 @@ struct ContentView: View {
                         if transcriptHeight != new.height { transcriptHeight = new.height }
                         transcriptScroll.geometryChanged(
                             offset: new.offset, nearBottom: new.nearBottom, bounds: new.bounds)
-                        if !actionsVisible && transcriptScroll.shouldScrollAutomatically
-                            && (old.height != new.height || old.contentHeight != new.contentHeight)
+                        if !actionsVisible && old.bounds != new.bounds
+                            && transcriptScroll.needsBottomAlignment(
+                                offset: new.offset, bounds: new.bounds)
                         {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
                     }
                     .onScrollPhaseChange { _, phase, context in
                         let viewport = Viewport(context.geometry)
+                        let wasReaderScrolling = transcriptScroll.readerScrolling
                         transcriptScroll.phaseChanged(
                             scrolling: phase == .tracking || phase == .interacting
                                 || phase == .decelerating,
                             offset: viewport.offset, nearBottom: viewport.nearBottom,
                             bounds: viewport.bounds)
-                        if phase == .idle && !actionsVisible
-                            && transcriptScroll.shouldScrollAutomatically
+                        if phase == .idle && wasReaderScrolling && !actionsVisible
+                            && transcriptScroll.needsBottomAlignment(
+                                offset: viewport.offset, bounds: viewport.bounds)
                         {
                             reader.scrollTo("latest-message", anchor: .bottom)
                         }
@@ -182,27 +199,19 @@ struct ContentView: View {
                             .padding(12)
                         }
                     }
-                    .onChange(of: model.messages.last?.text) { _, _ in
-                        if !actionsVisible && transcriptScroll.shouldScrollAutomatically {
-                            reader.scrollTo("latest-message", anchor: .bottom)
-                        }
-                    }
-                    .onChange(of: model.messages.last?.reasoning) { _, _ in
-                        if !actionsVisible && transcriptScroll.shouldScrollAutomatically {
-                            reader.scrollTo("latest-message", anchor: .bottom)
-                        }
-                    }
                     .onChange(of: model.messages.count) { oldCount, _ in
-                        if model.messages.isEmpty
-                            || model.messages.dropFirst(oldCount).contains(
-                                where: { $0.role == .user }
-                            )
-                        {
+                        let addedUserTurn = model.messages.dropFirst(oldCount).contains {
+                            $0.role == .user
+                        }
+                        if model.messages.isEmpty || addedUserTurn {
+                            let needsNavigation =
+                                showQuickActions || !transcriptScroll.followingOutput
                             showQuickActions = false
                             transcriptScroll.resumeFollowing()
-                        }
-                        if !actionsVisible && transcriptScroll.shouldScrollAutomatically {
-                            reader.scrollTo("latest-message", anchor: .bottom)
+                            if addedUserTurn && needsNavigation && !transcriptScroll.readerScrolling
+                            {
+                                reader.scrollTo("latest-message", anchor: .bottom)
+                            }
                         }
                     }
                     composer

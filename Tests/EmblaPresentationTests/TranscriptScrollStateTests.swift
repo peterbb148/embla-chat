@@ -1,6 +1,35 @@
 import Testing
+
 @testable import EmblaPresentation
 
+@Test func toolAndAnswerGrowthOnlyFollowAfterOverflow() {
+    let state = TranscriptScrollState()
+    let viewportHeight = 700.0
+    for contentHeight in [90.0, 250, 460, 700] {
+        let bounds = TranscriptScrollState.scrollBounds(
+            contentHeight: contentHeight, viewportHeight: viewportHeight)
+        #expect(!state.needsBottomAlignment(offset: 0, bounds: bounds))
+    }
+
+    let overflowing = TranscriptScrollState.scrollBounds(
+        contentHeight: 750, viewportHeight: viewportHeight)
+    #expect(state.needsBottomAlignment(offset: 0, bounds: overflowing))
+    #expect(!state.needsBottomAlignment(offset: 49.5, bounds: overflowing))
+    #expect(!state.needsBottomAlignment(offset: 52, bounds: overflowing))
+}
+
+@Test func growthDoesNotMoveTranscriptDuringAHoldOrToolInspection() {
+    var state = TranscriptScrollState()
+    let bounds = 0.0...650.0
+    state.phaseChanged(scrolling: true, offset: 200, nearBottom: false, bounds: bounds)
+    #expect(!state.needsBottomAlignment(offset: 200, bounds: bounds))
+
+    state.phaseChanged(scrolling: false, offset: 200, nearBottom: false, bounds: bounds)
+    #expect(state.needsBottomAlignment(offset: 200, bounds: bounds))
+
+    state.pauseFollowing()
+    #expect(!state.needsBottomAlignment(offset: 200, bounds: bounds))
+}
 @Test func holdingTranscriptWhileOutputGrowsDoesNotDisableFollowing() {
     var state = TranscriptScrollState()
     state.phaseChanged(scrolling: true, offset: 500, nearBottom: true)

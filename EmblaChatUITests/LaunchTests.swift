@@ -312,6 +312,36 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor
+    func testToolAndStreamKeepShortTranscriptAnchoredThenFollowOverflow() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--tool-result-summary-fixture", "--transcript-scroll-fixture"]
+        app.launchEnvironment["EMBLA_TOOL_SUMMARY_FIXTURE_ID"] = UUID().uuidString
+        app.launch()
+        let prompt = app.staticTexts["user-message"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        let initialY = prompt.frame.minY
+        let advance = app.buttons["Advance transcript fixture"]
+
+        advance.tap()
+        XCTAssertTrue(app.staticTexts["Running tool…"].waitForExistence(timeout: 5))
+        XCTAssertEqual(prompt.frame.minY, initialY, accuracy: 2)
+
+        advance.tap()
+        XCTAssertTrue(app.staticTexts["First streamed line."].waitForExistence(timeout: 5))
+        XCTAssertEqual(prompt.frame.minY, initialY, accuracy: 2)
+
+        let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
+        for line in ["First overflow line.", "Later streamed line."] {
+            advance.tap()
+            let tail = app.staticTexts[line]
+            let reachedTail = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "hittable == true"), object: tail)
+            XCTAssertEqual(XCTWaiter.wait(for: [reachedTail], timeout: 10), .completed, line)
+            XCTAssertLessThan(tail.frame.maxY, composer.frame.minY, line)
+        }
+    }
+
+    @MainActor
     func testInspectingTallToolResponseKeepsItsHeaderInPlace() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--tool-result-summary-fixture", "--tall-tool-result-fixture"]

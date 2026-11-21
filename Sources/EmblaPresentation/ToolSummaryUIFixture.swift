@@ -8,7 +8,7 @@ extension LocalInferenceModel {
     /// Explicit, isolated saved-history fixture; never substitutes a generation backend.
     public static func toolSummaryUIFixture(
         id: UUID, network: NetworkAccess, includeMCPSettings: Bool = false,
-        tallToolResult: Bool = false
+        tallToolResult: Bool = false, transcriptScroll: Bool = false
     ) throws
         -> (model: LocalInferenceModel, actions: QuickActionsModel)
     {
@@ -27,13 +27,16 @@ extension LocalInferenceModel {
             }
             result.toolName = "synthetic_lookup"
             result.toolResultSummary = "The source reports BLUE PENGUIN (https://example.com/fact)."
+            var messages = [ChatMessage(role: .user, text: "Synthetic tool-summary UI fixture.")]
+            if !transcriptScroll {
+                messages.append(result)
+                messages.append(
+                    ChatMessage(role: .assistant, text: "BLUE PENGUIN — https://example.com/fact"))
+            }
             let archive = ConversationArchive(
                 sequence: 1,
                 snapshot: ConversationSnapshot(
-                    conversationID: UUID(), messages: [
-                        ChatMessage(role: .user, text: "Synthetic tool-summary UI fixture."), result,
-                        ChatMessage(role: .assistant, text: "BLUE PENGUIN — https://example.com/fact"),
-                    ], compaction: .init()))
+                    conversationID: UUID(), messages: messages, compaction: .init()))
             try archive.validate()
             try JSONEncoder().encode(archive).write(to: file, options: .atomic)
         }

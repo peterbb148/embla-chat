@@ -21,7 +21,9 @@ continues to update, including an incomplete fence parsed by the native Markdown
 
 ## Scrolling and keyboard
 
-The transcript follows text/reasoning growth while the reader is near the bottom.
+The transcript stays in place while a tool result or streamed answer fits in the
+viewport. Once the transcript overflows, it follows the measured bottom edge while
+the reader is following output.
 Only reader-initiated scrolling updates the follow preference; growing content no longer
 looks like a request to stop following. Scrolling up exposes Jump to latest. Sending a
 new user message, restoring another conversation or clearing a chat returns to the latest

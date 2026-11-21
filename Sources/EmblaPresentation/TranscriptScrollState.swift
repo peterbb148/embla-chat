@@ -21,6 +21,12 @@ public struct TranscriptScrollState {
 
     public var shouldScrollAutomatically: Bool { followingOutput && !readerScrolling }
 
+    /// Follow only when the laid-out transcript has room to move toward the bottom.
+    public func needsBottomAlignment(offset: Double, bounds: ClosedRange<Double>) -> Bool {
+        let gap = bounds.upperBound - Self.boundedOffset(offset, within: bounds)
+        return shouldScrollAutomatically && gap > 1
+    }
+
     /// Call with phase-context geometry, including the final offset before ending a gesture.
     public mutating func phaseChanged(
         scrolling: Bool, offset: Double, nearBottom: Bool,
