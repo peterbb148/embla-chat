@@ -361,9 +361,12 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["Jump to latest"].waitForExistence(timeout: 5))
         XCTAssertTrue(inspector.isHittable)
         XCTAssertEqual(inspector.frame.minY, initialY, accuracy: 4)
-        let initialTextY = firstPart.frame.minY
-        pane.swipeUp()
-        XCTAssertTrue(!firstPart.exists || firstPart.frame.minY < initialTextY)
+        let secondPart = pane.staticTexts["tool-response-part-1"]
+        for _ in 0..<6 {
+            if secondPart.exists && pane.frame.intersects(secondPart.frame) { break }
+            pane.swipeUp()
+        }
+        XCTAssertTrue(secondPart.exists && pane.frame.intersects(secondPart.frame))
         XCTAssertEqual(inspector.frame.minY, initialY, accuracy: 4)
         XCTAssertTrue(app.buttons["Copy tool details"].isHittable)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
