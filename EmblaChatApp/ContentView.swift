@@ -21,6 +21,13 @@ struct ContentView: View {
     @FocusState private var composerFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
 
+    #if DEBUG
+        private let testsTranscriptScroll = ProcessInfo.processInfo.arguments.contains(
+            "--tool-result-summary-fixture"
+        ) && ProcessInfo.processInfo.arguments.contains("--transcript-scroll-fixture")
+        @State private var transcriptFixtureStep = 0
+    #endif
+
     init(network: NetworkAccess = .shared) {
         #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--tool-result-summary-fixture") {
@@ -34,7 +41,8 @@ struct ContentView: View {
                         includeMCPSettings: ProcessInfo.processInfo.arguments.contains(
                             "--mcp-tool-settings-fixture"),
                         tallToolResult: ProcessInfo.processInfo.arguments.contains(
-                            "--tall-tool-result-fixture"))
+                            "--tall-tool-result-fixture"),
+                        transcriptScroll: testsTranscriptScroll)
                     _model = State(initialValue: fixture.model)
                     _quickActions = State(initialValue: fixture.actions)
                     _connectivity = State(initialValue: AppConnectivity(access: network))
@@ -104,6 +112,13 @@ struct ContentView: View {
             ScrollViewReader { reader in
                 VStack(spacing: 0) {
                     #if DEBUG
+                        if testsTranscriptScroll {
+                            Button("Advance transcript fixture") {
+                                transcriptFixtureStep += 1
+                                model.advanceTranscriptScrollFixture(to: transcriptFixtureStep)
+                            }
+                            .disabled(!model.chatRestored || transcriptFixtureStep == 3)
+                        }
                         if ProcessInfo.processInfo.arguments.contains("--network-policy-fixture") {
                             Button("Test connectivity: " + connectivity.snapshot.path.rawValue) {
                                 model.tools.network.updatePath(

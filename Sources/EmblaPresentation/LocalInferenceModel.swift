@@ -84,6 +84,31 @@ public final class LocalInferenceModel {
     public private(set) var messages: [ChatMessage] = [] {
         didSet { refreshContextUsage() }
     }
+
+    #if DEBUG
+        /// Drives the isolated transcript layout fixture without starting inference or networking.
+        public func advanceTranscriptScrollFixture(to step: Int) {
+            switch step {
+            case 1:
+                var tool = ChatMessage(role: .assistant, text: "", state: .streaming)
+                tool.toolName = "synthetic_lookup"
+                messages.append(tool)
+            case 2:
+                let toolIndex = messages.count - 1
+                messages[toolIndex].text = "Synthetic tool result."
+                messages[toolIndex].state = .complete
+                messages.append(ChatMessage(
+                    role: .assistant, text: "First streamed line.", state: .streaming))
+            case 3:
+                let answerIndex = messages.count - 1
+                let continuation = (1...40).map { "Streamed paragraph \($0)." }
+                    + ["Final streamed line."]
+                messages[answerIndex].text += "\n\n" + continuation.joined(separator: "\n\n")
+            default: preconditionFailure("Unexpected transcript fixture step")
+            }
+        }
+    #endif
+
     public private(set) var manifest: ModelManifest?
     public private(set) var readyDirectory: URL? {
         didSet { refreshContextUsage() }
