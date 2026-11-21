@@ -99,10 +99,11 @@ public final class LocalInferenceModel {
                 messages[toolIndex].state = .complete
                 messages.append(ChatMessage(
                     role: .assistant, text: "First streamed line.", state: .streaming))
-            case 3:
+            case 3, 4:
                 let answerIndex = messages.count - 1
-                let continuation = (1...40).map { "Streamed paragraph \($0)." }
-                    + ["Final streamed line."]
+                let paragraphs = step == 3 ? 1...40 : 41...48
+                let tail = step == 3 ? "First overflow line." : "Later streamed line."
+                let continuation = paragraphs.map { "Streamed paragraph \($0)." } + [tail]
                 messages[answerIndex].text += "\n\n" + continuation.joined(separator: "\n\n")
             default: preconditionFailure("Unexpected transcript fixture step")
             }

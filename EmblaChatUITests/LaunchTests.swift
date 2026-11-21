@@ -330,13 +330,15 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["First streamed line."].waitForExistence(timeout: 5))
         XCTAssertEqual(prompt.frame.minY, initialY, accuracy: 2)
 
-        advance.tap()
-        let tail = app.staticTexts["Final streamed line."]
-        let reachedTail = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "hittable == true"), object: tail)
-        XCTAssertEqual(XCTWaiter.wait(for: [reachedTail], timeout: 10), .completed)
         let composer = app.descendants(matching: .any).matching(identifier: "prompt").firstMatch
-        XCTAssertLessThan(tail.frame.maxY, composer.frame.minY)
+        for line in ["First overflow line.", "Later streamed line."] {
+            advance.tap()
+            let tail = app.staticTexts[line]
+            let reachedTail = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "hittable == true"), object: tail)
+            XCTAssertEqual(XCTWaiter.wait(for: [reachedTail], timeout: 10), .completed, line)
+            XCTAssertLessThan(tail.frame.maxY, composer.frame.minY, line)
+        }
     }
 
     @MainActor

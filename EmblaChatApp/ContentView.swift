@@ -117,7 +117,7 @@ struct ContentView: View {
                                 transcriptFixtureStep += 1
                                 model.advanceTranscriptScrollFixture(to: transcriptFixtureStep)
                             }
-                            .disabled(!model.chatRestored || transcriptFixtureStep == 3)
+                            .disabled(!model.chatRestored || transcriptFixtureStep == 4)
                         }
                         if ProcessInfo.processInfo.arguments.contains("--network-policy-fixture") {
                             Button("Test connectivity: " + connectivity.snapshot.path.rawValue) {
