@@ -102,7 +102,8 @@ public actor MCPClient {
     private let token: String?
     private let transport: NetworkTransport
     private let network: NetworkAccess
-    private static let limit = 131_072
+    private static let discoveryResponseLimit = 128 * 1024
+    private static let toolResponseLimit = 1024 * 1024
 
     struct Timeouts: Sendable {
         var discovery: TimeInterval = 60
@@ -172,11 +173,11 @@ public actor MCPClient {
                     warnings.append("Excluded '\(name)': invalid x-mcp-header declaration.")
                 }
             }
-            guard tools.count <= 64 else { throw MCPFailure.limit }
+            guard tools.count <= 64 else { throw MCPFailure.toolListLimit }
             cursor = page["nextCursor"]?.string
             if let cursor {
                 guard cursors.insert(cursor).inserted, cursors.count <= 16 else {
-                    throw MCPFailure.limit
+                    throw MCPFailure.toolListLimit
                 }
             }
         } while cursor != nil
@@ -289,8 +290,11 @@ public actor MCPClient {
         guard now < deadline else { throw MCPFailure.requestTimedOut }
         let remaining = now.duration(to: deadline).components
         request.timeoutInterval = Double(remaining.seconds) + Double(remaining.attoseconds) / 1e18
+        let responseLimit =
+            method == "tools/call" ? Self.toolResponseLimit : Self.discoveryResponseLimit
         let (bytes, response) = try await transport.response(
-            for: request, access: network, limit: Self.limit, overflow: MCPFailure.limit)
+            for: request, access: network, limit: responseLimit,
+            overflow: MCPFailure.responseTooLarge(bytes: responseLimit))
         defer { bytes.task.cancel() }
         try bytes.task.check()
         guard let response = response as? HTTPURLResponse else { throw MCPFailure.invalidResponse }
@@ -298,10 +302,9 @@ public actor MCPClient {
         if response.statusCode != 200 {
             if type.hasPrefix("application/json") {
                 var data = Data()
-                for try await byte in bytes {
-                    try Task.checkCancellation()
-                    guard data.count < Self.limit else { throw MCPFailure.limit }
-                    data.append(byte)
+                for try await chunk in bytes.chunks {
+                    try bytes.task.check()
+                    data.append(chunk)
                 }
                 if let message = try? Self.decode(data),
                     message["jsonrpc"] == .string("2.0"),
@@ -318,10 +321,9 @@ public actor MCPClient {
         }
         if type.hasPrefix("application/json") {
             var data = Data()
-            for try await byte in bytes {
-                try Task.checkCancellation()
-                guard data.count < Self.limit else { throw MCPFailure.limit }
-                data.append(byte)
+            for try await chunk in bytes.chunks {
+                try bytes.task.check()
+                data.append(chunk)
             }
             try bytes.task.check()
             return try Self.resultBeforeDeadline(data, id: id, deadline: deadline)
@@ -329,13 +331,10 @@ public actor MCPClient {
         guard type.hasPrefix("text/event-stream") else { throw MCPFailure.invalidResponse }
         var line = Data()
         var event: [String] = []
-        var size = 0
         var afterCarriageReturn = false
         var firstLine = true
         for try await byte in bytes {
             try Task.checkCancellation()
-            size += 1
-            guard size <= Self.limit else { throw MCPFailure.limit }
             if afterCarriageReturn {
                 afterCarriageReturn = false
                 if byte == 10 { continue }
@@ -497,7 +496,8 @@ struct MCPParameterHeader: Sendable, Equatable {
 public enum MCPFailure: Error, LocalizedError, Sendable {
     case endpoint, credential, credentialUnavailable, authentication, toolsUnavailable,
         invalidResponse, invalidHeaders,
-        limit, requestTimedOut
+        toolListLimit, requestTimedOut
+    case responseTooLarge(bytes: Int)
     case http(Int), rpc(ToolJSON), httpRPC(Int, ToolJSON), toolError(ToolJSON)
 
     public var errorDescription: String? {
@@ -518,7 +518,10 @@ public enum MCPFailure: Error, LocalizedError, Sendable {
                 "The server did not return a valid supported MCP 2026-07-28 response. Check protocol compatibility."
         case .invalidHeaders:
             return "The tool has an invalid MCP parameter-header declaration or value."
-        case .limit: return "The server response exceeds the supported size or tool-list limit."
+        case .toolListLimit:
+            return "The MCP tool catalogue exceeds the supported tool or pagination limit."
+        case .responseTooLarge(let bytes):
+            return "The MCP response exceeds this request’s \(bytes / 1024) KiB limit."
         case .requestTimedOut:
             return "The MCP request exceeded its time limit. Its outcome is unknown; retry explicitly if appropriate."
         case .http(let code):

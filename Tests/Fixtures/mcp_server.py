@@ -101,6 +101,15 @@ class Handler(BaseHTTPRequestHandler):
                 result["isError"] = "true"
             elif self.path == "/numeric-overflow":
                 result["structuredContent"]["number"] = "fixture-excess-precision"
+            elif self.path in {"/large-json", "/large-sse", "/over-limit-json", "/over-limit-sse"}:
+                size = (1024 if self.path.startswith("/over-limit-") else 192) * 1024
+                result["content"][0]["text"] = "x" * size
+        if request["method"] == "tools/list":
+            if self.path == "/oversized-catalogue-body":
+                result["tools"][0]["description"] = "x" * (128 * 1024)
+            elif self.path == "/too-many-tools":
+                template = result["tools"][0]
+                result["tools"] = [dict(template, name=f"echo-{i}") for i in range(65)]
         if self.path == "/paged-discovery" and request["method"] == "tools/list":
             if params.get("cursor") is None:
                 result["nextCursor"] = "second-page"
@@ -110,7 +119,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/wrong-id":
             response["id"] = "not-the-request-id"
         if self.path in {"/sse", "/sse-cr", "/sse-bom", "/slow", "/invalid-utf8"} or (
-            self.path == "/progress-tool" and request["method"] == "tools/call"
+            self.path in {"/progress-tool", "/large-sse", "/over-limit-sse"}
+            and request["method"] == "tools/call"
         ):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
