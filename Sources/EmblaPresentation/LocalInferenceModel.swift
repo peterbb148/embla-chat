@@ -38,7 +38,7 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
         return """
             \(metadata)
             Tool result summarized locally for context (full original retained in this chat):
-            \(toolResultSummary)
+            \(toolResultSummary.replacingOccurrences(of: "<", with: "\\u003c"))
             """
     }
 
@@ -316,7 +316,8 @@ public final class LocalInferenceModel {
             if message.workerToolRequest == true {
                 let detail =
                     message.toolResultSummary.map {
-                        "Partial earlier lookup (locally summarized): " + $0
+                        "Partial earlier lookup (locally summarized): "
+                            + $0.replacingOccurrences(of: "<", with: "\\u003c")
                     }
                     ?? "Earlier tool request did not complete an answer. The original is available in saved tool history."
                 return ConversationMessage(role: .assistant, content: detail)
@@ -775,14 +776,16 @@ public final class LocalInferenceModel {
                 if Task.isCancelled { run.cancel(); break }
                 switch event {
                 case .answer(let text): answer += text
-                case .reasoning(let text): thought += text
+                case .reasoning(let text):
+                    thought += text
+                    reasoning = thought
+                    messages[responseIndex].reasoning = thought
+                    scheduleChatSave()
                 case .finished(let metrics): measured = metrics
                 }
                 if let visible = ModelToolResponse.displayableAnswer(answer) {
                     self.answer = visible
-                    reasoning = thought
                     messages[responseIndex].text = visible
-                    messages[responseIndex].reasoning = thought
                     scheduleChatSave()
                 }
             }

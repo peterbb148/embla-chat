@@ -161,13 +161,18 @@ public enum ModelToolResponse: Sendable, Equatable {
         "<tool_call", "</tool_call", "<function=", "</function", "<parameter=", "</parameter",
     ]
 
+    private static func incompleteMarkerStart(in text: String) -> String.Index? {
+        guard let start = text.lastIndex(of: "<"),
+            reservedMarkers.contains(where: { $0.hasPrefix(text[start...]) })
+        else { return nil }
+        return start
+    }
+
     /// Stream ordinary prose without showing a complete or partially emitted tool marker.
     public static func displayableAnswer(_ output: String) -> String? {
         guard !reservedMarkers.contains(where: { output.contains($0) }) else { return nil }
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let start = trimmed.lastIndex(of: "<"),
-            reservedMarkers.contains(where: { $0.hasPrefix(trimmed[start...]) })
-        {
+        if let start = incompleteMarkerStart(in: trimmed) {
             let prefix = trimmed[..<start].trimmingCharacters(in: .whitespacesAndNewlines)
             return prefix.isEmpty ? nil : prefix
         }
@@ -182,7 +187,9 @@ public enum ModelToolResponse: Sendable, Equatable {
         guard finishReason == "stop" else { throw ToolProtocolError.invalidResponse }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard reservedMarkers.contains(where: { text.contains($0) }) else {
-            guard !text.isEmpty else { throw ToolProtocolError.invalidResponse }
+            guard !text.isEmpty, incompleteMarkerStart(in: text) == nil else {
+                throw ToolProtocolError.invalidResponse
+            }
             return .answer(text)
         }
         var remainder = text[...]

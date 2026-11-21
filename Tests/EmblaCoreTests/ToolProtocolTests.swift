@@ -32,6 +32,17 @@ import Testing
                 server: "test", name: "record", arguments: ["id": .integer(9_007_199_254_740_993)]))
 }
 
+@Test func incompleteToolMarkupCannotFinalizeAsAnAnswer() {
+    #expect(ModelToolResponse.displayableAnswer("<tool_ca") == nil)
+    #expect(ModelToolResponse.displayableAnswer("Result <tool_ca") == "Result")
+    #expect(throws: ToolProtocolError.self) {
+        try ModelToolResponse.parse("<tool_ca", finishReason: "stop")
+    }
+    #expect(throws: ToolProtocolError.self) {
+        try ModelToolResponse.parse("Result <tool_ca", finishReason: "stop")
+    }
+}
+
 @Test func strictToolProtocolUsesNativeCallsAndRejectsPartialOrUnknownRequests() throws {
     let tool = ModelToolSpecification(
         server: "weather", name: "now", description: "Weather",

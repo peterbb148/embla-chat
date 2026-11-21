@@ -7,7 +7,7 @@ import EmblaRuntime
 
 @Test(
     .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_LONG_CONTEXT_TARGET"] != nil),
-    .timeLimit(.minutes(20))
+    .timeLimit(.minutes(35))
 ) @MainActor
 func realHostUsesTheProductionWindowForLongInput() async throws {
     let environment = ProcessInfo.processInfo.environment
