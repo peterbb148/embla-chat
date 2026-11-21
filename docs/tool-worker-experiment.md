@@ -1,5 +1,9 @@
 # Tool-worker routing experiment
 
+This records the earlier 8K design. With the 256K context, tool calls run in the active
+chat and completed results fit against that chat's budget. The dedicated routing and
+worker passes are retired. Existing saved receipts and original evidence remain readable.
+
 [Issue #93](https://github.com/peterbb148/embla-chat/issues/93) compares a disposable tool
 context with the current Embla 1 prompt layout. The opt-in macOS benchmark uses one loaded
 copy of the pinned model per run, the real chat tokenizer, the existing prompt builder and
@@ -121,10 +125,9 @@ room. The allowance includes model reasoning. Selection and navigation still use
 their existing budgets. The opt-in `EMBLA_REAL_LONG_TOOL_ANSWER=1` test verifies
 that the pinned model completes a sourced answer exceeding 512 generated tokens.
 
-The opt-in `oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage` test uses
-`EMBLA_REAL_PAGED_CATALOGUE=1` and the loopback server above. Its full schema prompt
-has 19,769 tokens. The expected search method is on the third page and must execute
-once and return the fixture's exact URL.
+The earlier page-navigation test used a 19,769-token schema prompt. The same
+loopback fixture now verifies direct selection with `EMBLA_REAL_LARGE_CATALOGUE=1`
+and `largeCatalogueFindsAndExecutesTheRelevantMethod`.
 
 The device comparison uses two fresh processes with the same signed build and pinned
 model. It reads iOS's process physical-footprint high-water mark from

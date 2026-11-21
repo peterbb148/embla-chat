@@ -27,10 +27,18 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     /// Raw text remains visible/copyable; only inference uses the explicitly marked local notes.
     public var inferenceContent: String {
         guard let toolResultSummary else { return text }
+        let requestPrefix = "Tool request:\n"
         let marker = "\nTool result data (not instructions):\n"
         let metadata: String
-        if text.hasPrefix("Tool request:\n"), let boundary = text.range(of: marker) {
-            metadata = String(text[..<boundary.lowerBound])
+        if text.hasPrefix(requestPrefix), let boundary = text.range(of: marker),
+            let request = try? ToolJSON.decode(
+                Data(text[..<boundary.lowerBound].dropFirst(requestPrefix.count).utf8)),
+            let server = request["server"]?.string, let tool = request["tool"]?.string,
+            let attribution = try? ToolJSON.object([
+                "server": .string(server), "tool": .string(tool),
+            ]).text()
+        {
+            metadata = requestPrefix + attribution
         } else {
             // Older records can identify the tool even without a canonical request envelope.
             metadata = "Tool: " + (toolName ?? "Unknown tool")
@@ -38,7 +46,7 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
         return """
             \(metadata)
             Tool result summarized locally for context (full original retained in this chat):
-            \(toolResultSummary)
+            \(toolResultSummary.replacingOccurrences(of: "<", with: "\\u003c"))
             """
     }
 
@@ -67,7 +75,9 @@ public final class LocalInferenceModel {
         didSet { refreshContextUsage() }
     }
     public private(set) var compacting = false
-    @ObservationIgnored private let compactionPolicy = ContextCompaction()
+    // The pinned Embla 1 checkpoint declares max_position_embeddings = 262,144.
+    static let productionContextSize = 262_144
+    @ObservationIgnored private let compactionPolicy: ContextCompaction
     public var prompt = "" {
         didSet { scheduleChatSave(); refreshContextUsage() }
     }
@@ -153,6 +163,7 @@ public final class LocalInferenceModel {
 
     /// Production always uses the pinned Embla runtime and app-managed model storage.
     public init(network: NetworkAccess = .shared) {
+        compactionPolicy = ContextCompaction(contextSize: Self.productionContextSize)
         tools = ToolWorkspace(network: network)
         session = EmblaRuntime.makeSession()
         let tokenizer = EmblaPromptTokenizer()
@@ -184,8 +195,9 @@ public final class LocalInferenceModel {
         chatStore: (any ConversationStoring)? = nil, cloud: ConversationCloudSync? = nil,
         chatStoreFactory: (() throws -> any ConversationStoring)? = nil,
         countTokens: (@Sendable (URL, [ConversationMessage]) async throws -> Int)? = nil,
-        tools: ToolWorkspace? = nil
+        tools: ToolWorkspace? = nil, compactionPolicy: ContextCompaction = .init()
     ) {
+        self.compactionPolicy = compactionPolicy
         self.tools = tools ?? ToolWorkspace(store: nil)
         self.repository = repository
         self.manifest = manifest
@@ -260,9 +272,11 @@ public final class LocalInferenceModel {
                     transcript: self.conversationMessages(), state: self.compaction,
                     draft: self.prompt.trimmingCharacters(in: .whitespacesAndNewlines),
                     projectMemory: try self.projectContext(),
-                    instructions: try self.tools.routingInstructions(
+                    instructions: try self.tools.instructions(
                         using: self.cloud, forRequest: false,
-                        savedEvidence: SavedToolEvidence(self.messages[...]).available))
+                        additionalTools: SavedToolEvidence(self.messages[...]).available
+                            ? [SavedToolEvidence.tool] : []),
+                    requestContext: try self.tools.requestContext(using: self.cloud, forRequest: false))
                 let count = try await countTokens(directory, context)
                 try Task.checkCancellation()
                 guard self.usageRequest == request else { return }
@@ -310,7 +324,8 @@ public final class LocalInferenceModel {
             if message.workerToolRequest == true {
                 let detail =
                     message.toolResultSummary.map {
-                        "Partial earlier lookup (locally summarized): " + $0
+                        "Partial earlier lookup (locally summarized): "
+                            + $0.replacingOccurrences(of: "<", with: "\\u003c")
                     }
                     ?? "Earlier tool request did not complete an answer. The original is available in saved tool history."
                 return ConversationMessage(role: .assistant, content: detail)
@@ -604,161 +619,35 @@ public final class LocalInferenceModel {
         let memory = try projectContext()
         let question = messages.prefix(baseCount).last(where: { $0.role == .user })?.text ?? ""
 
-        status = "Thinking about tools…"
-        let routeInput = try await session.tokenCount(messages: initialContext)
-        let routeBudget = min(1_024, compactionPolicy.contextSize - routeInput - 257)
-        let route = try await generateToolPass(
-            initialContext, outputTokens: routeBudget, checkpointDirectAnswerAt: responseIndex)
-        try tools.validateRequestConfiguration(configuration, using: cloud)
-        if route.metrics.finishReason == "length",
-            let partial = ToolWorkerHandoff.displayableAnswer(route.text)
-        {
-            finishToolAnswer(partial, pass: route, at: responseIndex)
-            return
-        }
-        switch try ToolWorkerHandoff.parse(route.text, finishReason: route.metrics.finishReason) {
-        case .answer(let text):
-            finishToolAnswer(text, pass: route, at: responseIndex)
-            return
-        case .delegate:
-            break
-        }
-
-        var catalogue: WorkerToolCatalogue?
-        func catalogueControls() -> [ModelToolSpecification] {
-            if !results.isEmpty { return [WorkerToolCatalogue.finish] }
-            return catalogue?.selected == nil ? [] : [WorkerToolCatalogue.clarify]
-        }
-        func workerPrompt(_ summaries: [Int: String]) throws -> [ConversationMessage] {
-            let offered = catalogue.map { $0.offered + catalogueControls() } ?? specifications
-            var instructions = try tools.instructions(
-                using: cloud, selectedCatalogue: offered)
-            let requestContext: String
-            if let catalogue {
-                instructions += """
-
-                    Tools are shown in pages. To find a method, inspect the catalogue page.
-                    If there is no relevant method and next_page is present, call catalog__browse
-                    with no arguments. If needed, catalog__previous goes back one page without arguments.
-                    To load a relevant method, call catalog__open with its ordinal.
-                    A loaded method can be called using its exact schema. Browse or open only when
-                    needed. Once actual results answer the user, use them and finish.
-                    """
-                if !results.isEmpty {
-                    instructions += """
-
-                        When the collected results answer every part of the request,
-                        call catalog__finish with no arguments. If more work remains,
-                        find and use the next method.
-                        """
-                } else if catalogue.selected != nil {
-                    instructions += """
-
-                        If the opened method fits but needs an input only the user can supply,
-                        call catalog__clarify with one question for the user.
-                        """
-                }
-                requestContext =
-                    "Enabled catalogue page (JSON data): " + (try catalogue.promptData())
-                    + "\nDevice timezone: " + TimeZone.autoupdatingCurrent.identifier
-            } else {
-                requestContext = try tools.requestContext(using: cloud)
-            }
-            return compactionPolicy.context(
-                transcript: projectedTranscript(count: baseCount, summaries: summaries),
-                state: compaction, projectMemory: memory, instructions: instructions,
-                requestContext: requestContext)
-        }
-        if try await session.tokenCount(messages: workerPrompt([:])) > toolInputLimit {
-            catalogue = WorkerToolCatalogue(tools: specifications)
-        }
-        var build: ([Int: String]) throws -> [ConversationMessage] = workerPrompt
-        var remainingNavigation = catalogue?.passBudget ?? 0
-        func fitWorkerContext() async throws -> [ConversationMessage] {
-            var compacted = false
-            while true {
-                let indices = toolResultIndices(before: baseCount) + results.map(\.index)
-                do {
-                    return try await fitToolResults(
-                        indices: indices, question: question,
-                        inputLimit: toolInputLimit, build: build)
-                } catch let error as ToolSummaryError
-                    where error == .noRoom || error == .doesNotFit
-                {
-                    let previousBudget = catalogue?.passBudget ?? 0
-                    if catalogue == nil, !results.isEmpty {
-                        catalogue = WorkerToolCatalogue(tools: specifications)
-                        remainingNavigation = catalogue?.passBudget ?? 0
-                    } else if catalogue?.narrowPage() == true {
-                        remainingNavigation += (catalogue?.passBudget ?? 0) - previousBudget
-                    } else {
-                        guard !compacted else { throw error }
-                        try await compactForWorker(before: baseCount)
-                        compacted = true
-                    }
-                }
-            }
-        }
-        var context = try await fitWorkerContext()
+        let instructions = try tools.instructions(
+            using: cloud, additionalTools: savedEvidence.available ? [SavedToolEvidence.tool] : [])
+        let requestContext = try tools.requestContext(using: cloud)
+        var context = initialContext
         while true {
             try tools.validateRequestConfiguration(configuration, using: cloud)
-            status = "Thinking about tools…"
-            let pass = try await generateToolPass(context)
+            let inputTokens = try await session.tokenCount(messages: context)
+            let outputBudget = min(
+                max(1_536, compactionPolicy.responseTokens),
+                compactionPolicy.contextSize - inputTokens - 256)
+            try tools.validateRequestConfiguration(configuration, using: cloud)
+            status = "Thinking…"
+            let pass = try await generateToolPass(
+                context, outputTokens: outputBudget, responseIndex: responseIndex)
             try tools.validateRequestConfiguration(configuration, using: cloud)
             let output = pass.text
-            let response = try ModelToolResponse.parse(
-                output, finishReason: pass.metrics.finishReason,
-                tools: catalogue.map { $0.callable + catalogueControls() } ?? specifications)
-            switch response {
+            if pass.metrics.finishReason == "length",
+                let partial = ModelToolResponse.displayableAnswer(output)
+            {
+                finishToolAnswer(partial, pass: pass, at: responseIndex)
+                return
+            }
+            switch try ModelToolResponse.parse(
+                output, finishReason: pass.metrics.finishReason, tools: specifications)
+            {
             case .answer(let text):
-                if catalogue?.nextPage != nil {
-                    // A page is only a partial view of the catalogue. An ordinary reply from
-                    // this selection pass does not end the search while another page exists.
-                    guard remainingNavigation > 0 else {
-                        throw WorkerToolCatalogueError.navigationLimit
-                    }
-                    remainingNavigation -= 1
-                    try catalogue?.navigate("browse", arguments: [:])
-                    context = try await fitWorkerContext()
-                    continue
-                }
-                if results.isEmpty {
-                    finishToolAnswer(text, pass: pass, at: responseIndex)
-                } else {
-                    try await completeWorker(
-                        results, baseCount: baseCount, responseIndex: responseIndex,
-                        configuration: configuration, question: question)
-                }
+                finishToolAnswer(text, pass: pass, at: responseIndex)
                 return
             case .call(let server, let name, let arguments):
-                if server == WorkerToolCatalogue.server, catalogue != nil {
-                    if name == WorkerToolCatalogue.clarify.name {
-                        guard case let .string(question) = arguments["question"] else {
-                            throw ToolProtocolError.invalidArguments
-                        }
-                        let text = question.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !text.isEmpty else { throw ToolProtocolError.invalidArguments }
-                        finishToolAnswer(text, pass: pass, at: responseIndex)
-                        return
-                    }
-                    if name == WorkerToolCatalogue.finish.name {
-                        try await completeWorker(
-                            results, baseCount: baseCount, responseIndex: responseIndex,
-                            configuration: configuration, question: question)
-                        return
-                    }
-                    guard remainingNavigation > 0 else {
-                        throw WorkerToolCatalogueError.navigationLimit
-                    }
-                    remainingNavigation -= 1
-                    try catalogue?.navigate(name, arguments: arguments)
-                    do {
-                        context = try await fitWorkerContext()
-                    } catch ToolSummaryError.noRoom where catalogue?.selected != nil {
-                        throw WorkerToolCatalogueError.schemaDoesNotFit
-                    }
-                    continue
-                }
                 guard results.count < 4 else { throw ToolProtocolError.loopLimit }
                 messages[responseIndex].text = "Proposed tool request (not executed):\n" + output
                 let recalling =
@@ -771,7 +660,6 @@ public final class LocalInferenceModel {
                         arguments: arguments, local: true)
                     : tools.invocation(server: server, name: name, arguments: arguments)
                 messages[responseIndex].toolName = name
-                messages[responseIndex].workerToolRequest = true
                 messages[responseIndex].reasoning = pass.reasoning
                 let requestData = try ToolJSON.object([
                     "server": .string(server), "tool": .string(name),
@@ -810,32 +698,50 @@ public final class LocalInferenceModel {
                     ActiveToolResult(
                         index: responseIndex, request: request,
                         call: ConversationMessage(role: .assistant, content: output, reasoning: ""),
-                        rawData: data, result: result))
+                        rawData: try ToolJSON.object([
+                            "server": .string(server), "tool": .string(name),
+                            "result": result.evidenceForMainAnswer,
+                        ]).text()))
                 let completed = results
                 let continuation: ([Int: String]) throws -> [ConversationMessage] = { summaries in
-                    var planned = try workerPrompt(summaries)
+                    var planned = self.compactionPolicy.context(
+                        transcript: self.projectedTranscript(count: baseCount, summaries: summaries),
+                        state: self.compaction, projectMemory: memory, instructions: instructions,
+                        requestContext: requestContext)
                     for result in completed {
                         let summary =
                             summaries[result.index]
                             ?? self.messages[result.index].toolResultSummary
-                        let data =
-                            try summary.map {
-                                try self.summarizedToolData(request: result.request, summary: $0)
-                            } ?? result.rawData
-                        planned.append(result.call)
-                        planned.append(
-                            ConversationMessage(
-                                role: .user,
-                                content: "<tool_response>\n" + data + "\n</tool_response>"))
+                        if let summary {
+                            let data = try self.summarizedToolData(
+                                request: result.request, summary: summary)
+                            planned.append(
+                                ConversationMessage(
+                                    role: .assistant,
+                                    content: "Completed tool call (locally summarized data):\n"
+                                        + data))
+                        } else {
+                            planned.append(result.call)
+                            planned.append(
+                                ConversationMessage(
+                                    role: .user,
+                                    content: "<tool_response>\n" + result.rawData
+                                        + "\n</tool_response>"))
+                        }
                     }
                     return planned
                 }
-                build = continuation
-                if catalogue != nil {
-                    // Keep the next selection free of the previous method's schema.
-                    catalogue?.reset()
+                do {
+                    context = try await fitToolResults(
+                        indices: toolResultIndices(before: baseCount) + completed.map(\.index),
+                        question: question, inputLimit: toolInputLimit, build: continuation)
+                } catch let error as ToolSummaryError where error == .noRoom || error == .doesNotFit {
+                    try await compactBeforeToolContinuation(count: baseCount)
+                    try tools.validateRequestConfiguration(configuration, using: cloud)
+                    context = try await fitToolResults(
+                        indices: toolResultIndices(before: baseCount) + completed.map(\.index),
+                        question: question, inputLimit: toolInputLimit, build: continuation)
                 }
-                context = try await fitWorkerContext()
                 try Task.checkCancellation()
                 try tools.validateRequestConfiguration(configuration, using: cloud)
                 responseIndex = messages.count
@@ -844,7 +750,7 @@ public final class LocalInferenceModel {
         }
     }
 
-    private func compactForWorker(before count: Int) async throws {
+    private func compactBeforeToolContinuation(count: Int) async throws {
         let prefix = projectedTranscript(count: count)
         do {
             _ = try compactionPolicy.plan(transcript: prefix, state: compaction)
@@ -861,16 +767,13 @@ public final class LocalInferenceModel {
     }
 
     private func generateToolPass(
-        _ context: [ConversationMessage], outputTokens: Int? = nil, streamTo index: Int? = nil,
-        checkpointDirectAnswerAt routingIndex: Int? = nil
+        _ context: [ConversationMessage], outputTokens: Int, responseIndex: Int
     ) async throws -> ToolPass {
         try Task.checkCancellation()
         try tools.validateRequestNetwork()
         let run = try await session.generate(
             messages: context,
-            options: GenerationOptions(
-                maxTokens: outputTokens ?? compactionPolicy.responseTokens, temperature: 0, topP: 1)
-        )
+            options: GenerationOptions(maxTokens: outputTokens, temperature: 0, topP: 1))
         activeRun = run
         var answer = ""
         var thought = ""
@@ -880,33 +783,19 @@ public final class LocalInferenceModel {
             for try await event in run.events {
                 if Task.isCancelled { run.cancel(); break }
                 switch event {
-                case .answer(let text):
-                    answer += text
-                    if let index {
-                        self.answer += text
-                        messages[index].text += text
-                    }
+                case .answer(let text): answer += text
                 case .reasoning(let text):
                     thought += text
-                    if let index {
-                        reasoning += text
-                        messages[index].reasoning += text
-                    }
-                case .finished(let metrics):
-                    measured = metrics
-                    if let index {
-                        self.metrics = metrics
-                        messages[index].generationMetrics = metrics
-                    }
-                }
-                if let routingIndex, let direct = ToolWorkerHandoff.displayableAnswer(answer) {
-                    self.answer = direct
                     reasoning = thought
-                    messages[routingIndex].text = direct
-                    messages[routingIndex].reasoning = thought
+                    messages[responseIndex].reasoning = thought
+                    scheduleChatSave()
+                case .finished(let metrics): measured = metrics
+                }
+                if let visible = ModelToolResponse.displayableAnswer(answer) {
+                    self.answer = visible
+                    messages[responseIndex].text = visible
                     scheduleChatSave()
                 }
-                if index != nil { scheduleChatSave() }
             }
         } catch { streamError = error }
         await run.waitUntilFinished()
@@ -934,51 +823,6 @@ public final class LocalInferenceModel {
         status = limited ? "Output limit reached." : "Finished."
     }
 
-    private func completeWorker(
-        _ results: [ActiveToolResult], baseCount: Int, responseIndex: Int,
-        configuration: UUID, question: String
-    ) async throws {
-        let last = results[results.count - 1].index
-        let ids = results.map { messages[$0.index].id }
-        let memory = try projectContext()
-        let instructions = try tools.answerInstructions(using: cloud)
-        func receipt(summaries: [Int: String]) throws -> ToolWorkerReceipt {
-            let evidence = results.map { entry in
-                ToolWorkerReceipt.evidence(
-                    request: entry.request, result: entry.result,
-                    summary: summaries[entry.index] ?? messages[entry.index].toolResultSummary)
-            }
-            return ToolWorkerReceipt(resultIDs: ids, data: try ToolJSON.array(evidence).text())
-        }
-        let prefix = projectedTranscript(count: baseCount)
-        func mainAnswer(_ evidence: String) -> [ConversationMessage] {
-            compactionPolicy.context(
-                transcript: prefix, state: compaction, projectMemory: memory,
-                instructions: instructions, requestContext: evidence)
-        }
-        let baseline = try await session.tokenCount(messages: mainAnswer(""))
-        let limit = min(toolInputLimit, baseline + 768)
-        let continuation = try await fitToolResults(
-            indices: results.map(\.index), question: question, inputLimit: limit,
-            build: { try mainAnswer(receipt(summaries: $0).promptData) })
-        // The reasoning model shares this allowance between thoughts and visible answer text.
-        let inputTokens = try await session.tokenCount(messages: continuation)
-        let answerBudget = min(
-            max(1_536, compactionPolicy.responseTokens),
-            compactionPolicy.contextSize - inputTokens - 256)
-        try tools.validateRequestConfiguration(configuration, using: cloud)
-        try await saveToolProjection(receipt: receipt(summaries: [:]), at: last)
-        try tools.validateRequestConfiguration(configuration, using: cloud)
-        status = "Answering…"
-        let pass = try await generateToolPass(
-            continuation, outputTokens: answerBudget, streamTo: responseIndex)
-        try tools.validateRequestConfiguration(configuration, using: cloud)
-        guard !pass.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ToolProtocolError.invalidResponse
-        }
-        finishToolAnswer(pass.text, pass: pass, at: responseIndex)
-    }
-
     private var toolInputLimit: Int {
         compactionPolicy.contextSize - compactionPolicy.responseTokens - 256
     }
@@ -998,7 +842,6 @@ public final class LocalInferenceModel {
         let request: ToolInvocation
         let call: ConversationMessage
         let rawData: String
-        let result: ToolJSON
     }
 
     private func toolResultIndices(before end: Int, startingAt start: Int? = nil) -> [Int] {
@@ -1056,7 +899,7 @@ public final class LocalInferenceModel {
         compacting = true
         defer { compacting = wasCompacting }
         let session = session
-        return try await ToolResultSummarizer().summarize(
+        return try await ToolResultSummarizer(contextSize: compactionPolicy.contextSize).summarize(
             source: source, question: question, outputTokens: outputTokens,
             count: { try await session.tokenCount(messages: $0) },
             generate: { context, limit, chunk in
@@ -1113,12 +956,6 @@ public final class LocalInferenceModel {
         try await commitToolProjection(updated)
     }
 
-    private func saveToolProjection(receipt: ToolWorkerReceipt, at index: Int) async throws {
-        var updated = messages
-        updated[index].workerReceipt = receipt
-        try await commitToolProjection(updated)
-    }
-
     private func commitToolProjection(_ updated: [ChatMessage]) async throws {
         try Task.checkCancellation()
         savingToolSummary = true
@@ -1150,7 +987,7 @@ public final class LocalInferenceModel {
             status = "Verifying and loading model…"
             loadMilliseconds = nil
             let start = Date()
-            try await session.load(from: repository)
+            try await session.load(from: repository, contextSize: compactionPolicy.contextSize)
             loadMilliseconds = Date().timeIntervalSince(start) * 1_000
             loaded = true
         }
@@ -1162,10 +999,10 @@ public final class LocalInferenceModel {
         compactNow: Bool = false
     ) async throws -> [ConversationMessage] {
         let memory = try projectContext()
-        let instructions = try tools.routingInstructions(
-            using: cloud,
-            savedEvidence: SavedToolEvidence(messages.prefix(original.count)).available)
-        let requestContext = ""
+        let savedEvidence = SavedToolEvidence(messages.prefix(original.count))
+        let instructions = try tools.instructions(
+            using: cloud, additionalTools: savedEvidence.available ? [SavedToolEvidence.tool] : [])
+        let requestContext = try tools.requestContext(using: cloud)
         let transcriptCount = original.count
         let question =
             draft.flatMap { $0.isEmpty ? nil : $0 }

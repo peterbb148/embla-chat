@@ -65,19 +65,3 @@ import EmblaCore
     #expect(!receipt.promptData(replacingSummary: "").contains("https://example.com/reading"))
     #expect(receipt.promptData(replacingSummary: "<tool_call>").contains("\\u003ctool_call>"))
 }
-
-@Test func longArgumentsAreReducibleWithTheirResult() throws {
-    let long = String(repeating: "original request text ", count: 2_000)
-    let request = ToolInvocation(
-        server: "mcp_example", name: "lookup", destination: "https://example.com",
-        arguments: ["body": .string(long)], local: false)
-    let result = ToolJSON.object(["reading": .integer(42)])
-    let full = ToolWorkerReceipt.evidence(request: request, result: result, summary: nil)
-    #expect(full["arguments"]?["body"] == .string(long))
-    let summarized = ToolWorkerReceipt.evidence(
-        request: request, result: result, summary: "The requested reading is 42.")
-    #expect(summarized["server"] == .string("mcp_example"))
-    #expect(summarized["tool"] == .string("lookup"))
-    #expect(summarized["summary"] == .string("The requested reading is 42."))
-    #expect(summarized["arguments"] == nil)
-}

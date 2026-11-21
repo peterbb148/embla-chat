@@ -157,6 +157,28 @@ public enum ModelToolResponse: Sendable, Equatable {
     case call(server: String, name: String, arguments: [String: ToolJSON])
     case answer(String)
 
+    private static let reservedMarkers = [
+        "<tool_call", "</tool_call", "<function=", "</function", "<parameter=", "</parameter",
+    ]
+
+    private static func incompleteMarkerStart(in text: String) -> String.Index? {
+        guard let start = text.lastIndex(of: "<"),
+            reservedMarkers.contains(where: { $0.hasPrefix(text[start...]) })
+        else { return nil }
+        return start
+    }
+
+    /// Stream ordinary prose without showing a complete or partially emitted tool marker.
+    public static func displayableAnswer(_ output: String) -> String? {
+        guard !reservedMarkers.contains(where: { output.contains($0) }) else { return nil }
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let start = incompleteMarkerStart(in: trimmed) {
+            let prefix = trimmed[..<start].trimmingCharacters(in: .whitespacesAndNewlines)
+            return prefix.isEmpty ? nil : prefix
+        }
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// Implements the checkpoint's function/parameter format, with exact catalog matching.
     /// Plain text is an answer only when it contains no reserved tool markup.
     public static func parse(
@@ -164,11 +186,10 @@ public enum ModelToolResponse: Sendable, Equatable {
     ) throws -> Self {
         guard finishReason == "stop" else { throw ToolProtocolError.invalidResponse }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let markers = [
-            "<tool_call", "</tool_call", "<function=", "</function", "<parameter=", "</parameter",
-        ]
-        guard markers.contains(where: { text.contains($0) }) else {
-            guard !text.isEmpty else { throw ToolProtocolError.invalidResponse }
+        guard reservedMarkers.contains(where: { text.contains($0) }) else {
+            guard !text.isEmpty, incompleteMarkerStart(in: text) == nil else {
+                throw ToolProtocolError.invalidResponse
+            }
             return .answer(text)
         }
         var remainder = text[...]

@@ -13,7 +13,7 @@ import EmblaRuntime
 let manifest = try ModelManifest.bundled()
 let repository = ModelRepository(root: try ModelRepository.defaultRoot(), manifest: manifest)
 let session = EmblaRuntime.makeSession()
-try await session.load(from: repository, contextSize: 8192)
+try await session.load(from: repository, contextSize: 262_144)
 let run = try await session.generate(
     messages: [ConversationMessage(role: .user, content: "What is the capital of Denmark?")],
     options: GenerationOptions(maxTokens: 512)
@@ -83,9 +83,9 @@ characters. `generate` checks that the prompt and requested output fit strictly
 inside the runtime context before entering Engine.generate and its preconditions.
 Invalid settings and empty user input fail clearly.
 
-The initial context is explicitly 8,192 tokens, matching the investigated starting
-budget, with 512 output tokens, temperature 0.6 and top-p 0.95 by default. These are
-configuration defaults, not evidence of iPhone memory viability or performance.
+The app explicitly requests 262,144 tokens for the pinned Embla 1 checkpoint. The
+standalone session API retains its 8,192-token default when no size is supplied.
+Generation defaults to 512 output tokens, temperature 0.6 and top-p 0.95.
 The UI must show a length-limited result honestly if the budget expires during
 reasoning. The presentation layer now orchestrates local compaction through this API;
 see [context compaction](context-compaction.md) for policy and device evidence.

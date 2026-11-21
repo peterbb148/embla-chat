@@ -119,3 +119,17 @@ substitute inference backend, model-file injection, or fake network launch mode.
 
 Hosted UI checks prove readiness controls and confirmation behavior, not physical inference.
 Later physical observations are recorded separately in the chat, compaction and persistence docs.
+
+## 256K context on iPhone 17 Pro
+
+Issue #97 tested the signed app with the pinned Embla 1 checkpoint and a context
+capacity of 262,144. In two fresh processes, the model retrieved the same exact
+synthetic fact from the beginning of the prompt. Both prompts fit without compaction.
+
+| Input tokens | Prompt processing | End-to-end time | Peak physical footprint |
+| ---: | ---: | ---: | ---: |
+| 32,541 | 11.0 s | 25.6 s | 2.85 GiB |
+| 257,889 | 3 min 3 s | 3 min 19 s | 2.86 GiB |
+
+End-to-end time includes model loading. Peak physical footprint is the iOS
+process high-water mark. These runs used synthetic input and no tools.
