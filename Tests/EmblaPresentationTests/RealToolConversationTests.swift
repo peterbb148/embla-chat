@@ -90,6 +90,19 @@ func activeChatRoutesNaturalSearchAndTimeFollowUps() async throws {
     #expect(model.messages.count == 2 && model.messages.last?.state == .complete)
     #expect(haikuWords.prefix(midpoint) != haikuWords.dropFirst(midpoint))
     #expect(Set(paragraphs).count == paragraphs.count)
+
+    let haiku = model.answer
+    model.prompt = "What time is it in Hong Kong?"
+    model.run(); await model.waitUntilIdle()
+    let timeAnswer = model.answer
+    print("ACTIVE CHAT time after haiku: \(timeAnswer)")
+    #expect(model.error == nil && timeAnswer.contains("14:37"))
+    #expect(model.messages.dropFirst(2).compactMap(\.toolName) == ["get_current_time"])
+    #expect(model.messages.last?.state == .complete)
+    #expect(!timeAnswer.localizedCaseInsensitiveContains("haiku"))
+    for line in haiku.split(whereSeparator: \.isNewline) where !line.isEmpty {
+        #expect(!timeAnswer.localizedCaseInsensitiveContains(String(line)))
+    }
 }
 
 @Test(
