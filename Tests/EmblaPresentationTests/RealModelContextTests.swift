@@ -5,6 +5,56 @@ import EmblaCore
 import EmblaRuntime
 @testable import EmblaPresentation
 
+@Test(
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_LONG_CONTEXT_TARGET"] != nil),
+    .timeLimit(.minutes(20))
+) @MainActor
+func realHostUsesTheProductionWindowForLongInput() async throws {
+    let environment = ProcessInfo.processInfo.environment
+    let root = URL(fileURLWithPath: try #require(environment["EMBLA_REAL_MODEL_ROOT"]))
+    let target = try #require(environment["EMBLA_REAL_LONG_CONTEXT_TARGET"].flatMap(Int.init))
+    let capacity = LocalInferenceModel.productionContextSize
+    try #require((16_384...260_000).contains(target))
+    let manifest = try ModelManifest.bundled()
+    let tokenizer = EmblaPromptTokenizer()
+    let model = LocalInferenceModel(
+        repository: ModelRepository(root: root, manifest: manifest), manifest: manifest,
+        session: EmblaRuntime.makeSession(),
+        countTokens: { directory, messages in
+            try await tokenizer.count(messages: messages, in: directory)
+        }, compactionPolicy: ContextCompaction(contextSize: capacity))
+    model.check()
+    await model.waitUntilIdle()
+    let directory = try #require(model.readyDirectory)
+    let line = "The weekly archive describes ordinary maintenance, supplies and scheduling.\n"
+    let sample = [ConversationMessage(role: .user, content: String(repeating: line, count: 100))]
+    let sampleCount = try await tokenizer.count(messages: sample, in: directory)
+    let padding = String(repeating: line, count: target * 100 / sampleCount)
+    model.prompt = """
+        The project release code is TULIP-733. Retain this exact code.
+
+        \(padding)
+        What is the project release code? Reply with the exact code only.
+        """
+    await model.waitForContextUsage()
+    guard case .ready(let usage) = model.contextUsage else {
+        Issue.record("Long prompt usage unavailable")
+        return
+    }
+    #expect(usage.capacity == capacity)
+    #expect(usage.inputTokens > target * 95 / 100)
+    model.run()
+    await model.waitUntilIdle()
+    let response = try #require(model.messages.last)
+    let metrics = try #require(response.generationMetrics, "\(model.error ?? model.status)")
+    print("Long context capacity=\(capacity) prompt=\(metrics.promptTokens) "
+        + "load_ms=\(model.loadMilliseconds ?? 0) prompt_ms=\(metrics.promptMilliseconds)")
+    #expect(model.error == nil)
+    #expect(metrics.promptTokens == usage.inputTokens)
+    #expect(response.state == .complete && response.text.contains("TULIP-733"))
+    #expect(model.compaction.summarizedMessageCount == 0)
+}
+
 /// Opt-in real-host validation; no fake backend or simulator/device performance claims.
 @Test(
     .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_MODEL_ROOT"] != nil),

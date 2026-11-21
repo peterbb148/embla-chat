@@ -67,7 +67,9 @@ public final class LocalInferenceModel {
         didSet { refreshContextUsage() }
     }
     public private(set) var compacting = false
-    @ObservationIgnored private let compactionPolicy = ContextCompaction()
+    // The pinned Embla 1 checkpoint declares max_position_embeddings = 262,144.
+    static let productionContextSize = 262_144
+    @ObservationIgnored private let compactionPolicy: ContextCompaction
     public var prompt = "" {
         didSet { scheduleChatSave(); refreshContextUsage() }
     }
@@ -153,6 +155,7 @@ public final class LocalInferenceModel {
 
     /// Production always uses the pinned Embla runtime and app-managed model storage.
     public init(network: NetworkAccess = .shared) {
+        compactionPolicy = ContextCompaction(contextSize: Self.productionContextSize)
         tools = ToolWorkspace(network: network)
         session = EmblaRuntime.makeSession()
         let tokenizer = EmblaPromptTokenizer()
@@ -184,8 +187,9 @@ public final class LocalInferenceModel {
         chatStore: (any ConversationStoring)? = nil, cloud: ConversationCloudSync? = nil,
         chatStoreFactory: (() throws -> any ConversationStoring)? = nil,
         countTokens: (@Sendable (URL, [ConversationMessage]) async throws -> Int)? = nil,
-        tools: ToolWorkspace? = nil
+        tools: ToolWorkspace? = nil, compactionPolicy: ContextCompaction = .init()
     ) {
+        self.compactionPolicy = compactionPolicy
         self.tools = tools ?? ToolWorkspace(store: nil)
         self.repository = repository
         self.manifest = manifest
@@ -1056,7 +1060,7 @@ public final class LocalInferenceModel {
         compacting = true
         defer { compacting = wasCompacting }
         let session = session
-        return try await ToolResultSummarizer().summarize(
+        return try await ToolResultSummarizer(contextSize: compactionPolicy.contextSize).summarize(
             source: source, question: question, outputTokens: outputTokens,
             count: { try await session.tokenCount(messages: $0) },
             generate: { context, limit, chunk in
@@ -1150,7 +1154,7 @@ public final class LocalInferenceModel {
             status = "Verifying and loading model…"
             loadMilliseconds = nil
             let start = Date()
-            try await session.load(from: repository)
+            try await session.load(from: repository, contextSize: compactionPolicy.contextSize)
             loadMilliseconds = Date().timeIntervalSince(start) * 1_000
             loaded = true
         }

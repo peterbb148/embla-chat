@@ -36,8 +36,9 @@ invalidates its saved definitions. Malformed saved metadata is a settings error.
 tool loop the ring still projects the next user message from the visible transcript; the
 session separately checks each actual growing model/tool prompt before generation.
 
-Capacity is 8192 tokens. Details distinguish the 512-token reply reserve, 1536-token summary
-reserve and 256-token headroom, explaining the existing automatic threshold of 5888.
+The app uses a 262,144-token capacity. Details distinguish the 512-token reply reserve,
+1,536-token summary reserve and 256-token headroom, yielding an automatic threshold of
+259,840 tokens.
 The ring rounds the measured fraction to a whole percentage; details retain the exact
 integer count. Details also show how many older messages are represented by the saved
 summary, so a successful small reduction is visible even when the whole percentage is
