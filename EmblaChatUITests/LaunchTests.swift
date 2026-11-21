@@ -352,18 +352,29 @@ final class LaunchTests: XCTestCase {
         if app.buttons["Hide keyboard"].exists { app.buttons["Hide keyboard"].tap() }
         let initialY = inspector.frame.minY
         inspector.tap()
-        let original = app.staticTexts["tool-response-original"]
-        XCTAssertTrue(original.waitForExistence(timeout: 10))
-        XCTAssertGreaterThan(original.frame.height, app.frame.height)
+        let pane = app.scrollViews["large-tool-response"]
+        XCTAssertTrue(pane.waitForExistence(timeout: 10))
+        let firstPart = pane.staticTexts["tool-response-part-0"]
+        XCTAssertTrue(firstPart.waitForExistence(timeout: 5))
+        XCTAssertTrue(firstPart.label.contains("ORIGINAL_RESULT_RETAINED"))
+        XCTAssertLessThan(pane.frame.height, app.frame.height)
         XCTAssertTrue(app.buttons["Jump to latest"].waitForExistence(timeout: 5))
         XCTAssertTrue(inspector.isHittable)
         XCTAssertEqual(inspector.frame.minY, initialY, accuracy: 4)
+        let secondPart = pane.staticTexts["tool-response-part-1"]
+        for _ in 0..<6 {
+            if secondPart.exists && pane.frame.intersects(secondPart.frame) { break }
+            pane.swipeUp()
+        }
+        XCTAssertTrue(secondPart.exists && pane.frame.intersects(secondPart.frame))
+        XCTAssertEqual(inspector.frame.minY, initialY, accuracy: 4)
+        XCTAssertTrue(app.buttons["Copy tool details"].isHittable)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Tall tool inspection preserves its beginning and collapse control"
         screenshot.lifetime = .keepAlways
         add(screenshot)
         inspector.tap()
-        XCTAssertFalse(original.exists)
+        XCTAssertFalse(pane.exists)
         app.buttons["Jump to latest"].tap()
         XCTAssertFalse(app.buttons["Jump to latest"].exists)
     }

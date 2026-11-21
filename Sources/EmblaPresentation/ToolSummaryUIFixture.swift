@@ -23,7 +23,8 @@ extension LocalInferenceModel {
                 role: .assistant,
                 text: "Synthetic complete original result: ORIGINAL_RESULT_RETAINED. The codename is BLUE PENGUIN. Source: https://example.com/fact")
             if tallToolResult {
-                result.text += String(repeating: "\nSynthetic tool response evidence line.", count: 100)
+                result.text += "\n" + String(
+                    repeating: "Synthetic tool response evidence line. ", count: 12_000)
             }
             result.toolName = "synthetic_lookup"
             result.toolResultSummary = "The source reports BLUE PENGUIN (https://example.com/fact)."
