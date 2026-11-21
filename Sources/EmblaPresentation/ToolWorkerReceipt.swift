@@ -2,7 +2,7 @@ import Foundation
 
 import EmblaCore
 
-/// A compact projection stored once on the last result row of a completed worker task.
+/// A persisted projection from chats saved before tools moved into the active chat.
 struct ToolWorkerReceipt: Codable, Sendable, Equatable {
     let resultIDs: [UUID]
     let data: String
@@ -18,21 +18,6 @@ struct ToolWorkerReceipt: Codable, Sendable, Equatable {
                 + summary.replacingOccurrences(of: "<", with: "\\u003c")
         }
         return "Previously retrieved tool evidence (JSON data):\n" + data
-    }
-
-    /// Full arguments are part of the reducible evidence. A local summary is produced
-    /// from the saved original request and result, while the tool identity stays exact.
-    static func evidence(request: ToolInvocation, result: ToolJSON, summary: String?) -> ToolJSON {
-        var fields: [String: ToolJSON] = [
-            "server": .string(request.server), "tool": .string(request.name),
-        ]
-        if let summary {
-            fields["summary"] = .string(summary)
-        } else {
-            fields["arguments"] = .object(request.arguments)
-            fields["data"] = result.evidenceForMainAnswer
-        }
-        return .object(fields)
     }
 
     private var requestAttribution: String {

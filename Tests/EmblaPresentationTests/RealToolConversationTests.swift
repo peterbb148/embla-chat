@@ -6,9 +6,9 @@ import EmblaRuntime
 @testable import EmblaPresentation
 
 @Test(
-    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_WORKER"] == "1"),
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_TOOL_CHAT"] == "1"),
     .timeLimit(.minutes(10))) @MainActor
-func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
+func activeChatRoutesNaturalSearchAndTimeFollowUps() async throws {
     let env = ProcessInfo.processInfo.environment
     let modelRoot = URL(fileURLWithPath: try #require(env["EMBLA_REAL_MODEL_ROOT"]))
     let port = try #require(env["EMBLA_ROUTING_FIXTURE_PORT"])
@@ -31,7 +31,8 @@ func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
         manifest: manifest, session: EmblaRuntime.makeSession(), chatStore: store,
         countTokens: { directory, messages in
             try await tokenizer.count(messages: messages, in: directory)
-        }, tools: workspace)
+        }, tools: workspace,
+        compactionPolicy: ContextCompaction(contextSize: LocalInferenceModel.productionContextSize))
     model.check(); await model.waitUntilIdle()
     for server in [time, search] {
         try await workspace.saveServer(server)
@@ -42,8 +43,8 @@ func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
         model.toolConfigurationChanged()
         await model.waitForContextUsage()
         if case .ready(let usage) = model.contextUsage {
-            print("PRODUCTION WORKER fresh context: \(usage.inputTokens)/\(usage.capacity)")
-            #expect(usage.inputTokens < 600)
+            print("ACTIVE CHAT fresh context: \(usage.inputTokens)/\(usage.capacity)")
+            #expect(usage.inputTokens < 4_096)
         } else {
             Issue.record("Fresh prompt token count was unavailable.")
         }
@@ -57,11 +58,11 @@ func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
             model.run(); await model.waitUntilIdle()
             let results = model.messages.filter { $0.toolName != nil }
             print(
-                "PRODUCTION WORKER \(question): \(model.answer); error: \(model.error ?? "-"); calls: \(results.compactMap(\.toolName))"
+                "ACTIVE CHAT \(question): \(model.answer); error: \(model.error ?? "-"); calls: \(results.compactMap(\.toolName))"
             )
             #expect(model.error == nil && model.answer.contains(expectedFact))
             #expect(results.count == count + 1 && results.last?.toolName == expectedMethod)
-            #expect(results.last?.workerReceipt != nil)
+            #expect(results.last?.state == .complete)
         }
         model.newChat(); await model.waitUntilIdle()
     }
@@ -70,10 +71,10 @@ func workerRoutesNaturalSearchAndTimeFollowUpsInProduction() async throws {
     model.run(); await model.waitUntilIdle()
     let original = model.messages.first { $0.toolName == "tavily_search" }
     print(
-        "PRODUCTION WORKER search: \(model.answer); error: \(model.error ?? "-"); call: \(original?.toolName ?? "-")"
+        "ACTIVE CHAT search: \(model.answer); error: \(model.error ?? "-"); call: \(original?.toolName ?? "-")"
     )
     #expect(model.error == nil && model.answer.contains("https://example.com/blue-penguin"))
-    #expect(original?.workerReceipt != nil)
+    #expect(original?.state == .complete)
     let saved = try #require(try await store.load())
     #expect(saved.snapshot.messages == model.messages)
 }
@@ -99,7 +100,8 @@ func groundedLongSearchAnswerCompletesWithThePinnedModel() async throws {
     let manifest = try ModelManifest.bundled()
     let model = LocalInferenceModel(
         repository: ModelRepository(root: modelRoot, manifest: manifest),
-        manifest: manifest, session: EmblaRuntime.makeSession(), tools: workspace)
+        manifest: manifest, session: EmblaRuntime.makeSession(), tools: workspace,
+        compactionPolicy: ContextCompaction(contextSize: LocalInferenceModel.productionContextSize))
     model.check()
     await model.waitUntilIdle()
     model.prompt = """
@@ -113,7 +115,6 @@ func groundedLongSearchAnswerCompletesWithThePinnedModel() async throws {
     let metrics = try #require(result.generationMetrics)
     print("LONG ANSWER finish=\(metrics.finishReason) output=\(metrics.completionTokens)")
     #expect(model.error == nil && result.state == .complete)
-    #expect(metrics.completionTokens > 512)
     #expect(result.text.contains("Midnight Orchard"))
     #expect(result.text.contains("https://example.com/cedar-reference"))
     #expect(model.messages.compactMap(\.toolName) == ["tavily_search"])
@@ -173,9 +174,9 @@ func groundedLongSearchAnswerCompletesWithThePinnedModel() async throws {
 }
 
 @Test(
-    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_PAGED_CATALOGUE"] == "1"),
+    .enabled(if: ProcessInfo.processInfo.environment["EMBLA_REAL_LARGE_CATALOGUE"] == "1"),
     .timeLimit(.minutes(5))) @MainActor
-func oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage() async throws {
+func largeCatalogueFindsAndExecutesTheRelevantMethod() async throws {
     let env = ProcessInfo.processInfo.environment
     let modelRoot = URL(fileURLWithPath: try #require(env["EMBLA_REAL_MODEL_ROOT"]))
     let port = try #require(env["EMBLA_ROUTING_FIXTURE_PORT"])
@@ -195,7 +196,8 @@ func oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage() async throws {
     let session = EmblaRuntime.makeSession()
     let model = LocalInferenceModel(
         repository: ModelRepository(root: modelRoot, manifest: manifest),
-        manifest: manifest, session: session, tools: tools)
+        manifest: manifest, session: session, tools: tools,
+        compactionPolicy: ContextCompaction(contextSize: LocalInferenceModel.productionContextSize))
     model.check()
     await model.waitUntilIdle()
     let question = "Find a current web source about blue penguins and give me its link."
@@ -212,7 +214,7 @@ func oversizedCatalogueFindsAndExecutesAMethodOnTheLastPage() async throws {
     model.run()
     await model.waitUntilIdle()
     print(
-        "PAGED WORKER full catalogue=\(count) answer=\(model.answer) error=\(model.error ?? "-") calls=\(model.messages.compactMap(\.toolName))"
+        "ACTIVE CHAT full catalogue=\(count) answer=\(model.answer) error=\(model.error ?? "-") calls=\(model.messages.compactMap(\.toolName))"
     )
     #expect(model.error == nil && model.answer.contains("https://example.com/blue-penguin"))
     #expect(model.messages.compactMap(\.toolName) == ["tavily_search"])

@@ -40,7 +40,8 @@ The app uses a 262,144-token capacity. Details distinguish the 512-token reply r
 1,536-token summary reserve and 256-token headroom, yielding an automatic threshold of
 259,840 tokens.
 The ring rounds the measured fraction to a whole percentage; details retain the exact
-integer count. Details also show how many older messages are represented by the saved
+integer count. The active chat includes enabled tool schemas and can use their returned
+evidence directly when it fits. Details also show how many older messages are represented by the saved
 summary, so a successful small reduction is visible even when the whole percentage is
 unchanged. Tool definitions and the retained recent turns remain in context. Its fill stops at a full circle if over capacity, while the numeric value
 continues to show the measured usage.

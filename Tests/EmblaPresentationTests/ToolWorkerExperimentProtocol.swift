@@ -1,5 +1,7 @@
 import Foundation
 
+import EmblaCore
+
 /// Interprets the tool router output before any text is shown or added to history.
 public enum ToolWorkerHandoff: Equatable {
     case delegate

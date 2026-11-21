@@ -24,8 +24,9 @@ summary. Historical visible content and the prior summary are supplied as quoted
 not replayed as active participant instructions. Summary sampling uses temperature 0 / top-p 1;
 normal replies keep their existing settings. The latest two ordinary exchanges and current
 user message remain verbatim in inference context. Large tool results can have a separately
-marked local summary for inference; their original text remains saved and visible. The
-tool worker still passes a bounded evidence receipt to the main chat. Earlier requirements,
+marked local summary for inference; their original text remains saved and visible.
+New tool calls run in the active chat and use their evidence directly when it fits.
+Older tool-worker receipts remain readable. Earlier requirements,
 facts, preferences, decisions and unresolved questions are
 requested in the summary. Summaries can lose details; retaining the visible transcript does
 not mean every original detail remains available to the model after compaction.
