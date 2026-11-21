@@ -12,6 +12,7 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
     private var inputs: [[ConversationMessage]] = []
+    private var outputBudgets: [Int] = []
     private let countCharacters: Bool
     private let pauseSummary: Bool
     private let summaryText: String
@@ -26,6 +27,7 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
     private var reachedStop = false
     var calls: Int { lock.withLock { count } }
     var encodedMessages: [[ConversationMessage]] { lock.withLock { inputs } }
+    var requestedOutputBudgets: [Int] { lock.withLock { outputBudgets } }
 
     init(
         failOnStop: Bool = false, stopGate: DispatchSemaphore? = nil, pauseFirst: Bool = true,
@@ -55,9 +57,10 @@ private final class PresentationBackend: InferenceBackend, @unchecked Sendable {
         emit: @escaping @Sendable (GenerationDelta) -> Bool
     ) throws -> GenerationMetrics {
         let index = lock.withLock {
+            outputBudgets.append(options.maxTokens)
             count += 1; return count
         }
-        if options.maxTokens == 1_536 {
+        if options.temperature == 0 {
             let summaryCall = lock.withLock {
                 summaryStarted = true
                 summaries += 1
@@ -276,6 +279,21 @@ func rejectedEmptyRequestDoesNotChangeThePreviousResponse() async throws {
     #expect(model.messages.last?.id == response.id)
     #expect(model.messages.last?.state == .complete)
     #expect(backend.calls == 1)
+}
+
+@Test @MainActor
+func localReplyBudgetShrinksToFitTheMeasuredPrompt() async throws {
+    let fixture = try PresentationFixture(); defer { fixture.clean() }
+    let tools = ToolWorkspace(
+        configuration: fixture.root.appendingPathComponent("empty-servers.json"),
+        network: NetworkAccess(initialState: .satisfied))
+    let backend = PresentationBackend(pauseFirst: false, countCharacters: true)
+    let model = await fixture.model(session: InferenceSession { _, _ in backend }, tools: tools)
+    model.prompt = String(repeating: "x", count: 7_000)
+    model.run()
+    await model.waitUntilIdle()
+    #expect(model.error == nil && model.messages.last?.state == .complete)
+    #expect(backend.requestedOutputBudgets == [backend.contextSize - 7_004 - 256])
 }
 
 @Test @MainActor
@@ -1342,6 +1360,7 @@ func restartedToolChatCountsAndCompactsOfflineWithoutChangingVisibleHistory() as
     await model.waitUntilIdle()
     #expect(model.error == nil && model.messages.last?.state == .complete)
     #expect(tools.servers == [server] && tools.discovered.isEmpty)
+    #expect(backend.requestedOutputBudgets.last == 1_536)
     #expect(
         backend.encodedMessages.contains { messages in
             messages.contains { $0.content.contains("Network tools are unavailable") }

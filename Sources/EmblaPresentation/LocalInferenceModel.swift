@@ -595,7 +595,10 @@ public final class LocalInferenceModel {
             try await generateWithTools(context: context, responseIndex: responseIndex)
             return
         }
-        let run = try await session.generate(messages: context)
+        let outputBudget = try await replyTokenBudget(for: context)
+        try tools.validateRequestConfiguration(configuration, using: cloud)
+        let run = try await session.generate(
+            messages: context, options: GenerationOptions(maxTokens: outputBudget))
         activeRun = run
         if Task.isCancelled { run.cancel() }
         status = Task.isCancelled ? "Stopping…" : "Thinking…"
@@ -651,10 +654,7 @@ public final class LocalInferenceModel {
         var context = initialContext
         while true {
             try tools.validateRequestConfiguration(configuration, using: cloud)
-            let inputTokens = try await session.tokenCount(messages: context)
-            let outputBudget = min(
-                max(1_536, compactionPolicy.responseTokens),
-                compactionPolicy.contextSize - inputTokens - 256)
+            let outputBudget = try await replyTokenBudget(for: context)
             try tools.validateRequestConfiguration(configuration, using: cloud)
             status = "Thinking…"
             let pass = try await generateToolPass(
@@ -847,6 +847,16 @@ public final class LocalInferenceModel {
         let limited = pass.metrics.finishReason == "length"
         messages[index].state = limited ? .limited : .complete
         status = limited ? "Output limit reached." : "Finished."
+    }
+
+    /// Reasoning and visible reply share the runtime cap, with or without available tools.
+    private func replyTokenBudget(for context: [ConversationMessage]) async throws -> Int {
+        let inputTokens = try await session.tokenCount(messages: context)
+        let available = max(0, compactionPolicy.contextSize - inputTokens - 256)
+        guard available > 0 else {
+            throw InferenceError.contextExceeded(promptTokens: inputTokens, availableOutput: 0)
+        }
+        return min(max(1_536, compactionPolicy.responseTokens), available)
     }
 
     private var toolInputLimit: Int {

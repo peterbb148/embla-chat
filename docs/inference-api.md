@@ -85,7 +85,10 @@ Invalid settings and empty user input fail clearly.
 
 The app explicitly requests 262,144 tokens for the pinned Embla 1 checkpoint. The
 standalone session API retains its 8,192-token default when no size is supplied.
-Generation defaults to 512 output tokens, temperature 0.6 and top-p 0.95.
+Standalone generation defaults to 512 output tokens, temperature 0.6 and top-p 0.95.
+Chat budgets up to 1,536 generated tokens for reasoning and the reply, including when
+offline. The app reduces that budget when the measured prompt approaches the context
+limit and retains 256 tokens of headroom.
 The UI must show a length-limited result honestly if the budget expires during
 reasoning. The presentation layer now orchestrates local compaction through this API;
 see [context compaction](context-compaction.md) for policy and device evidence.
