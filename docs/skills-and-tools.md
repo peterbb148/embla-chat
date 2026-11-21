@@ -215,10 +215,10 @@ title, description, default, examples, deprecated, readOnly, writeOnly, $comment
 x-mcp-header do not modify arguments. No remote references are fetched.
 There is no repair, guessed identifier, retry-until-execution or substituted tool result.
 The loop uses greedy sampling, at most four registered-tool executions and five planning/answer
-passes. The prompt asks Embla to give the final answer once and preserve intentional
-repetition the user requests. Internal local summaries are separately bounded. Exact token
-counting includes skill instructions, schemas, project memory, rolling summary and the growing
-exchange.
+passes. The prompt asks Embla to answer the latest request once, use earlier turns for
+relevant context and preserve intentional repetition the user requests. Internal local
+summaries are separately bounded. Exact token counting includes skill instructions, schemas,
+project memory, rolling summary and the growing exchange.
 
 ### Long-running calls and large results (#86, #87)
 
