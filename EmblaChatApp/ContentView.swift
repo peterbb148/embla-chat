@@ -727,20 +727,20 @@ private struct ChatMessageRow: View, Equatable {
 
     @ViewBuilder private var messageContents: some View {
         if !message.text.isEmpty {
-            Group {
-                if isToolMessage {
-                    Text(message.text).font(.system(.callout, design: .monospaced))
-                } else if message.role == .user {
-                    Text(message.text)
-                } else {
-                    MessageMarkdownView(source: message.text)
+            if isToolMessage {
+                ToolResponseBody(text: message.text)
+            } else {
+                Group {
+                    if message.role == .user {
+                        Text(message.text)
+                    } else {
+                        MessageMarkdownView(source: message.text)
+                    }
                 }
+                .textSelection(.enabled)
+                .lineSpacing(3)
+                .accessibilityIdentifier(message.role == .user ? "user-message" : "answer")
             }
-            .textSelection(.enabled)
-            .lineSpacing(3)
-            .accessibilityIdentifier(
-                isToolMessage ? "tool-response-original"
-                    : message.role == .user ? "user-message" : "answer")
         }
         if !message.text.isEmpty && message.state != .streaming {
             HStack(spacing: 20) {
@@ -751,6 +751,36 @@ private struct ChatMessageRow: View, Equatable {
                 }
             }
         }
+    }
+}
+
+/// Keep a large raw response out of a single, transcript-sized text layout.
+private struct ToolResponseBody: View {
+    let text: String
+
+    var body: some View {
+        let parts = ToolResponseText(text).parts
+        Group {
+            if parts.count > 1 {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                            Text(part)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .accessibilityIdentifier("tool-response-part-\(index)")
+                        }
+                    }
+                }
+                .frame(height: 280)
+                .accessibilityLabel("Tool response")
+                .accessibilityIdentifier("large-tool-response")
+            } else {
+                Text(text).accessibilityIdentifier("tool-response-original")
+            }
+        }
+        .font(.system(.callout, design: .monospaced))
+        .lineSpacing(3)
+        .textSelection(.enabled)
     }
 }
 

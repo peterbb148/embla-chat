@@ -241,7 +241,9 @@ characters of previous-fragment overlap are included in each exact budget for un
 splits. JSON escapes reserved delimiter characters without changing decoded source data. Notes are
 carried forward across chunks, preserving relevant facts, exact identifiers, URLs and
 uncertainty. Summaries can omit details. A visible transcript notice identifies the reduction;
-the complete original result remains saved and available to inspect and copy.
+the complete original result remains saved and available to inspect and copy. Large
+results scroll inside the inspector so the transcript only needs to lay out the visible
+parts. Copy tool details still copies the complete original.
 
 A new tool continuation accepts only a nonempty, normally stopped summary that fits its
 exact budget. The budget includes earlier results in the same tool turn and retained saved
