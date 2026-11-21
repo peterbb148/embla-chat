@@ -83,9 +83,13 @@ func activeChatRoutesNaturalSearchAndTimeFollowUps() async throws {
     model.run(); await model.waitUntilIdle()
     let haikuWords = model.answer.split(whereSeparator: \.isWhitespace)
     let midpoint = haikuWords.count / 2
+    let paragraphs = model.answer.components(separatedBy: "\n\n")
+        .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        .filter { !$0.isEmpty }
     try #require(model.error == nil && !haikuWords.isEmpty)
     #expect(model.messages.count == 2 && model.messages.last?.state == .complete)
     #expect(haikuWords.prefix(midpoint) != haikuWords.dropFirst(midpoint))
+    #expect(Set(paragraphs).count == paragraphs.count)
 }
 
 @Test(
