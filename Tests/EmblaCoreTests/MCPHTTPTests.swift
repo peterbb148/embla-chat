@@ -60,6 +60,43 @@ import Testing
         }
     }
 
+    @Test(arguments: ["json", "sse"])
+    func toolResponsesCanExceedDiscoveryLimitButRemainBounded(encoding: String) async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let client = try fixture.client("large-\(encoding)")
+        let tool = try #require(try await client.discover().tools.first)
+        let result = try await client.call(tool, arguments: ["text": .string("fixture")])
+        guard case .array(let content) = result["content"] else {
+            Issue.record("Expected a full text content block")
+            return
+        }
+        #expect(content.first?["text"]?.string?.utf8.count == 192 * 1024)
+
+        let oversized = try fixture.client("over-limit-\(encoding)")
+        do {
+            _ = try await oversized.call(tool, arguments: ["text": .string("fixture")])
+            Issue.record("Tool responses exceeding the 1 MiB cap must fail")
+        } catch MCPFailure.responseTooLarge(let bytes) {
+            #expect(bytes == 1024 * 1024)
+        }
+    }
+
+    @Test func discoveryDistinguishesResponseBytesFromCatalogueCount() async throws {
+        let fixture = try HTTPFixture(); defer { fixture.stop() }
+        let oversized = try fixture.client("oversized-catalogue-body")
+        do {
+            _ = try await oversized.discover()
+            Issue.record("Discovery responses exceeding the 128 KiB cap must fail")
+        } catch MCPFailure.responseTooLarge(let bytes) {
+            #expect(bytes == 128 * 1024)
+        }
+        let tooManyTools = try fixture.client("too-many-tools")
+        do {
+            _ = try await tooManyTools.discover()
+            Issue.record("A catalogue with more than 64 tools must fail")
+        } catch MCPFailure.toolListLimit {}
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func discoverySharesOneAbsoluteDeadlineAcrossInformationAndCatalogPages() async throws {
         let fixture = try HTTPFixture(); defer { fixture.stop() }

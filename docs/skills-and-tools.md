@@ -109,8 +109,12 @@ with per-request version/capability metadata and mirrored headers, `server/disco
 `tools/list`, `tools/call`, JSON responses and request-scoped SSE. Parameter-header schema
 annotations are validated and encoded according to that revision. Invalid annotated tools
 are excluded with visible warnings. Saved enabled names remain visible and can be disabled
-even if discovery fails or a server no longer lists them. A response is bounded to 128 KiB; discovery is limited
-to 64 tools and 16 cursor pages. Unsupported result types/capabilities, malformed responses,
+even if discovery fails or a server no longer lists them. Discovery responses are bounded to
+128 KiB, and discovery is limited to 64 tools and 16 cursor pages. A tool-call response has a
+separate 1 MiB limit so larger extracts can reach the existing local context-budgeting path.
+Both byte limits apply to the received JSON or SSE body. Oversized responses fail explicitly
+with the byte limit, while catalogue and pagination failures use a separate error.
+Unsupported result types/capabilities, malformed responses,
 HTTP/protocol errors and actual tool errors fail clearly. Completed tool results require a
 content-block array with typed payloads and a boolean isError flag when present; malformed
 results do not continue the model loop. SSE accepts LF, CRLF and CR line endings, ignores one leading UTF-8 byte-order mark, and rejects malformed UTF-8
