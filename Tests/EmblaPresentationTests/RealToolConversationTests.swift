@@ -77,6 +77,19 @@ func activeChatRoutesNaturalSearchAndTimeFollowUps() async throws {
     #expect(original?.state == .complete)
     let saved = try #require(try await store.load())
     #expect(saved.snapshot.messages == model.messages)
+
+    model.newChat(); await model.waitUntilIdle()
+    model.prompt = "Tell me a joke for programmers in the form of a Haiku."
+    model.run(); await model.waitUntilIdle()
+    let haikuWords = model.answer.split(whereSeparator: \.isWhitespace)
+    let midpoint = haikuWords.count / 2
+    let paragraphs = model.answer.components(separatedBy: "\n\n")
+        .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        .filter { !$0.isEmpty }
+    try #require(model.error == nil && !haikuWords.isEmpty)
+    #expect(model.messages.count == 2 && model.messages.last?.state == .complete)
+    #expect(haikuWords.prefix(midpoint) != haikuWords.dropFirst(midpoint))
+    #expect(Set(paragraphs).count == paragraphs.count)
 }
 
 @Test(
